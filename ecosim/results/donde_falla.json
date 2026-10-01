@@ -1,0 +1,16 @@
+{
+  "mejor_real": {
+    "arm": "daily",
+    "f": 0,
+    "H": 5,
+    "EF_seleccion": 39459.53333333333
+  },
+  "oracle": {
+    "f": 60,
+    "H": 5,
+    "EF_seleccion": 21504.6
+  },
+  "EF_top20_mejor_real": 11091,
+  "EF_total_mejor_real_15dias": 694013,
+  "EF_top20_oracle": 9766
+}

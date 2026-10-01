@@ -1,0 +1,264 @@
+{
+  "dias_seleccion": [
+    "2025-09-01",
+    "2025-09-08",
+    "2025-09-13",
+    "2025-09-17",
+    "2025-09-21",
+    "2025-09-25",
+    "2025-10-09",
+    "2025-10-10",
+    "2025-10-18",
+    "2025-10-30",
+    "2025-10-31",
+    "2025-11-01",
+    "2025-11-06",
+    "2025-11-26",
+    "2025-11-28"
+  ],
+  "lam": 60.0,
+  "mu": 1.0,
+  "retiro": "sigma",
+  "L": 60,
+  "tope_hora": 246,
+  "tope_bodega": 632,
+  "max_move": 22,
+  "fuente_topes": "ecosim/results/medicion/ecobici_stats.json: tope_hora (p95 sin ±1, hora corregida), tope_bodega (⌈|A − R| medio del rebalanceo sin taller⌉); max_move = config.MAX_BIKES_PER_MOVE",
+  "tope_hora_con_undo": 474,
+  "tope_bodega_taller": 74,
+  "lambda_elegido_con": {
+    "arm": "oracle",
+    "f": 60,
+    "H": 2,
+    "L": 60,
+    "dias": "seleccion"
+  },
+  "lambda_grid": [
+    0,
+    5,
+    15,
+    30,
+    60,
+    120,
+    240
+  ],
+  "kneedle": {
+    "curve": "convex",
+    "direction": "decreasing",
+    "x": "movimientos (media por día)",
+    "y": "E+F sin fuera de servicio (media por día)",
+    "knee_moves": 1641.8,
+    "knee_EF": 33916.933333333334
+  },
+  "lambda_otra_cota": {
+    "floor": 60.0
+  },
+  "retiro_eleccion": {
+    "regla": "menor E+F medio sobre λ ∈ LAMBDA_GRID × días de selección (oracle, f60, H2, L60)",
+    "EF_medio": {
+      "floor": 72153.22857142857,
+      "sigma": 69291.04761904762
+    },
+    "gana_en": 84,
+    "empata_en": 15,
+    "de": 105
+  },
+  "curva": [
+    {
+      "retiro": "floor",
+      "lam": 0.0,
+      "EF": 23590.4,
+      "E": 20514.8,
+      "F": 3075.6,
+      "moves": 4422.466666666666,
+      "bikes_moved": 31053.666666666668,
+      "recorte_bodega": 39.266666666666666
+    },
+    {
+      "retiro": "floor",
+      "lam": 5.0,
+      "EF": 14338.533333333333,
+      "E": 12740.6,
+      "F": 1597.9333333333334,
+      "moves": 3288.3333333333335,
+      "bikes_moved": 13203.2,
+      "recorte_bodega": 148.8
+    },
+    {
+      "retiro": "floor",
+      "lam": 15.0,
+      "EF": 15538.733333333334,
+      "E": 13771.266666666666,
+      "F": 1767.4666666666667,
+      "moves": 2938.8,
+      "bikes_moved": 12892.0,
+      "recorte_bodega": 155.8
+    },
+    {
+      "retiro": "floor",
+      "lam": 30.0,
+      "EF": 20034.533333333333,
+      "E": 17906.666666666668,
+      "F": 2127.866666666667,
+      "moves": 2215.266666666667,
+      "bikes_moved": 11447.066666666668,
+      "recorte_bodega": 181.86666666666667
+    },
+    {
+      "retiro": "floor",
+      "lam": 60.0,
+      "EF": 38984.333333333336,
+      "E": 34807.933333333334,
+      "F": 4176.4,
+      "moves": 1439.0,
+      "bikes_moved": 9521.2,
+      "recorte_bodega": 115.93333333333334
+    },
+    {
+      "retiro": "floor",
+      "lam": 120.0,
+      "EF": 156459.6,
+      "E": 137522.6,
+      "F": 18937.0,
+      "moves": 385.8666666666667,
+      "bikes_moved": 4149.133333333333,
+      "recorte_bodega": 0.0
+    },
+    {
+      "retiro": "floor",
+      "lam": 240.0,
+      "EF": 236126.46666666667,
+      "E": 192197.0,
+      "F": 43929.46666666667,
+      "moves": 0.0,
+      "bikes_moved": 0.0,
+      "recorte_bodega": 0.0
+    },
+    {
+      "retiro": "sigma",
+      "lam": 0.0,
+      "EF": 18856.066666666666,
+      "E": 16422.933333333334,
+      "F": 2433.133333333333,
+      "moves": 4407.466666666666,
+      "bikes_moved": 31636.2,
+      "recorte_bodega": 6.4
+    },
+    {
+      "retiro": "sigma",
+      "lam": 5.0,
+      "EF": 13078.666666666666,
+      "E": 11500.4,
+      "F": 1578.2666666666667,
+      "moves": 3272.266666666667,
+      "bikes_moved": 12793.266666666666,
+      "recorte_bodega": 40.13333333333333
+    },
+    {
+      "retiro": "sigma",
+      "lam": 15.0,
+      "EF": 13717.133333333333,
+      "E": 12038.066666666668,
+      "F": 1679.0666666666666,
+      "moves": 2937.0666666666666,
+      "bikes_moved": 12396.533333333333,
+      "recorte_bodega": 44.46666666666667
+    },
+    {
+      "retiro": "sigma",
+      "lam": 30.0,
+      "EF": 17423.666666666668,
+      "E": 15442.866666666667,
+      "F": 1980.8,
+      "moves": 2338.4,
+      "bikes_moved": 11312.4,
+      "recorte_bodega": 48.8
+    },
+    {
+      "retiro": "sigma",
+      "lam": 60.0,
+      "EF": 33916.933333333334,
+      "E": 30032.333333333332,
+      "F": 3884.6,
+      "moves": 1641.8,
+      "bikes_moved": 9515.066666666668,
+      "recorte_bodega": 31.2
+    },
+    {
+      "retiro": "sigma",
+      "lam": 120.0,
+      "EF": 151918.4,
+      "E": 133024.46666666667,
+      "F": 18893.933333333334,
+      "moves": 425.06666666666666,
+      "bikes_moved": 4002.733333333333,
+      "recorte_bodega": 0.0
+    },
+    {
+      "retiro": "sigma",
+      "lam": 240.0,
+      "EF": 236126.46666666667,
+      "E": 192197.0,
+      "F": 43929.46666666667,
+      "moves": 0.0,
+      "bikes_moved": 0.0,
+      "recorte_bodega": 0.0
+    }
+  ],
+  "highs_threads": 1,
+  "highs_time_limit_s": 600.0,
+  "h_busqueda": {
+    "regla": "primer h que no mejora E+F ≥ 1% sobre h − 1 (oracle y ma f60)",
+    "EF": {
+      "oracle": {
+        "1": 126495.93333333333,
+        "2": 33916.933333333334,
+        "3": 25885.4,
+        "4": 22785.333333333332,
+        "5": 21504.6,
+        "6": 21604.2
+      },
+      "ma": {
+        "1": 127498.93333333333,
+        "2": 50585.666666666664,
+        "3": 45936.2,
+        "4": 46764.066666666666,
+        "5": 49743.8,
+        "6": 52397.8
+      }
+    },
+    "para_en": {
+      "ma": 4,
+      "oracle": 6
+    },
+    "cobertura_pronostico_h": 6
+  },
+  "h_max": 6,
+  "grid": {
+    "combos": 40,
+    "tabla": "results/grid_seleccion.csv"
+  },
+  "best": {
+    "daily": {
+      "f": 0,
+      "H": 5,
+      "EF_seleccion": 39459.53333333333
+    },
+    "ma": {
+      "f": 15,
+      "H": 3,
+      "EF_seleccion": 45410.933333333334
+    },
+    "model": {
+      "f": 15,
+      "H": 3,
+      "EF_seleccion": 45258.2
+    },
+    "oracle": {
+      "f": 60,
+      "H": 5,
+      "EF_seleccion": 21504.6
+    }
+  },
+  "best_real": "daily"
+}

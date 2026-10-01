@@ -1,0 +1,20 @@
+{
+  "mejor_real": {
+    "arm": "ma",
+    "config": "ma|b60|H3|L30",
+    "tag": "arms_L",
+    "block": 60.0,
+    "H": 3.0,
+    "L": 30.0,
+    "EF": 14721.266666666666
+  },
+  "oracle_comparado": {
+    "arm": "oracle",
+    "config": "oracle|b60|H3|L30",
+    "tag": "arms_L",
+    "block": 60.0,
+    "H": 3.0,
+    "L": 30.0,
+    "EF": 11901.333333333334
+  }
+}

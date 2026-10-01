@@ -1,0 +1,32 @@
+# Secrets
+.env
+.env.*
+
+# Datos: no se versionan (ver "Datos" en el README)
+/data
+/raw
+
+# Salidas binarias grandes
+*.parquet
+*.pkl
+*.pickle
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.python-version
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Intermedios de LaTeX/Quarto. reporte-final.pdf SÍ se versiona.
+report/*.tex
+!report/numeros.tex
+report/*.aux
+report/*.log
+report/*.out
+report/*_files/
+
+logs/
