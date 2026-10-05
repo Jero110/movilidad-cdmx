@@ -8,6 +8,10 @@ Plan: `docs/planner/plans/2026-09-28-ecosim.md` (sección 1). Código: `config.p
 > abajo describen el run 1 (05:30–12:30); lo que cambia está en
 > [Run 2](#run-2) al final y manda sobre lo anterior.
 
+> **Run 3 (plan `docs/planner/plans/2026-10-01-ecosim3.md`):** la implementación
+> vigente está en [Run 3](#run-3) al final. Las secciones previas quedan como
+> registro histórico de los runs 1 y 2.
+
 Cachés (en `data/derived/ecosim/`, fuera de git):
 - `trips_2025_01_11.parquet` + `trips_2025_01_11_audit.json`, generados con `uv run python -m ecosim.data build-trips`
 - `snapshots/YYYY-MM-DD.parquet`, generados con `uv run python -m ecosim.data build-snapshots`: desde el run 2 hay un archivo por ventana `[d 05:00, d+1 01:00)` local, 121 días (2025-08-01..2025-11-29), 5.73 M renglones. En el run 1 eran 122 días (hasta el 11-30) de 05:00–13:00 y 2.54 M renglones; ese caché está congelado en `data/derived/ecosim_run1/snapshots/`.
@@ -257,3 +261,185 @@ Conclusiones:
 - **`Forecast` sin `refresh_min`/`horizon_h`:** 13 de `test_asignador.py` y 2 de `test_pronostico.py`, más `test_oracle_reproduce_fixture`, cuyo fixture de conteos supone la ventana de 7 h.
 - **`EcobiciMoves` sin `delta_rebal`/`taller_retiro`/`undo`:** 3 de `test_sim.py` (replay) y 5 de `test_medicion.py` (KeyError al seleccionar columnas).
 - **Ventana de 19 h:** `test_medicion.py::test_window_counts` y `test_window_selection_uses_initial_snapshot`.
+
+## Run 3
+
+Plan: `docs/planner/plans/2026-10-01-ecosim3.md`. El día de simulación es
+`[d 05:00, d+1 00:30)`, 1,170 minutos y 78 decisiones separadas 15 minutos.
+`window_day(t)` asigna las decisiones después de medianoche al día anterior.
+La ventana de fotos sigue siendo `[d 05:00, d+1 01:00)`. La cobertura usa
+**20 bloques**: 19 de 60 minutos y el último de 00:00–00:30. Un día supera
+90% con 18 o más bloques cubiertos.
+
+### Parámetros y contratos
+
+- Una orden emitida en `t` recoge a `t+15` o entrega a `t+60` (sensibilidad de
+  entrega: 45, 60, 75 minutos). Las entregas no ocurren en la recogida.
+- Valores de referencia para medición: 67 visitas por decisión, 14 bicis por
+  visita; sensibilidad p99: 83 visitas y 24 bicis. `medicion3` los recalcula.
+  `N_GRID = (1,2,3,4,5,6)`, `LAMBDA_GRID_N = (15,30,60)` y
+  `LAMBDA_GRID = (10,15,20,30,45,60)`.
+- `FOLDS` contiene `name`, `train_start`, `train_end`, `test_month`: elegir
+  (2025-01..07 → agosto), cinco pruebas (ventanas móviles de ocho meses →
+  septiembre de 2025 a enero de 2026) y siete cortes de pronóstico (febrero
+  a agosto de 2026). Ningún entrenamiento ve el mes de prueba.
+- `Order` guarda `issued_at`, `pickup_at`, `delivery_at`, `short_name` y
+  `delta`: negativo se aplica al recoger; positivo, al entregar.
+  `DamageEvents.kind` solo admite `sube` y `baja`, ambas etiquetas cambian
+  bicis **en sitio**, con `n > 0`. `EcobiciMoves.delta` es
+  Δ(disponibles + dañadas) − (llegadas − salidas); `par` marca un movimiento
+  que se deshace y no cuenta como visita.
+- `ForecastTable` es la interfaz `table(t, n_hours)` → arreglo
+  `[estación, 4·n_hours, 2]` de salidas y llegadas. Tiene `forma` (`diaria` o
+  `directa`) y `modelo`. `PolicyParams` lleva `n_hours`, `lam`,
+  `visits_per_decision`, `max_bikes_per_visit`, `pickup_min`, `delivery_min`
+  y `retiro`. `DayResult` expone E, F, EF, visitas totales/de recogida/de
+  entrega, bicis movidas, máximo en tránsito, recortes por causa, desvíos de
+  salida y llegada, km medio de desvío, dañadas no aplicables y tiempos de
+  decisión.
+- Se quitaron `SEALED_FROM`, `_check_not_sealed`, `_check_day` y todos sus
+  usos: diciembre ya no está sellado. También `LEAD_MIN`, `LEAD_GRID_MIN`,
+  `BLOCK_MIN`, `BLOCK_GRID_MIN`, `H_GRID_HOURS`, `MAX_BIKES_PER_MOVE`,
+  `MAX_BIKES_PER_MOVE_SENS`, `FORECAST_REFRESH_MIN` y
+  `FORECAST_BLOCK_MIN`, además de `EVAL_START`, `EVAL_END`, `EVAL_SEED`,
+  `N_EVAL_WEEKDAY` y `N_EVAL_WEEKEND` del muestreo anterior. Salieron de `PolicyParams` `tope_hora`,
+  `tope_bodega`, `refresh_min`, `mu` y los campos del run 2 que fueron
+  reemplazados por la nueva interfaz. La tabla de pronóstico del run 2 y su
+  validador dejan paso a `ForecastTable`.
+
+### Viajes y 2024
+
+`uv run python -m ecosim.data build-trips` construye
+`data/derived/ecosim/trips_2024_01_2026_08.parquet` desde los CSV mensuales
+del [portal de Ecobici](https://ecobici.cdmx.gob.mx/datos-abiertos/). Los 12
+CSV de 2024 están en `data/ecobici/`. Se auditó su compatibilidad:
+
+| periodo de llegada | viajes válidos | IDs de estación numéricos |
+|---|---:|---:|
+| 2024 | 22,242,869 | 677 |
+| 2025 | 20,134,900 | 677 |
+| 2026, hasta agosto | 11,910,166 | 677 |
+
+Los 677 IDs numéricos de 2024 coinciden con los de 2025. Los ID totales son
+680 en 2024 y 679 en 2025 por estaciones temporales; las diferencias son
+`1002` y `tag 2` (solo 2024) y `Temporal - 2da Sección Bosque Chapultepec`
+(solo 2025). Seis CSV de 2024 llaman `Fecha Arribo` a `Fecha_Arribo`;
+`build_trips` normaliza ambos encabezados. La auditoría de los 54,287,936
+renglones crudos encontró 0 meses de archivo distintos del mes de llegada,
+0 duraciones negativas y 0 duplicados exactos. Un renglón está truncado en
+`2026-03.csv` y se descarta: quedan **54,287,935 viajes válidos**.
+
+El archivo de marzo de 2026 termina el **23 de marzo a las 13:07:15**.
+Los días desde el 23 no tienen un registro de viajes completo para la
+ventana de simulación, aunque los archivos de meses posteriores contienen
+unos pocos viajes largos con salida a fines de marzo. `prod_2026` solo
+admite marzo 1–22.
+
+### Fotos de las 05:00 y estado inicial
+
+`uv run python -m ecosim.data build-snapshots` guarda las ventanas completas
+de 2025 y enero de 2026 en `data/derived/ecosim/snapshots/YYYY-MM-DD.parquet`.
+Para febrero–agosto de 2026 guarda la foto inicial y los commits en que
+cambia `disabled`, suficientes para el estado inicial y los eventos de
+no rentables. El archivo histórico no contiene fotos de **2025-07-17..27**;
+no se imputan. Hay 596 archivos de caché hasta el 30 de agosto de 2026.
+
+Al cerrar a las 00:30, el feed cambia masivamente disponibles por dañadas.
+La regla del estado inicial es la **primera foto entre 05:00 y antes de 06:00**
+en que al menos **95% de las estaciones presentes** tiene `is_renting=True`.
+También se exige que la foto tenga al menos 95% del número máximo de
+estaciones reportado esa hora, para no interpretar un subconjunto escaso
+como una apertura. La foto se lleva a las 05:00 sumando las salidas y
+restando las llegadas entre 05:00 y `t_snap − 30 s`. Las dañadas se conservan
+en el valor de esa foto. Los recortes físicos se marcan en `roll_clipped`.
+
+Entre enero de 2025 y enero de 2026 hay 396 días calendario: 11 sin foto,
+385 con caché, **383 con foto abierta utilizable**. En 376 de esos 383 el
+primer commit ya era utilizable; en 7 se eligió uno posterior. Dos días
+con foto no permiten reconstruir la apertura:
+
+- **2025-05-24:** entre 05:05 y 06:09 solo 61.6–61.7% de 677 estaciones
+  reportan renta; a las 06:26 es 92.8% y a las 06:46, 98.8%. Las
+  disponibles saltan de 3,365 a 5,205 mientras desaparecen etiquetas de
+  cierre. Retroceder solo los viajes desde las 06:46 inventaría un estado.
+- **2025-05-26:** la primera foto es de las 08:38 (3,983 disponibles y
+  1,434 dañadas); no hay evidencia del estado de las 05:00.
+
+`initial_state` da un error explícito en ambos días. No están en ningún
+conjunto de simulación; mayo de 2025 se usa solo para entrenar con viajes.
+Por ejemplo, el 2025-12-10 produce 5,989 disponibles y 927 dañadas a las
+05:00, desde la foto de las 05:07.
+
+### Cobertura y días
+
+`uv run python -m ecosim.data build-coverage` calcula la cobertura de los
+commits **crudos** (no del caché reducido de 2026) y deja
+`data/derived/ecosim/snapshot_coverage_run3.json`. En 2025 y enero de 2026
+usa las fotos locales; de febrero a agosto de 2026 consulta los archivos
+mensuales del bucket. Los días sin archivo cuentan 0.
+
+| mes | cobertura media | días ≥90% | días con ventana completa |
+|---|---:|---:|---:|
+| 2025-01 | 0.9968 | 31 | 31 |
+| 2025-02 | 1.0000 | 28 | 28 |
+| 2025-03 | 1.0000 | 31 | 31 |
+| 2025-04 | 1.0000 | 30 | 30 |
+| 2025-05 | 0.9952 | 30 | 31 |
+| 2025-06 | 1.0000 | 30 | 30 |
+| 2025-07 | 0.5790 | 19 | 20 |
+| 2025-08 | 1.0000 | 31 | 31 |
+| 2025-09 | 0.9950 | 29 | 30 |
+| 2025-10 | 1.0000 | 31 | 31 |
+| 2025-11 | 1.0000 | 30 | 30 |
+| 2025-12 | 1.0000 | 31 | 31 |
+| 2026-01 | 0.9968 | 31 | 31 |
+| 2026-02 | 0.9536 | 27 | 28 |
+| 2026-03 | 0.9565 | 31 | 31 |
+| 2026-04 | 0.9433 | 29 | 30 |
+| 2026-05 | 0.8790 | 19 | 31 |
+| 2026-06 | 0.8100 | 11 | 30 |
+| 2026-07 | 0.5839 | 0 | 31 |
+| 2026-08 | 0.6774 | 12 | 30 |
+
+`2026/Aug.parquet` existe (494,224 renglones, commits UTC del 1 al 31 de
+agosto; último commit **2026-08-31 23:51:29 UTC**, 17:51 local). La ventana
+del 31 de agosto necesita `2026/Sep.parquet`, que devuelve **HTTP 404**.
+Por eso solo se cachean y consideran completas ventanas hasta el 30 de
+agosto. Julio de 2026 tiene 0 días con cobertura ≥90%; agosto sí conserva
+12 ventanas candidatas, de las que tres tienen foto inicial ≤10 minutos y
+viajes completos.
+
+`uv run python -m ecosim.days` reconstruye `ecosim/days.json`:
+
+- **Selección:** 15 días de agosto de 2025, semilla `20261001`, 11 entre
+  semana + 4 de fin de semana/festivo, todos con cobertura ≥90%:
+  01, 04, 06, 08, 09, 11, 12, 13, 16, 18, 23, 26, 27, 28, 31.
+- **Prueba:** todos los días elegibles de septiembre 2025 (29), octubre
+  (31), noviembre (30), diciembre (31) y enero 2026 (31). El 10 de
+  septiembre queda fuera por cobertura 0.80.
+- **Curva:** 32 días, ocho por mes (6 entre semana + 2 otros), con un solo
+  generador `default_rng(20261002)`:
+
+  | mes de 2025 | días del mes |
+  |---|---|
+  | septiembre | 02, 03, 05, 09, 20, 21, 23, 26 |
+  | octubre | 01, 08, 10, 16, 25, 26, 27, 29 |
+  | noviembre | 01, 10, 12, 18, 19, 20, 27, 29 |
+  | diciembre | 03, 04, 06, 10, 11, 12, 22, 28 |
+
+- **Producción 2026:** hasta ocho días por mes, con cobertura ≥90%, foto
+  abierta a ≤10 minutos de las 05:00, ventana de fotos completa y viajes
+  del día completos:
+
+  | mes | días del mes |
+  |---|---|
+  | febrero | 01, 07, 08, 09, 14, 15, 21, 22 |
+  | marzo | 01, 07, 16, 17, 21, 22 |
+  | abril | 01, 02, 06, 08, 09, 10, 13, 15 |
+  | mayo | 02, 03, 09, 12, 16, 31 |
+  | junio | 14, 20 |
+  | julio | ninguno |
+  | agosto | 19, 21, 25 |
+
+Los días de producción de 2026 se usan para contrastar modelo con oráculo,
+no para comparar esfuerzo contra Ecobici.

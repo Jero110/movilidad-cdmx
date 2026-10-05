@@ -1,1154 +1,819 @@
-"""Experimentos del run 2 de ecosim (plan 2026-09-28-ecosim2, subtask
-`integracion2`). Ventana 05:30–00:30, dañadas dinámicas, bodega finita, tope
-de bicis por movimiento, pares ±1 fuera de lo principal y selección fuera de
-muestra.
+"""Experimento walk-forward ecosim run 3. Reanuda por (día, brazo, configuración).
 
-    uv run python -m ecosim.run --all          # todo, desde cero
-    uv run python -m ecosim.run --stage v1     # un paso: v1 | lambda | h | grid | eval | sens | falla | tablas
+    uv run python -m ecosim.run --all --procesos 8 --threads 1
+    uv run python -m ecosim.run --paso 1
 
-Días (`ecosim/days.json`): **selección** (15) para todo lo que se elige y
-**evaluación** (15, los del run 1) para reportar. Nada se elige en evaluación.
-
-Pasos (en este orden en `--all`):
-
-1. **v1** (evaluación): baseline y replay de Ecobici (`rebal`, t0, sin ±1,
-   dañadas dinámicas) contra GBFS; sensibilidades t1, con ±1 y dañadas fijas
-   (baseline fijo y replay `stock` fijo = método del run 1). E y F por día y
-   por franja; stock y dañadas simuladas contra cada snapshot. Si la
-   diferencia media en E o F pasa de 25%, `--all` se detiene aquí.
-2. **lambda** (selección): oracle (f = 60, H = 2, L = 60) con λ ∈ LAMBDA_GRID
-   y las dos cotas de retiro (⌊p⌋ y ⌊p − σ⌋). Cota de retiro = la de menor
-   E+F medio en toda la rejilla (λ × día); λ = codo de Kneedle sobre la
-   curva de esa cota. Se congelan en `results/frozen.json`.
-3. **h** (selección): oracle y `ma` (f = 60) con h = 1, 2, 3, …; cada brazo
-   para en el primer h que no mejora E+F en ≥ 1% sobre h − 1; h_max = el
-   mayor de los dos. Los dos se completan hasta h_max.
-4. **grid** (selección): `ma` y `model` con f ∈ {15, 60, 180} × h ∈ 1..h_max
-   (sin f > 60·h + L) y `daily` con h ∈ 1..h_max. Mejor (f, h) por variante
-   (menor E+F medio); el oracle usa su mejor h de la búsqueda. Mejor brazo
-   real = el de menor E+F de selección entre ma/model/daily. Se congela.
-5. **eval** (evaluación): baseline, replay de Ecobici (y sus versiones con
-   dañadas fijas), oracle, ma, model y daily con lo congelado y L = 60;
-   luego L ∈ {45, 30} para oracle, ma y model.
-6. **sens** (evaluación): oracle y el mejor brazo real con tope por
-   movimiento 14/42 (y sin tope), tope por hora con ±1, dañadas fijas,
-   bodega ilimitada, bodega con el taller (|A − R| de `stock`), μ = 0, la
-   otra cota de retiro, y todo como en el run 1 a la vez.
-7. **falla**: 20 (estación, bloque de 60 min) con más E+F en el mejor brazo
-   real, contra oracle, Ecobici, baseline y el error de su pronóstico.
-8. **tablas**: `results/tablas.md` y `results/resumen.csv`.
-
-Métrica principal: E y F sin las estaciones-día fuera de servicio a las 05:30
-(`initial_state.out_of_service`), en todos los brazos y en lo observado; la
-cifra con ellas va en `E_all`/`F_all`. Franjas (bloques de 60 min desde
-05:30): mañana 05:30–12:30, tarde 12:30–18:30, noche 18:30–00:30.
-
-Cómputo: cada corrida es un proceso de 1 thread (HiGHS con `threads=1` y sin
-corte por tiempo en la práctica, ver HIGHS_TIME_LIMIT; BLAS/OpenMP/Polars con
-1 thread en los hijos, ver CHILD_THREAD_ENV);
-`--jobs` corridas a la vez (por defecto 8 = los 2 cupos del semáforo × 4
-threads). Las corridas se guardan en `resultados.csv` al terminar cada lote y
-se reutilizan por su llave (`run`): `--stage` retoma lo que falte; `--all`
-borra todo y empieza de cero.
-
-Los insumos (viajes, snapshots, dañadas, movimientos de Ecobici,
-pronósticos) son salidas de los otros módulos y no se regeneran aquí.
+Nunca se ajusta un parámetro mirando prueba. Los conteos se cargan una vez por
+proceso y cada archivo de resultados se guarda después de cada corrida.
 """
-
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
-import math
-import sys
-import time as _time
-import warnings
-from concurrent.futures import ProcessPoolExecutor
+import os
+import time
+import traceback
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from datetime import date, timedelta
 from functools import lru_cache
-
+from functools import lru_cache
+import joblib
 import numpy as np
 import pandas as pd
+from scipy.stats import t as student_t
 
-from ecosim import config as C
-from ecosim import contracts as K
-from ecosim import data, medicion, sim
-from ecosim import pronostico as P
+from ecosim import config as C, contracts as K, data, medicion, pronostico as P, sim
 from ecosim.asignador import Asignador
 from ecosim.days import load_days
 
 RESULTS = C.REPO_ROOT / "ecosim" / "results"
-V1_DIR = RESULTS / "v1"
-RUN1_DIR = RESULTS / "run1"                       # números del run 1 (copiados del tag `ecosim-run1`)
-STATS_JSON = RESULTS / "medicion" / "ecobici_stats.json"
-OBS_CSV = RESULTS / "medicion" / "ecobici_observado.csv"
-FROZEN_JSON = RESULTS / "frozen.json"
-RESULTADOS_CSV = RESULTS / "resultados.csv"
-# E/F por estación × bloque de las corridas de evaluación con L = 60 (intermedio, fuera de git)
-BLOCKS_PARQUET = C.DERIVED / "run2_station_block.parquet"
-V1_BLOCKS_PARQUET = C.DERIVED / "run2_v1_estacion_bloque.parquet"
-
-LAMBDA_GRID = [0, 5, 15, 30, 60, 120, 240]
-RETIROS = ("floor", "sigma")       # ⌊p⌋ y ⌊p − σ⌋ (Asignador(retiro=...))
-MU = 1.0
-L_MAIN = 60
-H_LAMBDA = 2                       # λ se elige con H = 2 (plan)
-F_ORACLE = 60                      # el contenido del oracle no depende de f
-F_H_SEARCH = 60                    # `ma` de la búsqueda de h
-H_ARMS = ("oracle", "ma")
-H_MIN_GAIN = 0.01                  # h sube mientras E+F mejore ≥ 1% sobre h − 1
-F_GRID = tuple(C.FORECAST_REFRESH_MIN)
-GRID_ARMS = ("ma", "model")
-POLICY_ARMS = ("oracle", "ma", "model", "daily")
-REAL_ARMS = ("ma", "model", "daily")
-L_GRID_ARMS = ("oracle", "ma", "model")
-L_SENS = (45, 30)
-HIGHS_THREADS = 1
-# Límite de HiGHS por decisión (s). El del Asignador (4 s) es de reloj de pared:
-# cuando se alcanza, la solución depende de la carga de la máquina (y de si se
-# durmió), y `--all` deja de reproducir. Con 600 s ninguna decisión lo alcanza,
-# así que todas terminan en el óptimo (mip_rel_gap) y el resultado es
-# determinista. Máximo observado en el run 2: 333–361 s, siempre con λ = 5
-# (sel_lambda y sens_lam_min_seleccion); en los brazos principales de
-# evaluación, ≤ 3.9 s. Sigue siendo reloj de pared: si alguna decisión no
-# llega al óptimo (p. ej. la máquina hiberna a mitad de un solve), `run_one`
-# lanza error (`check_optimal`) en vez de guardar una corrida no reproducible.
-HIGHS_TIME_LIMIT = 600.0
-# Threads de BLAS/OpenMP/Polars en los procesos hijos del pool: 1 cada uno, así
-# `--jobs 8` son 8 threads (heavy.py fija 4 en el proceso padre).
-CHILD_THREAD_ENV = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "POLARS_MAX_THREADS")
-JOBS = 8
-CHUNK = 40                         # corridas por lote antes de guardar
-NO_CAP = 10**6                     # "sin tope"
-V1_STOP = 0.25                     # diferencia media > 25% en E o F → parar tras V1
-V1_OK = 0.10                       # criterio de V1
-N_BLOCKS = C.WINDOW_MIN // 60      # 19 bloques de 60 min desde 05:30
-FRANJAS = {"manana": (0, 7), "tarde": (7, 13), "noche": (13, N_BLOCKS)}   # bloques [a, b)
-# replay de Ecobici: brazo → (when, variant, undo) de sim.ecobici_orders
-REPLAY = {
-    "ecobici": ("t0", "rebal", False),
-    "ecobici_t1": ("t1", "rebal", False),
-    "ecobici_undo": ("t0", "rebal", True),
-    "ecobici_stock": ("t0", "stock", None),       # método del run 1 (va siempre con dañadas fijas)
-}
-V1_ARMS = [("baseline", "auto"), ("baseline", "fixed"), ("ecobici", "auto"), ("ecobici_t1", "auto"),
-           ("ecobici_undo", "auto"), ("ecobici_stock", "fixed")]
-MAIN_REPLAY = "ecobici|auto"
-TIME_COLS = ["seconds", "decision_s_mean", "decision_s_max"]
-WALK_COLS = ["walk_m_dep", "walk_m_arr"]
-KEY_COLS = ["split", "tag", "arm", "damage", "f", "H", "L", "lam", "mu", "tope_hora", "tope_bodega",
-            "max_move", "retiro"]
-
-
-# ======================================================================
-# Insumos
-# ======================================================================
-
-def eval_days() -> list[str]:
-    return load_days("evaluacion")
-
-
-def sel_days() -> list[str]:
-    return load_days("seleccion")
-
-
-def stats() -> dict:
-    return json.loads(STATS_JSON.read_text())
-
-
-def base_params() -> dict:
-    """Topes de medición (hora corregida, sin pares ±1): enteros publicados
-    por `medicion` (`tope_hora` = p95 por ventana de 60 min, `tope_bodega` =
-    ⌈|A − R| medio del rebalanceo⌉), y 22 bicis por movimiento."""
-    s = stats()
-    return {"tope_hora": int(s["tope_hora"]), "tope_bodega": int(s["tope_bodega"]),
-            "max_move": int(C.MAX_BIKES_PER_MOVE)}
-
-
-def tope_bodega_taller() -> int:
-    """Sensibilidad: bodega con el taller dentro (|A − R| medio de `stock`,
-    ≈ 74), redondeada hacia arriba como `tope_bodega`."""
-    return int(math.ceil(stats()["mean_abs_stock_warehouse"]))
-
-
-@lru_cache(maxsize=4)
-def day_inputs(day: str):
-    d = C.as_date(day)
-    return data.initial_state(d), data.trips(d), data.neighbors(d)
-
-
-@lru_cache(maxsize=4)
-def damage(day: str, mode: str):
-    return sim.load_damage_events(C.as_date(day), mode)[0]
-
-
-@lru_cache(maxsize=8)
-def forecast(day: str, variant: str, f: int) -> pd.DataFrame:
-    p = P.forecast_path(day, variant, f)
-    if not p.exists():
-        raise FileNotFoundError(f"{p}: corre `uv run python -m ecosim.pronostico`")
-    return pd.read_parquet(p)
-
-
-def forecast_horizon_h() -> int:
-    """h máximo que cubren las series re-emitidas (`horizon_h`)."""
-    d = sel_days()[0]
-    return int(min(forecast(d, v, F_H_SEARCH)["horizon_h"].min() for v in ("oracle", "ma", "model")))
-
-
-# ======================================================================
-# Una corrida
-# ======================================================================
-
-class _Recorder:
-    """Envuelve al Asignador y guarda el estado de HiGHS y el tiempo por decisión."""
-
-    def __init__(self, a: Asignador):
-        self.a, self.status, self.secs = a, [], []
-
-    def decide(self, t, state, pending, fc, params):
-        out = self.a.decide(t, state, pending, fc, params)
-        p = self.a.last_plan
-        if p is not None:
-            self.status.append(p.status)
-            self.secs.append(p.total_s)
-        return out
-
-
-def station_blocks(res: K.DayResult, init: pd.DataFrame) -> tuple[list, np.ndarray, np.ndarray]:
-    """E y F por bloque de 60 min anclado a las 05:30 (0..18) y estación:
-    (estaciones, E[bloque, estación], F[bloque, estación]). Llena = sin
-    anclaje libre para una disponible: bicis ≥ cap − dañadas(minuto) −
-    anclajes deshabilitados (las dañadas cambian durante el día)."""
-    bm = res.extra["bikes_minute"]                      # (1140, n)
-    dm = res.extra["disabled_minute"]
-    names = list(res.extra["stations"])
-    ini = init.set_index("short_name").loc[names]
-    room = (ini["cap"] - ini["docks_disabled"]).to_numpy()[None, :] - dm
-    empty = (bm == 0).reshape(N_BLOCKS, 60, -1).sum(axis=1)
-    full = (bm >= room).reshape(N_BLOCKS, 60, -1).sum(axis=1)
-    assert int(empty.sum()) == res.metrics["E"] and int(full.sum()) == res.metrics["F"]
-    return names, empty, full
-
-
-def _blocks_long(run: str, names, empty, full) -> pd.DataFrame:
-    return pd.DataFrame({
-        "run": run,
-        "short_name": np.tile(names, N_BLOCKS),
-        "block": np.repeat(np.arange(N_BLOCKS), len(names)).astype("int16"),
-        "E": empty.ravel().astype("int32"), "F": full.ravel().astype("int32"),
-    })
-
-
-def config_id(s: dict) -> str:
-    """Llave de una configuración (sin el día)."""
-    if s["arm"] == "baseline" or s["arm"] in REPLAY:
-        return f"{s['tag']}|{s['arm']}|{s['damage']}"
-    return (f"{s['tag']}|{s['arm']}|f{int(s['f'])}|H{int(s['H'])}|L{int(s['L'])}|lam{float(s['lam']):g}"
-            f"|mu{float(s['mu']):g}|th{int(s['tope_hora'])}|tb{int(s['tope_bodega'])}|mm{int(s['max_move'])}"
-            f"|{s['retiro']}|{s['damage']}")
-
-
-def spec_id(s: dict) -> str:
-    return f"{config_id(s)}|{s['day']}"
-
-
-def _pspec(day, split, tag, arm, f, H, L, lam, mu, tope_hora, tope_bodega, max_move, retiro,
-           damage="auto") -> dict:
-    return dict(day=day, split=split, tag=tag, arm=arm, damage=damage, f=int(f), H=int(H), L=int(L),
-                lam=float(lam), mu=float(mu), tope_hora=int(tope_hora), tope_bodega=int(tope_bodega),
-                max_move=int(max_move), retiro=retiro)
-
-
-def _fixed(day, split, tag, arm, damage="auto") -> dict:
-    if arm in REPLAY and REPLAY[arm][1] != "rebal":
-        damage = sim.REPLAY_DAMAGE[REPLAY[arm][1]]    # stock/avail: siempre dañadas fijas
-    return dict(day=day, split=split, tag=tag, arm=arm, damage=damage, f=np.nan, H=np.nan, L=np.nan,
-                lam=np.nan, mu=np.nan, tope_hora=np.nan, tope_bodega=np.nan, max_move=np.nan, retiro="")
-
-
-def check_optimal(row: dict, statuses: dict | None = None):
-    """Una corrida de política con alguna decisión no óptima (HiGHS cortado por
-    tiempo) no es reproducible: error, no se guarda."""
-    if row.get("non_optimal", 0):
-        raise RuntimeError(f"{row['run']}: {row['non_optimal']} decisiones no óptimas {statuses or ''} "
-                           f"(¿límite de tiempo de HiGHS o la máquina se durmió?); vuelve a correr la etapa")
-
-
-def pool(jobs: int) -> ProcessPoolExecutor:
-    """Pool de procesos con 1 thread de BLAS/OpenMP/Polars cada uno (los hijos
-    heredan el entorno al arrancar)."""
-    import os
-    for k in CHILD_THREAD_ENV:
-        os.environ[k] = "1"
-    return ProcessPoolExecutor(max_workers=jobs)
-
-
-def make_policy(retiro: str) -> Asignador:
-    """El asignador de todas las corridas: 1 thread y sin corte por tiempo en la práctica."""
-    return Asignador(threads=HIGHS_THREADS, retiro=retiro, time_limit=HIGHS_TIME_LIMIT)
-
-
-def run_one(spec: dict, record_at=None, keep_result=False, blocks=False):
-    """Corre un (día, brazo, configuración). Devuelve (renglón, bloques | None[, DayResult])."""
-    warnings.simplefilter("ignore", UserWarning)   # los fallbacks se cuentan aparte
-    day, arm = spec["day"], spec["arm"]
-    init, trips, nbrs = day_inputs(day)
-    start, end = C.day_bounds(day)
-    ev = damage(day, spec["damage"])
-    t0 = _time.perf_counter()
-    rec = None
-    kw = dict(record_at=record_at, day=day, arm=arm, damage_events=ev)
-    if arm == "baseline":
-        res = sim.simulate(init, trips, nbrs, start, end, **kw)
-    elif arm in REPLAY:
-        when, variant, undo = REPLAY[arm]
-        if spec["damage"] != sim.REPLAY_DAMAGE[variant] and variant != "rebal":
-            raise ValueError(f"{arm}: el replay `{variant}` va con dañadas {sim.REPLAY_DAMAGE[variant]}")
-        res = sim.simulate(init, trips, nbrs, start, end,
-                           orders=sim.ecobici_orders(day, when=when, variant=variant, undo=undo), **kw)
-    else:
-        f = 0 if arm == "daily" else int(spec["f"])
-        params = K.PolicyParams(
-            lead_min=int(spec["L"]), H_horas=int(spec["H"]), lam=float(spec["lam"]), mu=float(spec["mu"]),
-            tope_hora=int(spec["tope_hora"]), tope_bodega=int(spec["tope_bodega"]), block_min=60,
-            max_bikes_per_move=int(spec["max_move"]), refresh_min=f, extra={"variant": arm})
-        rec = _Recorder(make_policy(spec["retiro"]))
-        res = sim.simulate(init, trips, nbrs, start, end, policy=rec, lead_min=int(spec["L"]),
-                           forecast=forecast(day, arm, f), params=params, **kw)
-    secs = _time.perf_counter() - t0
-    m, x = res.metrics, res.extra
-    oos = init.set_index("short_name").loc[list(x["stations"]), "out_of_service"].to_numpy(bool)
-    names, empty, full = station_blocks(res, init)
-    row = {"run": spec_id(spec), **spec,
-           "E": m["E"] - x["E_out_of_service"], "F": m["F"] - x["F_out_of_service"],
-           "E_all": m["E"], "F_all": m["F"]}
-    row["EF"] = row["E"] + row["F"]
-    oa = x["orders_applied"]
-    oa = oa[oa["applied"] != 0]
-    blk = ((pd.to_datetime(oa["effective_at"]) - pd.Timestamp(start)) // pd.Timedelta(minutes=60)).to_numpy()
-    for fr, (a, b) in FRANJAS.items():
-        row[f"E_{fr}"] = int(empty[a:b, ~oos].sum())
-        row[f"F_{fr}"] = int(full[a:b, ~oos].sum())
-        row[f"EF_{fr}"] = row[f"E_{fr}"] + row[f"F_{fr}"]
-        row[f"moves_{fr}"] = int(((blk >= a) & (blk < b)).sum())
-    assert sum(row[f"EF_{fr}"] for fr in FRANJAS) == row["EF"]
-    assert sum(row[f"moves_{fr}"] for fr in FRANJAS) == m["moves"]
-    row.update({k: m[k] for k in K.DAY_METRICS if k not in ("E", "F")})
-    # metros caminados: sumas de flotantes que pueden variar en el último bit
-    # entre corridas (orden de la suma en numpy); a milímetros son deterministas
-    for k in WALK_COLS:
-        row[k] = round(float(m[k]), 3)
-    row.update({
-        "bikes_moved": m["A"] + m["R"],
-        "detours_dep_far": x["detours_dep_far"], "dep_failed": x["dep_failed"], "arr_failed": x["arr_failed"],
-        "reparaciones_no_aplicables": x["reparaciones_no_aplicables"],
-        "recorte_fuera_de_servicio": x["recorte_fuera_de_servicio"],
-        "bodega_min": x["bodega_min"], "bodega_max": x["bodega_max"],
-        "n_orders": int(len(x["orders_applied"])), "seconds": round(secs, 2),
-    })
-    if rec is not None:
-        st = pd.Series(rec.status, dtype=object)
-        row.update({
-            "fallbacks": len(rec.a.fallbacks), "n_decisions": len(st),
-            "non_optimal": int((~st.isin(["Optimal", "noop"])).sum()),
-            "decision_s_mean": round(float(np.mean(rec.secs)), 3) if rec.secs else 0.0,
-            "decision_s_max": round(float(np.max(rec.secs)), 3) if rec.secs else 0.0,
-        })
-        check_optimal(row, st.value_counts().to_dict())
-    sb = _blocks_long(row["run"], names, empty, full) if blocks else None
-    return (row, sb, res) if keep_result else (row, sb)
-
-
-def _run_one_star(a):
-    spec, blocks = a
-    return run_one(spec, blocks=blocks)
-
-
-# ======================================================================
-# Persistencia: resultados.csv es la unión de todas las corridas (llave `run`)
-# ======================================================================
-
-def load_results() -> pd.DataFrame:
-    if not RESULTADOS_CSV.exists():
-        return pd.DataFrame(columns=["run"])
-    return pd.read_csv(RESULTADOS_CSV, dtype={"day": str, "retiro": str, "run": str},
-                       keep_default_na=True).assign(retiro=lambda d: d["retiro"].fillna(""))
-
-
-def _upsert(rows: pd.DataFrame, sb: pd.DataFrame | None):
-    old = load_results()
-    if len(old):
-        old = old[~old["run"].isin(rows["run"])]
-    out = pd.concat([old, rows], ignore_index=True) if len(old) else rows
-    out = out.sort_values(KEY_COLS + ["day"], na_position="first", kind="stable")
-    out.to_csv(RESULTADOS_CSV, index=False)
-    if sb is not None and len(sb):
-        oldb = pd.read_parquet(BLOCKS_PARQUET) if BLOCKS_PARQUET.exists() else None
-        if oldb is not None:
-            oldb = oldb[~oldb["run"].isin(sb["run"].unique())]
-        pd.concat([x for x in (oldb, sb) if x is not None], ignore_index=True).to_parquet(
-            BLOCKS_PARQUET, index=False)
-
-
-def run_many(specs: list[dict], jobs: int = JOBS, label: str = "", blocks: bool = False) -> pd.DataFrame:
-    """Corre las corridas que falten (las ya guardadas se reutilizan por su
-    llave) y devuelve los renglones de todas, en el orden de `specs`."""
-    ids = [spec_id(s) for s in specs]
-    if len(set(ids)) != len(ids):
-        raise ValueError(f"[{label}] corridas duplicadas")
-    done = set(load_results()["run"])
-    todo = [s for s, i in zip(specs, ids) if i not in done]
-    t = _time.perf_counter()
-    print(f"[{label}] {len(specs)} corridas ({len(specs) - len(todo)} ya guardadas)", flush=True)
-    ex = pool(jobs) if jobs > 1 and len(todo) > 1 else None
-    try:
-        for c in range(0, len(todo), CHUNK):
-            chunk = todo[c:c + CHUNK]
-            args = [(s, blocks) for s in chunk]
-            outs = list(ex.map(_run_one_star, args, chunksize=1)) if ex else [_run_one_star(a) for a in args]
-            rows = pd.DataFrame([o[0] for o in outs])
-            sb = pd.concat([o[1] for o in outs], ignore_index=True) if blocks else None
-            _upsert(rows, sb)
-            print(f"[{label}] {c + len(chunk)}/{len(todo)} nuevas, {(_time.perf_counter() - t) / 60:.1f} min",
-                  flush=True)
-    finally:
-        if ex:
-            ex.shutdown()
-    res = load_results().set_index("run")
-    return res.loc[ids].reset_index()
-
-
-# ======================================================================
-# 1. V1: simulador vs GBFS observado (días de evaluación)
-# ======================================================================
-
-def _snap_state(day: str) -> pd.DataFrame:
-    """Snapshots con la hora del estado del feed (commit − 30 s), como
-    medición; sin los de commit ≥ 00:30 (igual que `medicion.observed_ef`)."""
-    s = medicion.state_time(data.snapshots(day))
-    s = s[s["t_commit"] < pd.Timestamp(C.day_bounds(day)[1])]
-    return s.sort_values(["short_name", "t"]).reset_index(drop=True)
-
-
-def _segments(s: pd.DataFrame, day: str) -> pd.DataFrame:
-    """Escalón entre snapshots consecutivos por estación: [t_k, t_{k+1}) recortado a la ventana."""
-    start, end = (pd.Timestamp(x) for x in C.day_bounds(day))
-    t1 = s.groupby("short_name")["t"].shift(-1).fillna(end)
-    return s.assign(a=s["t"].clip(lower=start, upper=end), b=t1.clip(lower=start, upper=end))
-
-
-def _block_minutes(seg: pd.DataFrame, flag: pd.Series, day: str) -> pd.DataFrame:
-    """Minutos con `flag` por estación y bloque de 60 min (tiempo continuo)."""
-    start = pd.Timestamp(C.day_bounds(day)[0])
-    a = ((seg["a"] - start) / pd.Timedelta(minutes=1)).to_numpy()
-    b = ((seg["b"] - start) / pd.Timedelta(minutes=1)).to_numpy()
-    fl = flag.to_numpy()
-    out = []
-    for k in range(N_BLOCKS):
-        ov = np.clip(np.minimum(b, 60 * (k + 1)) - np.maximum(a, 60 * k), 0, None) * fl
-        out.append(pd.DataFrame({"short_name": seg["short_name"].to_numpy(), "block": k, "m": ov}))
-    return pd.concat(out).groupby(["short_name", "block"], as_index=False)["m"].sum()
-
-
-def _franja(block):
-    b = np.asarray(block)
-    return np.select([b < FRANJAS["manana"][1], b < FRANJAS["tarde"][1]], ["manana", "tarde"], "noche")
-
-
-def v1_label(arm: str, dmg: str) -> str:
-    return f"{arm}|{dmg}"
-
-
-def v1_day(day: str) -> tuple[list[dict], list[pd.DataFrame]]:
-    """Brazos de V1 de un día con registro del stock en cada snapshot real."""
-    init = day_inputs(day)[0]
-    oos = set(init.loc[init["out_of_service"], "short_name"])
-    snaps = _snap_state(day)
-    start, end = (pd.Timestamp(x) for x in C.day_bounds(day))
-    seg = _segments(snaps, day)
-    seg = seg[~seg["short_name"].isin(oos)]
-    ok = ~seg["blank"]
-    # observado por estación × bloque (escalón GBFS; los blancos no cuentan)
-    obs = (_block_minutes(seg, ok & seg["bikes"].eq(0), day).rename(columns={"m": "E_obs"})
-           .merge(_block_minutes(seg, ok & seg["docks"].eq(0), day).rename(columns={"m": "F_obs"}),
-                  on=["short_name", "block"])
-           .merge(_block_minutes(seg, ok & seg["bikes"].eq(0) & seg["disabled"].gt(0), day)
-                  .rename(columns={"m": "E_obs_con_danadas"}), on=["short_name", "block"]))
-    obs["franja"] = _franja(obs["block"])
-    obs_fr = obs.groupby("franja")[["E_obs", "F_obs"]].sum()
-    w = snaps[(snaps["t"] >= start) & (snaps["t"] < end) & ~snaps["blank"] & ~snaps["short_name"].isin(oos)]
-    dis = w.groupby("t")["disabled"].sum()
-    dis_info = {"danadas_0530": int(init.loc[~init["out_of_service"], "disabled"].sum()),
-                "danadas_obs_max": int(dis.max()), "danadas_obs_fin": int(dis.iloc[-1]),
-                "E_obs_con_danadas": float(obs["E_obs_con_danadas"].sum())}
-    seg = seg.assign(tr=seg["t"].clip(lower=start))
-    seg = seg[seg["a"] < seg["b"]]
-    rec_times = sorted(seg["tr"].unique())
-    rows, per = [], []
-    for arm, dmg in V1_ARMS:
-        row, _, res = run_one(_fixed(day, "evaluacion", "v1", arm, dmg), record_at=rec_times, keep_result=True)
-        names = list(res.extra["stations"])
-        rt = pd.DatetimeIndex(res.extra["record_times"])
-        simb = pd.DataFrame(res.extra["bikes_record"], index=rt, columns=names).stack().rename("bikes_sim")
-        simd = pd.DataFrame(res.extra["disabled_record"], index=rt, columns=names).stack().rename("dis_sim")
-        sm = pd.concat([simb, simd], axis=1).reset_index()
-        sm.columns = ["tr", "short_name", "bikes_sim", "dis_sim"]
-        g = seg[["short_name", "t", "tr", "bikes", "disabled", "blank"]].merge(sm, on=["short_name", "tr"])
-        inw = ~g["blank"] & (g["t"] >= start) & (g["t"] < end)
-        err = g.loc[inw, "bikes_sim"] - g.loc[inw, "bikes"]
-        derr = g.loc[inw, "dis_sim"] - g.loc[inw, "disabled"]
-        _, empty, full = station_blocks(res, init)
-        simt = pd.DataFrame({"short_name": np.tile(names, N_BLOCKS),
-                             "block": np.repeat(np.arange(N_BLOCKS), len(names)),
-                             "E": empty.ravel(), "F": full.ravel()})
-        simt = simt[~simt["short_name"].isin(oos)]
-        row.update({
-            "label": v1_label(arm, dmg),
-            "E_obs": float(obs["E_obs"].sum()), "F_obs": float(obs["F_obs"].sum()),
-            **{f"{c}_obs_{fr}": float(obs_fr.loc[fr, f"{c}_obs"]) for fr in FRANJAS for c in "EF"},
-            "stock_mae": float(err.abs().mean()), "stock_bias": float(err.mean()),
-            "stock_exact": float((err == 0).mean()), "n_station_snapshots": int(inw.sum()),
-            "danadas_mae": float(derr.abs().mean()), "danadas_bias": float(derr.mean()),
-            "danadas_sim_fin": int(res.extra["disabled_minute"][-1][
-                ~init.set_index("short_name").loc[names, "out_of_service"].to_numpy(bool)].sum()),
-            **dis_info,
-        })
-        rows.append(row)
-        e = g.loc[inw].assign(err=err, block=((g.loc[inw, "t"] - start) // pd.Timedelta(minutes=60)).astype(int))
-        mae = e.groupby(["short_name", "block"], as_index=False).agg(
-            stock_err_mean=("err", "mean"), stock_abs_err=("err", lambda v: v.abs().mean()))
-        p = simt.merge(obs, on=["short_name", "block"], how="left").merge(mae, on=["short_name", "block"], how="left")
-        p.insert(0, "label", v1_label(arm, dmg))
-        p.insert(0, "day", day)
-        per.append(p)
-    return rows, per
-
-
-def stage_v1(jobs=JOBS) -> pd.DataFrame:
-    V1_DIR.mkdir(parents=True, exist_ok=True)
-    days = eval_days()
-    rows, per = [], []
-    ex = pool(min(jobs, len(days))) if jobs > 1 else None
-    outs = ex.map(v1_day, days) if ex else map(v1_day, days)
-    for k, (r, p) in enumerate(outs, 1):
-        rows += r
-        per += p
-        print(f"[v1] {k}/{len(days)} días", flush=True)
-    if ex:
-        ex.shutdown()
-    df = pd.DataFrame(rows)
-    obs_csv = pd.read_csv(OBS_CSV, dtype={"day": str}).set_index("day")
-    for c in ["E", "F"]:
-        df[f"rel_{c}"] = (df[c] - df[f"{c}_obs"]) / df[f"{c}_obs"]
-        for fr in FRANJAS:
-            df[f"rel_{c}_{fr}"] = (df[f"{c}_{fr}"] - df[f"{c}_obs_{fr}"]) / df[f"{c}_obs_{fr}"]
-        # control: lo observado + fuera de servicio = `ecobici_observado.csv` (inclusivo)
-        df[f"{c}_obs_medicion_csv"] = df["day"].map(obs_csv[c])
-    df = df.drop(columns=[c for c in TIME_COLS if c in df]).sort_values(["label", "day"], kind="stable")
-    df.to_csv(V1_DIR / "v1_por_dia.csv", index=False)
-    per = pd.concat(per, ignore_index=True)
-    per.to_parquet(V1_BLOCKS_PARQUET, index=False)
-    v1_diag(per)
-    s = v1_summary(df)
-    (V1_DIR / "v1_resumen.json").write_text(json.dumps(s, indent=2, ensure_ascii=False))
-    print(json.dumps(s["criterio"], indent=2, ensure_ascii=False))
-    return df
-
-
-def v1_diag(per: pd.DataFrame):
-    """Dónde se desvía el replay principal de lo observado: estaciones, bloques y franjas (suma de 15 días)."""
-    e = per[per["label"] == MAIN_REPLAY].copy()
-    e["dE"] = e["E"] - e["E_obs"]
-    e["dF"] = e["F"] - e["F_obs"]
-    sums = ["E", "E_obs", "E_obs_con_danadas", "F", "F_obs", "dE", "dF"]
-    st = e.groupby("short_name").agg(**{c: (c, "sum") for c in sums}, stock_err_mean=("stock_err_mean", "mean"))
-    st["abs_dEF"] = st["dE"].abs() + st["dF"].abs()
-    st.sort_values("abs_dEF", ascending=False).head(20).reset_index().to_csv(
-        V1_DIR / "v1_diag_estaciones.csv", index=False)
-    n = e["day"].nunique()
-    bl = e.groupby("block").agg(**{c: (c, "sum") for c in sums}, stock_abs_err=("stock_abs_err", "mean"),
-                                stock_err_mean=("stock_err_mean", "mean"))
-    bl[sums] = bl[sums] / n          # minutos por día
-    bl.insert(0, "hora", [f"{(5 * 60 + 30 + 60 * b) // 60 % 24:02d}:30" for b in bl.index])
-    bl.reset_index().to_csv(V1_DIR / "v1_diag_bloques.csv", index=False)
-
-
-def v1_summary(df: pd.DataFrame) -> dict:
-    out = {}
-    for lab, g in df.groupby("label", sort=False):
-        o = {"E_sim": g["E"].mean(), "F_sim": g["F"].mean(), "E_obs": g["E_obs"].mean(), "F_obs": g["F_obs"].mean(),
-             "mean_abs_rel_E": g["rel_E"].abs().mean(), "mean_abs_rel_F": g["rel_F"].abs().mean(),
-             "mean_rel_E": g["rel_E"].mean(), "mean_rel_F": g["rel_F"].mean()}
-        for fr in FRANJAS:
-            for c in "EF":
-                o[f"{c}_sim_{fr}"] = g[f"{c}_{fr}"].mean()
-                o[f"{c}_obs_{fr}"] = g[f"{c}_obs_{fr}"].mean()
-                o[f"mean_abs_rel_{c}_{fr}"] = g[f"rel_{c}_{fr}"].abs().mean()
-                o[f"mean_rel_{c}_{fr}"] = g[f"rel_{c}_{fr}"].mean()
-        o.update({k: g[k].mean() for k in [
-            "stock_mae", "stock_bias", "stock_exact", "danadas_mae", "danadas_bias", "danadas_sim_fin",
-            "danadas_obs_fin", "danadas_obs_max", "danadas_0530", "E_obs_con_danadas",
-            "detours_dep", "detours_arr", "detours_dep_far", "trips_served", "clipped", "moves",
-            "A", "R", "danos_aplicados", "danos_no_aplicables", "taller_aplicado", "taller_no_aplicable",
-            "reparaciones_no_aplicables"]})
-        o["dias_E_abajo"] = int((g["rel_E"] < 0).sum())
-        out[lab] = o
-    e = out[MAIN_REPLAY]
-    crit = {"umbral": V1_OK, "brazo": MAIN_REPLAY,
-            "E_ok": bool(e["mean_abs_rel_E"] <= V1_OK), "F_ok": bool(e["mean_abs_rel_F"] <= V1_OK)}
-    for fr in FRANJAS:
-        crit[f"{fr}_ok"] = bool(max(e[f"mean_abs_rel_E_{fr}"], e[f"mean_abs_rel_F_{fr}"]) <= V1_OK)
-    crit["grave"] = bool(max(e["mean_abs_rel_E"], e["mean_abs_rel_F"]) > V1_STOP)
-    out["criterio"] = crit
-    return out
-
-
-# ======================================================================
-# 2. Cota de retiro y λ con el oracle (selección) → frozen.json
-# ======================================================================
-
-def kneedle_lambda(curve: pd.DataFrame) -> tuple[float, dict]:
-    """Codo (Kneedle) de E+F contra movimientos (medias por λ). λ que dan el
-    mismo número de movimientos son un solo punto: gana el menor λ."""
-    from kneed import KneeLocator
-    g = curve.sort_values(["moves", "lam"]).drop_duplicates("moves")
-    kl = KneeLocator(g["moves"].to_numpy(float), g["EF"].to_numpy(float), curve="convex", direction="decreasing")
-    if kl.knee is None:
-        raise RuntimeError(f"Kneedle no encontró codo en la curva λ:\n{g}")
-    k = g[g["moves"] == kl.knee].iloc[0]
-    return float(k["lam"]), {"curve": "convex", "direction": "decreasing", "x": "movimientos (media por día)",
-                             "y": "E+F sin fuera de servicio (media por día)",
-                             "knee_moves": float(k["moves"]), "knee_EF": float(k["EF"])}
-
-
-def choose_retiro(rows: pd.DataFrame) -> tuple[str, dict]:
-    """Cota de retiro con menor E+F medio en toda la rejilla λ × día (regla
-    fijada antes de ver resultados). También cuenta en cuántos (λ, día) gana."""
-    m = rows.groupby("retiro")["EF"].mean()
-    pick = str(m.idxmin())
-    pv = rows.pivot_table(index=["lam", "day"], columns="retiro", values="EF")
-    other = [r for r in RETIROS if r != pick][0]
-    return pick, {"regla": "menor E+F medio sobre λ ∈ LAMBDA_GRID × días de selección (oracle, f60, H2, L60)",
-                  "EF_medio": {k: float(v) for k, v in m.items()},
-                  "gana_en": int((pv[pick] < pv[other]).sum()), "empata_en": int((pv[pick] == pv[other]).sum()),
-                  "de": int(len(pv))}
-
-
-def stage_lambda(jobs=JOBS) -> dict:
-    bp = base_params()
-    specs = [_pspec(d, "seleccion", "sel_lambda", "oracle", F_ORACLE, H_LAMBDA, L_MAIN, lam, MU,
-                    bp["tope_hora"], bp["tope_bodega"], bp["max_move"], r)
-             for r in RETIROS for lam in LAMBDA_GRID for d in sel_days()]
-    rows = run_many(specs, jobs, "lambda", blocks=False)
-    curve = rows.groupby(["retiro", "lam"], as_index=False)[["EF", "E", "F", "moves", "bikes_moved",
-                                                            "recorte_bodega"]].mean()
-    curve.to_csv(RESULTS / "lambda_grid.csv", index=False)
-    retiro, rinfo = choose_retiro(rows)
-    lam, knee = kneedle_lambda(curve[curve["retiro"] == retiro])
-    other = {}
-    for r in RETIROS:
-        if r != retiro:
+CACHE = C.DERIVED / "run3_blocks"
+RUNS = RESULTS / "corridas_run3.csv"
+FINAL = RESULTS / "resultados.csv"
+FROZEN = RESULTS / "frozen.json"
+N_FILE = RESULTS / "n_seleccion.csv"
+CURVE = RESULTS / "curvas_seleccion.csv"
+STATS = RESULTS / "medicion" / "ecobici_stats.json"
+POLICIES = ("oraculo_diario", "ma_diaria", "lgbm_diario", "oraculo_directo", "lgbm_directo")
+ARMS = ("sin_rebalanceo", "ecobici", *POLICIES)
+REAL = ("ma_diaria", "lgbm_diario", "lgbm_directo")
+N_LAM = (15, 30, 60)
+LAM = (10, 15, 20, 30, 45, 60)
+RETIRO = 0.0  # mismo margen de seguridad para oráculo y modelo
+_COUNTS = None
+_MODELS = {}
+_FORECASTS = {}  # por proceso: (día, brazo) → predicción ya calculada
+
+
+def days(kind):
+    if kind in ("seleccion", "curva"):
+        return load_days(kind)
+    months = ("2025-09", "2025-10", "2025-11", "2025-12", "2026-01") if kind == "prueba" else tuple(f"2026-{m:02d}" for m in range(2, 9))
+    return [d for month in months for d in load_days(kind, month)]
+
+
+def cap(source="base"):
+    stats = json.loads(STATS.read_text())
+    key = "referencia_wiki" if source in ("base", "p99") else "recalculados"
+    quantile = "p99" if source == "p99" else "p95"
+    return stats[key][quantile]
+
+
+def spec(day, arm, tag, n=0, lam=0.0, caps="base", delivery=60, pairs="todas", damage="onsite"):
+    return dict(day=day, arm=arm, tag=tag, n=int(n), lam=float(lam), caps=caps,
+                delivery=int(delivery), pairs=pairs, damage=damage)
+
+
+def key(s):
+    return "|".join(str(s[k]) for k in ("day", "arm", "tag", "n", "lam", "caps", "delivery", "pairs", "damage"))
+
+
+def _load_counts():
+    global _COUNTS
+    if _COUNTS is None:
+        # Solo se cargan para brazos de política; los controles no necesitan
+        # duplicar el parquet. El lock serializa los picos entre procesos.
+        with open(C.DERIVED / "run3_count_load.lock", "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
             try:
-                other[r] = kneedle_lambda(curve[curve["retiro"] == r])[0]
-            except RuntimeError:
-                other[r] = None
-    _plot_lambda(curve, retiro, lam)
-    s = stats()
-    fz = {
-        "dias_seleccion": sel_days(),
-        "lam": lam, "mu": MU, "retiro": retiro, "L": L_MAIN, **bp,
-        "fuente_topes": "ecosim/results/medicion/ecobici_stats.json: tope_hora (p95 sin ±1, hora corregida), "
-                        "tope_bodega (⌈|A − R| medio del rebalanceo sin taller⌉); max_move = config.MAX_BIKES_PER_MOVE",
-        "tope_hora_con_undo": int(s["tope_hora_con_undo"]), "tope_bodega_taller": tope_bodega_taller(),
-        "lambda_elegido_con": {"arm": "oracle", "f": F_ORACLE, "H": H_LAMBDA, "L": L_MAIN, "dias": "seleccion"},
-        "lambda_grid": LAMBDA_GRID, "kneedle": knee, "lambda_otra_cota": other,
-        "retiro_eleccion": rinfo,
-        "curva": curve.to_dict(orient="records"),
-        "highs_threads": HIGHS_THREADS, "highs_time_limit_s": HIGHS_TIME_LIMIT,
-    }
-    _write_frozen(fz)
-    print(json.dumps({k: fz[k] for k in ["lam", "retiro", "tope_hora", "tope_bodega", "max_move"]}))
-    return fz
+                _COUNTS = P.load_counts()
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+    return _COUNTS
 
 
-def _write_frozen(fz: dict):
-    FROZEN_JSON.write_text(json.dumps(fz, indent=2, ensure_ascii=False, default=float))
+def _model(arm, day):
+    if not arm.startswith("lgbm"):
+        return None
+    d = date.fromisoformat(day)
+    fold = next((f for f in C.FOLDS if f["test_month"] == d.strftime("%Y-%m")), None)
+    if fold is None:
+        raise ValueError(f"día sin corte walk-forward: {day}")
+    suffix = "directo" if arm.endswith("directo") else "diario"
+    path = P.OUT_MODELS / f"{fold['name']}_{fold['train_start']}_{fold['train_end']}_{suffix}.joblib"
+    if path not in _MODELS:
+        _MODELS[path] = joblib.load(path)
+    return _MODELS[path]
 
 
-def frozen() -> dict:
-    if not FROZEN_JSON.exists():
-        raise FileNotFoundError("falta results/frozen.json: corre `--stage lambda` primero")
-    return json.loads(FROZEN_JSON.read_text())
+def _forecast(arm, day):
+    cache_key = (arm, day)
+    if cache_key not in _FORECASTS:
+        dd, universe, counts = _load_counts()
+        if len(_FORECASTS) >= 40:
+            _FORECASTS.pop(next(iter(_FORECASTS)))
+        _FORECASTS[cache_key] = P.forecast(arm, counts, dd, C.as_date(day), _model(arm, day))
+    return _FORECASTS[cache_key]
 
 
-def _plot_lambda(curve: pd.DataFrame, retiro: str, lam: float):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    fig, ax = plt.subplots(figsize=(6.5, 4.2))
-    for r, color in zip(RETIROS, ["#2a6f97", "#8a5a44"]):
-        g = curve[curve["retiro"] == r].sort_values("lam")
-        ax.plot(g["moves"], g["EF"], "o-", color=color, label=f"retiro {r}")
-        for _, x in g.iterrows():
-            ax.annotate(f"λ={x['lam']:g}", (x["moves"], x["EF"]), textcoords="offset points", xytext=(5, 4),
-                        fontsize=7, color=color)
-    k = curve[(curve["retiro"] == retiro) & (curve["lam"] == lam)].iloc[0]
-    ax.plot([k["moves"]], [k["EF"]], "o", ms=12, mfc="none", mec="#c1121f", mew=2)
-    ax.set_xlabel("movimientos por día (media, 15 días de selección)")
-    ax.set_ylabel("E + F (minutos-estación por día)")
-    ax.set_title(f"Oracle, f60, H=2, L=60 — retiro {retiro}, codo Kneedle: λ = {lam:g}")
-    ax.grid(alpha=0.3)
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(RESULTS / "lambda_codo.png", dpi=120)
-    plt.close(fig)
+@lru_cache(maxsize=1)
+def _moves_all():
+    return pd.read_parquet(sim.MOVES_FILE)
 
 
-def _policy(fz, day, split, tag, arm, f, H, L=L_MAIN, **over) -> dict:
-    p = dict(lam=fz["lam"], mu=fz["mu"], tope_hora=fz["tope_hora"], tope_bodega=fz["tope_bodega"],
-             max_move=fz["max_move"], retiro=fz["retiro"], damage="auto")
-    p.update(over)
-    return _pspec(day, split, tag, arm, f, H, L, p["lam"], p["mu"], p["tope_hora"], p["tope_bodega"],
-                  p["max_move"], p["retiro"], p["damage"])
+def _measured_effort(day, pairs):
+    """La regla de pares cambia solo el esfuerzo; nunca reproduce otra física."""
+    moves = _moves_all()
+    start, end = C.day_bounds(day)
+    moves = moves[(moves.t1 >= start) & (moves.t1 < end) & (moves.delta != 0)]
+    if pairs == "todas":
+        moves = moves[~moves.par]
+    elif pairs == "solo_1":
+        moves = moves[~(moves.par & (moves.delta.abs() == 1))]
+    elif pairs != "sin_regla":
+        raise ValueError(pairs)
+    return (int(len(moves)), int(moves.delta.abs().sum()),
+            int(moves.delta.lt(0).sum()), int(moves.delta.gt(0).sum()))
 
 
-# ======================================================================
-# 3. Búsqueda de h (selección)
-# ======================================================================
-
-def h_stop(ef_by_h: dict) -> int | None:
-    """Primer h (≥ 2) cuyo E+F no mejora ≥ H_MIN_GAIN sobre h − 1; None si todavía mejora."""
-    for h in sorted(ef_by_h):
-        if h - 1 in ef_by_h and ef_by_h[h - 1] - ef_by_h[h] < H_MIN_GAIN * ef_by_h[h - 1]:
-            return h
-    return None
-
-
-def _h_spec(fz, arm, h, day):
-    f = F_ORACLE if arm == "oracle" else F_H_SEARCH
-    return _policy(fz, day, "seleccion", "sel_h", arm, f, h)
+def _policy_effort(applied, pairs):
+    if pairs == "todas":
+        return None
+    if pairs not in ("sin_regla", "solo_1"):
+        raise ValueError(pairs)
+    ordered = applied.assign(at=np.where(applied.applied < 0, applied.pickup_at, applied.delivery_at))
+    paired = set()
+    for _, g in ordered.sort_values(["at", "short_name"], kind="stable").groupby("short_name"):
+        for (ia, a), (ib, b) in zip(list(g.iterrows()), list(g.iloc[1:].iterrows())):
+            if ia not in paired and ib not in paired and pd.Timestamp(b["at"]) - pd.Timestamp(a["at"]) == pd.Timedelta(minutes=15) and a.applied == -b.applied:
+                if pairs == "sin_regla" or abs(a.applied) == 1:
+                    paired.update((ia, ib))
+    return len(applied)-len(paired)
 
 
-def stage_h(jobs=JOBS) -> dict:
+def one(s):
+    """Una simulación. Las variantes de pares solo cambian el esfuerzo medido
+    del benchmark, no el mundo físico de la política ni su E+F."""
+    start = time.perf_counter()
+    day, arm = s["day"], s["arm"]
+    kwargs = {"arm": arm, "damage_variant": s["damage"]}
+    policy = None
+    if arm == "ecobici":
+        kwargs["orders"] = sim.ecobici_orders(day)
+    elif arm in POLICIES:
+        forecast = _forecast(arm, day)
+        limit = cap(s["caps"])
+        params = K.PolicyParams(n_hours=s["n"], lam=s["lam"],
+                                visits_per_decision=limit["visitas_por_decision"],
+                                max_bikes_per_visit=limit["bicis_por_visita"],
+                                delivery_min=s["delivery"], retiro=RETIRO)
+        policy = Asignador(threads=int(os.environ.get("ECOSIM_THREADS", "1")), time_limit=10)
+        kwargs.update(policy=policy, forecast=forecast, params=params)
+    r = sim.run_day(day, **kwargs)
+    oa = r.extra["orders_applied"]
+    applied = oa[oa.applied != 0]
+    picked = int(-applied.loc[applied.applied < 0, "applied"].sum())
+    delivered = int(applied.loc[applied.applied > 0, "applied"].sum())
+    # Las entregas imposibles vuelven físicamente al origen: contabilizarlas,
+    # sin confundirlas con órdenes exitosas al destino previsto.
+    returned = int(sum(item[2] for item in r.extra["returns"]))
+    max_visit = int(applied.applied.abs().max()) if len(applied) else 0
+    max_decision = int(oa.groupby("issued_at").size().max()) if len(oa) else 0
+    if arm in POLICIES:
+        limit = cap(s["caps"])
+        assert picked == delivered + returned and r.extra["truck_end"] == 0, (day, arm, picked, delivered, returned)
+        assert max_visit <= limit["bicis_por_visita"] and max_decision <= limit["visitas_por_decision"]
+    times = r.tiempos_decision
+    metrics = r.metrics.copy()
+    if arm == "ecobici":
+        (metrics["visitas"], metrics["bicis_movidas"],
+         metrics["visitas_recoger"], metrics["visitas_entregar"]) = _measured_effort(day, s["pairs"])
+    elif arm in POLICIES and s["pairs"] != "todas":
+        metrics["visitas"] = _policy_effort(applied, s["pairs"])
+    row = {"run": key(s), **s, **metrics,
+           "visitas_aplicadas_replay": r.visitas if arm == "ecobici" else 0,
+           "recogidas_aplicadas": picked,
+           "entregadas_aplicadas": delivered + returned, "devoluciones_origen": returned,
+           "truck_end": r.extra["truck_end"],
+           "replay_neto": r.extra["replay_neto"], "damage_external": r.extra["damage_external"],
+           "visitas_sin_regla": r.extra["visitas_sin_regla"], "pares_visitas": r.extra["pares_visitas"],
+           "max_bicis_visita": max_visit, "max_visitas_decision": max_decision,
+           "decisiones_limite_10s": sum(t >= 9.99 for t in times),
+           "decisiones": len(times), "tiempos_decision": json.dumps([round(t, 4) for t in times]),
+           "decision_mediana_s": float(np.median(times)) if times else 0,
+           "decision_p95_s": float(np.percentile(times, 95)) if times else 0,
+           "decision_max_s": max(times, default=0), "fallbacks": len(policy.fallbacks) if policy else 0,
+           "segundos": round(time.perf_counter()-start, 3),
+           "recortes": json.dumps(r.recortes, sort_keys=True)}
+    if s["tag"] == "prueba":
+        CACHE.mkdir(parents=True, exist_ok=True)
+        r.station_hour.to_parquet(CACHE / f"{day}_{arm}.parquet", index=False)
+    return row
+
+
+def _worker_init(threads):
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "POLARS_MAX_THREADS"):
+        os.environ[var] = str(threads)
+    os.environ["ECOSIM_THREADS"] = str(threads)
+    # La carga de conteos es lazy: el control sin rebalanceo no la necesita.
+
+
+def saved():
+    return pd.read_csv(RUNS, dtype={"day": str, "run": str, "tag": str}) if RUNS.exists() else pd.DataFrame()
+
+
+def _persist(row):
+    """Amplía esquema una vez al reanudar CSV previos; después añade cada día."""
+    if not RUNS.exists():
+        pd.DataFrame([row]).to_csv(RUNS, index=False)
+        return
+    columns = list(pd.read_csv(RUNS, nrows=0).columns)
+    if set(row) - set(columns):
+        out = pd.concat([saved(), pd.DataFrame([row])], ignore_index=True)
+        tmp = RUNS.with_suffix(".tmp")
+        out.to_csv(tmp, index=False)
+        os.replace(tmp, RUNS)
+    else:
+        pd.DataFrame([row]).reindex(columns=columns).to_csv(RUNS, mode="a", header=False, index=False)
+
+
+def reconcile_benchmark():
+    """Migra corridas del replay previas: esfuerzo medido, E/F sin cambio."""
+    old = saved()
+    if old.empty or "visitas_aplicadas_replay" in old.columns and old.loc[old.arm.eq("ecobici"), "visitas_aplicadas_replay"].notna().all():
+        return
+    if "visitas_aplicadas_replay" not in old:
+        old["visitas_aplicadas_replay"] = np.nan
+    for i, row in old[old.arm == "ecobici"].iterrows():
+        if pd.notna(row.visitas_aplicadas_replay):
+            continue
+        visits, bikes, pickups, deliveries = _measured_effort(row.day, row.pairs)
+        old.at[i, "visitas_aplicadas_replay"] = row.visitas
+        old.at[i, "visitas"] = visits
+        old.at[i, "bicis_movidas"] = bikes
+        old.at[i, "visitas_recoger"] = pickups
+        old.at[i, "visitas_entregar"] = deliveries
+    tmp = RUNS.with_suffix(".tmp")
+    old.to_csv(tmp, index=False)
+    os.replace(tmp, RUNS)
+
+
+def execute(specs, procesos=2, threads=1):
+    if procesos > 2 or procesos * threads > 8:
+        raise ValueError("máximo dos procesos de simulación y ocho threads en total")
+    ids = [key(s) for s in specs]
+    if len(set(ids)) != len(ids):
+        raise ValueError("especificaciones duplicadas")
+    previous = saved()
+    done = set(previous.run) if len(previous) else set()
+    todo = [s for s in specs if key(s) not in done]
+    print(f"[{specs[0]['tag'] if specs else '-'}] {len(specs)} corridas; {len(todo)} nuevas; {procesos} procesos × {threads} threads", flush=True)
+    if todo:
+        # Cola acotada: al fallar no quedan cientos de días ya enviados al pool.
+        errors = RESULTS / "errores_run3.log"
+        pool = ProcessPoolExecutor(max_workers=procesos, initializer=_worker_init, initargs=(threads,))
+        pending = {}
+        source = iter(todo)
+        finished = failed = 0
+        elapsed = time.perf_counter()
+        def fill():
+            while len(pending) < 2 * procesos:
+                s = next(source, None)
+                if s is None:
+                    break
+                pending[pool.submit(one, s)] = s
+        try:
+            fill()
+            while pending:
+                completed, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in completed:
+                    s = pending.pop(future)
+                    finished += 1
+                    try:
+                        row = future.result()
+                    except Exception:
+                        failed += 1
+                        with errors.open("a") as out:
+                            out.write(json.dumps(s, ensure_ascii=False) + "\n" + traceback.format_exc() + "\n")
+                        print(f"ERROR {finished}/{len(todo)}: {key(s)} (ver {errors})", flush=True)
+                    else:
+                        _persist(row)
+                    if finished % 5 == 0 or finished == len(todo) or failed:
+                        avg = (time.perf_counter()-elapsed)/finished
+                        print(f"avance {finished}/{len(todo)}, fallas {failed}, {avg:.1f}s/corrida", flush=True)
+                # Tras tres fallos (o tres éxitos), las causas se hacen visibles
+                # inmediatamente; no quemar CPU si un contrato está roto.
+                if failed >= 3:
+                    raise RuntimeError(f"{failed} corridas fallaron; ver {errors}")
+                fill()
+            if failed:
+                raise RuntimeError(f"{failed} corridas fallaron; ver {errors}")
+        finally:
+            for future in pending:
+                future.cancel()
+            pool.shutdown(wait=True, cancel_futures=True)
+    result = saved().set_index("run")
+    return result.loc[ids].reset_index()
+
+
+def paired(x, y):
+    """Media e IC t95 de diferencias pareadas por día; empates aparte."""
+    x, y = x.align(y, join="inner")
+    diff = x-y
+    n = len(diff)
+    if n < 1:
+        return (float("nan"), float("nan"), float("nan"), 0, 0)
+    center = float(diff.mean())
+    margin = float(student_t.ppf(.975, n-1)*diff.std(ddof=1)/np.sqrt(n)) if n > 1 else float("nan")
+    return center, center-margin, center+margin, int((diff < 0).sum()), int((diff == 0).sum())
+
+
+def frozen():
+    return json.loads(FROZEN.read_text())
+
+
+def save_frozen(x):
+    FROZEN.write_text(json.dumps(x, indent=2, ensure_ascii=False) + "\n")
+
+
+def paso1(procesos, threads):
+    selection = days("seleccion")
+    # n=1: por construcción no hay ventana posterior a la entrega.
+    base = execute([spec(d, "sin_rebalanceo", "n1_base") for d in selection], procesos, threads)
+    specs = [spec(d, arm, "n", n, lam) for arm in ("oraculo_diario", "oraculo_directo")
+             for n in range(2, 7) for lam in N_LAM for d in selection]
+    rows = execute(specs, procesos, threads)
+    virtual = []
+    for arm in ("oraculo_diario", "oraculo_directo"):
+        for lam in N_LAM:
+            for _, b in base.iterrows():
+                virtual.append({"day": b.day, "arm": arm, "n": 1, "lam": lam,
+                                "E": b.E, "F": b.F, "EF": b.EF, "visitas": 0, "n1_sin_resolver": True})
+    rows = pd.concat([rows.assign(n1_sin_resolver=False), pd.DataFrame(virtual)], ignore_index=True)
+    output = []
+    for (arm, lam, n), g in rows.groupby(["arm", "lam", "n"]):
+        current = g.set_index("day").EF
+        next_n = rows[(rows.arm == arm) & (rows.lam == lam) & (rows.n == n+1)].set_index("day").EF
+        mean, lo, hi, wins, ties = paired(next_n, current) if len(next_n) else (np.nan,)*3+(0, 0)
+        output.append({"arm": arm, "lam": lam, "n": n, "EF": float(current.mean()),
+                       "visitas": float(g.visitas.mean()), "mejora_n_siguiente": -mean,
+                       "IC95_mejora_inf": -hi, "IC95_mejora_sup": -lo,
+                       "gana_dias_n_siguiente": wins, "empata_dias": ties, "n1_sin_resolver": n == 1})
+    table = pd.DataFrame(output).sort_values(["arm", "lam", "n"])
+    table.to_csv(N_FILE, index=False)
+    choice, all_ci = choose_n(rows)
+    table["elegido"] = [choice["directa" if a.endswith("directo") else "diaria"] == n
+                         for a, n in zip(table.arm, table.n)]
+    table.to_csv(N_FILE, index=False)
+    save_frozen({"seleccion": selection, "n": choice, "n_ci_promedio_lambda": all_ci,
+                 "n_regla": "primera n sin mejora distinguible: IC95 t pareado por día de la media sobre las tres λ incluye 0; si el IC95 indica empeoramiento, también se detiene por dominancia", "retiro": RETIRO,
+                 "topes_base": cap(), "topes_p99": cap("p99"), "topes_hacia_adelante": cap("adelante"),
+                 "procesos": procesos, "threads": threads})
+    return table
+
+
+def _n(arm, fz):
+    return fz["n"]["directa" if arm.endswith("directo") else "diaria"]
+
+
+def choose_n(rows):
+    """Cada día pesa una vez: media E+F sobre λ=15,30,60, luego IC pareado."""
+    choices, summary = {}, {}
+    for arm in ("oraculo_diario", "oraculo_directo"):
+        g = rows[rows.arm == arm].groupby(["day", "n"], as_index=False).EF.mean()
+        pivot = g.pivot(index="day", columns="n", values="EF")
+        ci = {}
+        chosen = 6
+        for n in range(1, 6):
+            change, lo, hi, wins, ties = paired(pivot[n+1], pivot[n])
+            ci[str(n)] = {"delta_siguiente_menos_actual": change, "IC95_inf": lo, "IC95_sup": hi,
+                          "gana_siguiente_dias": wins, "empata_dias": ties}
+            if chosen == 6 and hi >= 0:  # empate o empeoramiento; no hay mejora demostrable
+                chosen = n
+        choices["diaria" if arm.endswith("diario") else "directa"] = chosen
+        summary[arm] = ci
+    return choices, summary
+
+
+def paso2(procesos, threads):
+    fz = frozen(); sel = days("seleccion")
+    eco = execute([spec(d, "ecobici", "eco_seleccion") for d in sel], procesos, threads)
+    target = float(eco.visitas.mean())
+    target_ef = float(eco.EF.mean())
+    grid = execute([spec(d, arm, "curva_sel", _n(arm, fz), lam) for arm in POLICIES for lam in LAM for d in sel], procesos, threads)
+    grid.to_csv(CURVE, index=False)
+    picks = {}
+    for arm in POLICIES:
+        curve = grid[grid.arm == arm].groupby("lam", as_index=False)[["visitas", "EF"]].mean().sort_values("lam")
+        # Interpolación y confirmación; si discreción del MILP deja >3%,
+        # agregar el punto medido y repetir hasta cuatro veces sin mirar prueba.
+        points = curve[["lam", "visitas"]].copy()
+        if curve.visitas.max() < .97*target:
+            attempts = [10.0]
+        else:
+            attempts = []
+        for attempt in range(4):
+            if not attempts:
+                options = []
+                for a, b in zip(points.sort_values("lam").iloc[:-1].itertuples(),
+                                points.sort_values("lam").iloc[1:].itertuples()):
+                    if min(a.visitas, b.visitas) <= target <= max(a.visitas, b.visitas) and a.visitas != b.visitas:
+                        options.append(float(a.lam+(target-a.visitas)*(b.lam-a.lam)/(b.visitas-a.visitas)))
+                if options:
+                    candidate = options[0]
+                elif points.visitas.min() > target:
+                    last = points.sort_values("lam").iloc[-2:]
+                    a, b = last.iloc[0], last.iloc[1]
+                    slope = max((a.visitas-b.visitas)/(b.lam-a.lam), .01)
+                    candidate = b.lam + max(5, (b.visitas-target)/slope)
+                else:
+                    candidate = float(points.loc[(points.visitas-target).abs().idxmin(), "lam"])
+                attempts.append(round(max(10, min(300, candidate)), 4))
+            lam = attempts[-1]
+            confirm = execute([spec(d, arm, "confirm", _n(arm, fz), lam) for d in sel], procesos, threads)
+            actual = float(confirm.visitas.mean())
+            if abs(actual/target-1) <= .03 or lam == 10 and actual < .97*target:
+                break
+            points = pd.concat([points, pd.DataFrame([{"lam":lam,"visitas":actual}])], ignore_index=True)
+            points = points.drop_duplicates("lam", keep="last")
+            options = []
+            for a, b in zip(points.sort_values("lam").iloc[:-1].itertuples(),
+                            points.sort_values("lam").iloc[1:].itertuples()):
+                if min(a.visitas, b.visitas) <= target <= max(a.visitas, b.visitas) and a.visitas != b.visitas:
+                    options.append(round(float(a.lam+(target-a.visitas)*(b.lam-a.lam)/(b.visitas-a.visitas)), 4))
+            next_lam = next((p for p in options if p not in attempts), None)
+            if next_lam is None and points.visitas.min() > target:
+                a, b = points.sort_values("lam").iloc[-2:].itertuples(index=False)
+                slope = max((a.visitas-b.visitas)/(b.lam-a.lam), .01)
+                next_lam = round(min(300, b.lam + max(5, (b.visitas-target)/slope)), 4)
+            if next_lam is None or next_lam in attempts:
+                break
+            attempts.append(next_lam)
+        # La meta E+F de Ecobici queda fuera de la rejilla principal si todas
+        # las políticas la superan ampliamente; extender solo para leer el
+        # esfuerzo al mismo resultado, sin usarlo para elegir n ni λ operativa.
+        result_curve = curve.copy()
+        extension = []
+        if result_curve.EF.max() < target_ef:
+            for extra_lam in (90, 120, 180, 240, 300):
+                extra = execute([spec(d, arm, "igual_resultado", _n(arm, fz), extra_lam)
+                                 for d in sel], procesos, threads)
+                extension.append(extra_lam)
+                result_curve = pd.concat([result_curve, pd.DataFrame([{
+                    "lam":extra_lam,"visitas":extra.visitas.mean(),"EF":extra.EF.mean()}])], ignore_index=True)
+                if extra.EF.mean() >= target_ef:
+                    break
+        same_result = float("nan")
+        for a, b in zip(result_curve.sort_values("lam").iloc[:-1].itertuples(),
+                        result_curve.sort_values("lam").iloc[1:].itertuples()):
+            if min(a.EF, b.EF) <= target_ef <= max(a.EF, b.EF) and a.EF != b.EF:
+                same_result = float(a.visitas+(target_ef-a.EF)*(b.visitas-a.visitas)/(b.EF-a.EF))
+                break
+        picks[arm] = {"lambda": lam, "visitas_confirmadas": actual, "visitas_ecobici": target,
+                      "EF_confirmado": float(confirm.EF.mean()), "diferencia_pct": 100*(actual/target-1),
+                      "confirmaciones": attempts, "tipo_ajuste": "extrapolación >60" if lam > 60 else "interpolación rejilla",
+                      "lectura_igual_resultado_lambda_extra": extension,
+                      "igual_esfuerzo_3pct": bool(abs(actual/target-1) <= .03),
+                      "visitas_igual_resultado": same_result,
+                      "visitas_menos_igual_resultado_pct": 100*(1-same_result/target) if np.isfinite(same_result) else None,
+                      "no_alcanza_con_10": bool(lam == 10 and actual < .97*target)}
+    fz["lambda_por_brazo"] = picks
+    fz["mejor_real"] = min(REAL, key=lambda a: picks[a]["EF_confirmado"])
+    fz["cortes"] = [{k: str(v) for k, v in fold.items()} for fold in C.FOLDS]
+    fz["configuracion"] = {"intervalo_decision_min": C.STEP_MIN,
+                             "recogida_min": C.PICKUP_MIN, "entrega_min": C.DELIVERY_MIN,
+                             "lambda_rejilla": list(LAM), "n_rejilla": list(C.N_GRID),
+                             "modelo_directorio": str(P.OUT_MODELS), "conteos": str(C.TRIPS_PARQUET),
+                             "movimientos": str(sim.MOVES_FILE), "danadas": str(sim.DAMAGE_EVENTS_FILE)}
+    save_frozen(fz)
+    return grid
+
+
+def base_spec(d, arm, tag="prueba"):
     fz = frozen()
-    days = sel_days()
-    cap = forecast_horizon_h()
-    ef = {a: {} for a in H_ARMS}
-    stop: dict = {}
-    h = 1
-    while len(stop) < len(H_ARMS):
-        active = [a for a in H_ARMS if a not in stop]
-        if h > cap:
-            raise RuntimeError(f"h = {h} sigue mejorando en {active} y los pronósticos cubren h ≤ {cap}: "
-                               "regenerar pronósticos con H_MAX_H mayor (pronostico.py)")
-        rows = run_many([_h_spec(fz, a, h, d) for a in active for d in days], jobs, f"h={h}")
-        for a in active:
-            ef[a][h] = float(rows.loc[rows["arm"] == a, "EF"].mean())
-            s = h_stop(ef[a])
-            if s is not None:
-                stop[a] = s
-        h += 1
-    h_max = max(stop.values())
-    extra = [_h_spec(fz, a, hh, d) for a in H_ARMS for hh in range(1, h_max + 1)
-             if hh not in ef[a] for d in days]
-    if extra:
-        rows = run_many(extra, jobs, "h completar")
-        for a in H_ARMS:
-            for hh, g in rows[rows["arm"] == a].groupby("H"):
-                ef[a][int(hh)] = float(g["EF"].mean())
-    fz["h_busqueda"] = {"regla": f"primer h que no mejora E+F ≥ {H_MIN_GAIN:.0%} sobre h − 1 (oracle y ma f60)",
-                        "EF": {a: {str(k): v for k, v in sorted(ef[a].items())} for a in H_ARMS},
-                        "para_en": stop, "cobertura_pronostico_h": cap}
-    fz["h_max"] = int(h_max)
-    _write_frozen(fz)
-    print(json.dumps(fz["h_busqueda"], indent=2))
-    return fz
+    return spec(d, arm, tag, _n(arm, fz), fz["lambda_por_brazo"][arm]["lambda"])
 
 
-# ======================================================================
-# 4. Grid de (f, h) por variante (selección)
-# ======================================================================
-
-def grid_combos(h_max: int, L: int = L_MAIN) -> list[tuple[str, int, int]]:
-    """(brazo, f, h) del grid: ma/model × f × h sin f > 60·h + L; daily × h (f = 0)."""
-    out = [(a, f, h) for a in GRID_ARMS for f in F_GRID for h in range(1, h_max + 1) if f <= 60 * h + L]
-    return out + [("daily", 0, h) for h in range(1, h_max + 1)]
-
-
-def _grid_spec(fz, arm, f, h, day):
-    # `ma` f60 ya corrió en la búsqueda de h: misma corrida (misma llave)
-    tag = "sel_h" if (arm, f) == ("ma", F_H_SEARCH) else "sel_grid"
-    return _policy(fz, day, "seleccion", tag, arm, f, h)
+def paso3(procesos, threads):
+    ds = days("prueba")
+    rows = execute([spec(d, arm, "prueba") if arm not in POLICIES else base_spec(d, arm)
+                    for d in ds for arm in ARMS], procesos, threads)
+    if len(rows) != len(ds)*7 or rows.duplicated(["day", "arm"]).any():
+        raise AssertionError("faltan días/brazos")
+    rows.to_csv(FINAL, index=False)
+    check_oracles(rows)
+    validate_v1(rows)
+    where_fails(rows)
+    tablas()
+    return rows
 
 
-def best_configs(table: pd.DataFrame) -> pd.DataFrame:
-    """Mejor (f, H) por brazo: menor E+F medio; empates → menor H, luego mayor f."""
-    t = table.assign(_nf=-table["f"])
-    return (t.sort_values(["arm", "EF", "H", "_nf"]).drop_duplicates("arm").drop(columns="_nf")
-            .reset_index(drop=True))
+def check_oracles(rows):
+    for real, oracle in (("ma_diaria", "oraculo_diario"), ("lgbm_diario", "oraculo_diario"), ("lgbm_directo", "oraculo_directo")):
+        a = rows[rows.arm == real].set_index("day").EF
+        b = rows[rows.arm == oracle].set_index("day").EF
+        # Señal solicitada de posible bug; el informe conserva la observación.
+        if a.mean() < b.mean():
+            raise RuntimeError(f"ALTO: {real} mejor que {oracle} (E+F medio {a.mean():.0f} < {b.mean():.0f})")
 
 
-def stage_grid(jobs=JOBS) -> dict:
+def validate_v1(rows):
+    """V1: replay contra escalones observados del feed en quince días de prueba."""
+    out = []
+    for day in days("prueba")[:15]:
+        snaps = medicion.state_time(data.snapshots(day))
+        observed = medicion.observed_ef(snaps, day).iloc[0]
+        replay = rows[(rows.day == day) & (rows.arm == "ecobici")].iloc[0]
+        out.append({"day": day, "E_obs": observed.E, "F_obs": observed.F,
+                    "E_replay": replay.E, "F_replay": replay.F,
+                    "rel_E": replay.E/observed.E-1 if observed.E else np.nan,
+                    "rel_F": replay.F/observed.F-1 if observed.F else np.nan,
+                    "blank_min": observed.blank_min, "unobs_min": observed.unobs_min})
+    pd.DataFrame(out).to_csv(RESULTS / "v1_run3.csv", index=False)
+
+
+def where_fails(rows):
+    """Top estaciones × hora, en el mejor brazo real y su oráculo gemelo."""
     fz = frozen()
-    days = sel_days()
-    combos = grid_combos(fz["h_max"])
-    rows = run_many([_grid_spec(fz, a, f, h, d) for a, f, h in combos for d in days], jobs, "grid")
-    orc = run_many([_h_spec(fz, "oracle", h, d) for h in range(1, fz["h_max"] + 1) for d in days], jobs, "oracle h")
-    allr = pd.concat([rows, orc], ignore_index=True)
-    table = allr.groupby(["arm", "f", "H"], as_index=False)[["EF", "E", "F", "moves", "bikes_moved",
-                                                            "recorte_bodega", "fallbacks"]].mean()
-    table.to_csv(RESULTS / "grid_seleccion.csv", index=False)
-    best = best_configs(table)
-    fz["grid"] = {"combos": len(combos), "tabla": "results/grid_seleccion.csv"}
-    fz["best"] = {r["arm"]: {"f": int(r["f"]), "H": int(r["H"]), "EF_seleccion": float(r["EF"])}
-                  for _, r in best.iterrows()}
-    real = best[best["arm"].isin(REAL_ARMS)].sort_values("EF").iloc[0]
-    fz["best_real"] = str(real["arm"])
-    _write_frozen(fz)
-    print(json.dumps({"best": fz["best"], "best_real": fz["best_real"]}, indent=2))
-    return fz
+    arm = fz["mejor_real"]
+    oracle = "oraculo_directo" if arm.endswith("directo") else "oraculo_diario"
+    frames = []
+    for day in days("prueba"):
+        for variant in (arm, oracle):
+            path = CACHE / f"{day}_{variant}.parquet"
+            if not path.exists():
+                raise FileNotFoundError(path)
+            frame = pd.read_parquet(path)
+            frame["day"] = day
+            frame["arm"] = variant
+            frames.append(frame)
+    g = pd.concat(frames, ignore_index=True)
+    by = g.groupby(["arm", "short_name", "hour"], as_index=False)[["E", "F"]].sum()
+    by["EF"] = by.E + by.F
+    top = by[by.arm == arm].nlargest(20, "EF")
+    top = top.merge(by[by.arm == oracle][["short_name", "hour", "EF"]],
+                    on=["short_name", "hour"], suffixes=("_real", "_oracle"))
+    top.to_csv(RESULTS / "donde_falla.csv", index=False)
+    by.to_csv(RESULTS / "ef_por_bloque.csv", index=False)
 
 
-# ======================================================================
-# 5. Evaluación con todo congelado
-# ======================================================================
-
-EVAL_FIXED = [("baseline", "auto"), ("baseline", "fixed"), ("ecobici", "auto"), ("ecobici_stock", "fixed")]
-
-
-def _eval_spec(fz, arm, day, tag="eval", L=L_MAIN, **over):
-    b = fz["best"][arm]
-    return _policy(fz, day, "evaluacion", tag, arm, b["f"], b["H"], L, **over)
-
-
-def stage_eval(jobs=JOBS):
+def paso4(procesos, threads):
     fz = frozen()
-    days = eval_days()
-    specs = [_fixed(d, "evaluacion", "eval", a, dm) for a, dm in EVAL_FIXED for d in days]
-    specs += [_eval_spec(fz, a, d) for a in POLICY_ARMS for d in days]
-    run_many(specs, jobs, "eval L=60", blocks=True)
-    specs = [_eval_spec(fz, a, d, "eval_L", L) for a in L_GRID_ARMS for L in L_SENS for d in days]
-    run_many(specs, jobs, "eval L=45,30")
+    specs = []
+    for arm in POLICIES:
+        lam = fz["lambda_por_brazo"][arm]["lambda"]
+        lower = max((x for x in LAM if x < lam), default=max(10, lam-5))
+        upper = min((x for x in LAM if x > lam), default=lam+(LAM[-1]-LAM[-2]))
+        grid = sorted(set((round(float(lower), 4), lam, round(float(upper), 4))))
+        specs += [spec(d, arm, "curva_prueba", _n(arm, fz), price) for d in days("curva") for price in grid]
+    return execute(specs, procesos, threads)
 
 
-# ======================================================================
-# 6. Sensibilidades (evaluación): oracle y el mejor brazo real
-# ======================================================================
-
-def lam_min_seleccion(fz: dict) -> float:
-    """λ de la rejilla con menor E+F medio en selección (oracle, cota congelada):
-    alternativa a Kneedle, también fuera de muestra; se reporta como sensibilidad."""
-    c = pd.DataFrame(fz["curva"])
-    c = c[c["retiro"] == fz["retiro"]].sort_values(["EF", "lam"])
-    return float(c["lam"].iloc[0])
-
-
-def sens_variants(fz: dict) -> list[tuple[str, dict]]:
-    other = [r for r in RETIROS if r != fz["retiro"]][0]
-    return [
-        ("sens_lam_min_seleccion", {"lam": lam_min_seleccion(fz)}),
-        ("sens_mm14", {"max_move": 14}),
-        ("sens_mm42", {"max_move": 42}),
-        ("diag_mm_sin_tope", {"max_move": NO_CAP}),
-        ("sens_tope_con_undo", {"tope_hora": fz["tope_hora_con_undo"]}),
-        ("sens_danadas_fijas", {"damage": "fixed"}),
-        ("sens_bodega_ilimitada", {"tope_bodega": NO_CAP}),
-        ("sens_bodega_taller", {"tope_bodega": fz["tope_bodega_taller"]}),
-        ("sens_mu0", {"mu": 0.0}),
-        (f"sens_retiro_{other}", {"retiro": other}),
-        # las decisiones del run 1 a la vez: dañadas fijas, bodega ilimitada, sin tope por movimiento, ±1
-        ("diag_como_run1", {"damage": "fixed", "tope_bodega": NO_CAP, "max_move": NO_CAP,
-                            "tope_hora": fz["tope_hora_con_undo"]}),
-    ]
+def paso5(procesos, threads):
+    fz = frozen(); selected = ("oraculo_directo", fz["mejor_real"])
+    variants = (("p99", {"caps":"p99"}), ("hacia_adelante", {"caps":"adelante"}),
+                ("entrega_45", {"delivery":45}), ("entrega_75", {"delivery":75}),
+                ("pares_sin_regla", {"pairs":"sin_regla"}), ("pares_solo_1", {"pairs":"solo_1"}),
+                ("danadas_feed", {"damage":"feed"}))
+    specs = []
+    for d in days("curva"):
+        for label, override in variants:
+            for arm in selected:
+                p = base_spec(d, arm, "sens_"+label)
+                p.update(override)
+                specs.append(p)
+            if label.startswith("pares"):
+                specs.append(spec(d, "ecobici", "sens_"+label, pairs=override["pairs"]))
+    return execute(specs, procesos, threads)
 
 
-def stage_sens(jobs=JOBS):
+def paso6(procesos, threads):
+    ds = [d for d in days("prod_2026") if not "2026-03-23" <= d <= "2026-03-31"]
+    assert all(not "2026-03-23" <= d <= "2026-03-31" for d in ds)
+    apr = []
+    universe = len(json.loads((P.OUT_FORECASTS / "universe_run3.json").read_text()))
+    for day in load_days("prod_2026", "2026-04"):
+        d = date.fromisoformat(day)
+        lag7 = d - timedelta(days=7)
+        lag14 = d - timedelta(days=14)
+        missing7 = date(2026,3,23) <= lag7 <= date(2026,3,31)
+        missing14 = date(2026,3,23) <= lag14 <= date(2026,3,31)
+        apr.append({"day": day, "rezago_7_cero": missing7, "rezago_14_cero": missing14,
+                    "bloques_estacion_afectados": (int(missing7)+int(missing14))*P.NB15*universe})
+    pd.DataFrame(apr).to_csv(RESULTS / "rezagos_abril.csv", index=False)
+    rows = execute([spec(d, "sin_rebalanceo", "prod_2026") if arm == "sin_rebalanceo" else base_spec(d, arm, "prod_2026")
+                    for d in ds for arm in ("sin_rebalanceo", *POLICIES)], procesos, threads)
+    check_oracles(rows)
+    return rows
+
+
+def _md(df):
+    """Tabla Markdown sin dependencia opcional tabulate."""
+    def cell(value):
+        if pd.isna(value):
+            return "—"
+        if isinstance(value, (float, np.floating)):
+            return f"{value:,.2f}"
+        return str(value).replace("|", "\\|").replace("\n", " ")
+    names = list(df.columns)
+    return "\n".join(["| " + " | ".join(names) + " |", "|" + "---|"*len(names)] +
+                     ["| " + " | ".join(cell(value) for value in row) + " |" for row in df.itertuples(index=False, name=None)])
+
+
+def tablas():
+    if not FINAL.exists() or not FROZEN.exists():
+        return
     fz = frozen()
-    specs = [_eval_spec(fz, a, d, tag, **over)
-             for tag, over in sens_variants(fz) for a in ("oracle", fz["best_real"]) for d in eval_days()]
-    run_many(specs, jobs, "sens")
-
-
-# ======================================================================
-# 7. Dónde falla
-# ======================================================================
-
-def load_blocks() -> pd.DataFrame:
-    """E/F por estación × bloque de las corridas de evaluación (L = 60), sin
-    las estaciones-día fuera de servicio (como la métrica principal)."""
-    sb = pd.read_parquet(BLOCKS_PARQUET)
-    sb["key"] = sb["run"].str.rsplit("|", n=1).str[0]
-    sb["day"] = sb["run"].str.rsplit("|", n=1).str[1]
-    oos = {f"{d}|{s}" for d in eval_days() for s in day_inputs(d)[0].query("out_of_service")["short_name"]}
-    return sb[~(sb["day"] + "|" + sb["short_name"]).isin(oos)].reset_index(drop=True)
-
-
-def forecast_errors(variant: str, f: int, L: int = L_MAIN, days=None) -> pd.DataFrame:
-    """Por (estación, bloque de 60): salidas/llegadas reales y las del
-    pronóstico que ve la primera decisión que alcanza el bloque (emisión más
-    reciente con issued_at ≤ inicio del bloque − L; la primera si no hay),
-    suma de los días; error absoluto del neto por día sumado; días censurados."""
-    rows = []
-    for d in days or eval_days():
-        fc = forecast(d, variant, f)
-        orc = forecast(d, "oracle", F_ORACLE).drop_duplicates(["short_name", "block_start"])
-        start = pd.Timestamp(C.day_bounds(d)[0])
-        issues = np.sort(fc["issued_at"].unique())
-        fc = fc.assign(_lim=fc["block_start"] - pd.Timedelta(minutes=L))
-        pick = np.searchsorted(issues, fc["_lim"].to_numpy(), side="right") - 1
-        fc = fc[fc["issued_at"].to_numpy() == issues[np.clip(pick, 0, None)]]
-        k = fc.merge(orc[["short_name", "block_start", "departures", "arrivals"]],
-                     on=["short_name", "block_start"], suffixes=("", "_real"))
-        assert not k.duplicated(["short_name", "block_start"]).any()
-        k["block"] = ((k["block_start"] - start) // pd.Timedelta(minutes=60)).astype(int)
-        a = k.groupby(["short_name", "block"])[["departures", "arrivals", "departures_real", "arrivals_real"]].sum()
-        a["abs_err_net"] = ((a["arrivals"] - a["departures"]) - (a["arrivals_real"] - a["departures_real"])).abs()
-        universe = sorted(orc["short_name"].unique())
-        cz = P.censored(d, universe)
-        cens = pd.DataFrame({"short_name": np.repeat(universe, N_BLOCKS),
-                             "block": np.tile(np.arange(N_BLOCKS), len(universe)),
-                             "censurado": cz.ravel().astype(int)}).set_index(["short_name", "block"])
-        rows.append(a.join(cens))
-    t = pd.concat(rows).groupby(level=[0, 1]).sum()
-    return t.rename(columns={"departures": "sal_pron", "arrivals": "lleg_pron", "departures_real": "sal_real",
-                             "arrivals_real": "lleg_real", "censurado": "dias_censurado"})
-
-
-def stage_falla() -> pd.DataFrame:
-    fz = frozen()
-    real, days = fz["best_real"], eval_days()
-    sb = load_blocks()
-
-    def ef_of(key):
-        t = sb[sb["key"] == key].groupby(["short_name", "block"])[["E", "F"]].sum()
-        assert len(t) > 0, key
-        return t
-
-    best_t = ef_of(config_id(_eval_spec(fz, real, days[0])))
-    orc_t = ef_of(config_id(_eval_spec(fz, "oracle", days[0])))
-    eco_t = ef_of(config_id(_fixed(days[0], "evaluacion", "eval", "ecobici")))
-    base_t = ef_of(config_id(_fixed(days[0], "evaluacion", "eval", "baseline")))
-    out = best_t.assign(EF=best_t["E"] + best_t["F"]).sort_values("EF", ascending=False).head(20)
-    out = out.join((orc_t["E"] + orc_t["F"]).rename("EF_oracle"))
-    out = out.join((eco_t["E"] + eco_t["F"]).rename("EF_ecobici"))
-    out = out.join((base_t["E"] + base_t["F"]).rename("EF_baseline"))
-    b = fz["best"][real]
-    out = out.join(forecast_errors(real, 0 if real == "daily" else b["f"]))
-    out = out.reset_index()
-    out.insert(1, "hora", [f"{(5 * 60 + 30 + 60 * int(x)) // 60 % 24:02d}:30" for x in out["block"]])
-    share = {"EF_top20_mejor_real": int(out["EF"].sum()),
-             "EF_total_mejor_real_15dias": int((best_t["E"] + best_t["F"]).sum()),
-             "EF_top20_oracle": int(out["EF_oracle"].sum())}
-    meta = {"mejor_real": {"arm": real, **b}, "oracle": fz["best"]["oracle"], **share}
-    (RESULTS / "donde_falla.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
-    out.to_csv(RESULTS / "donde_falla.csv", index=False)
-    # E+F por bloque (media por día): mejor real, oracle, Ecobici, baseline
-    byb = pd.DataFrame({k: (t["E"] + t["F"]).groupby(level=1).sum() / len(days)
-                        for k, t in [("mejor_real", best_t), ("oracle", orc_t), ("ecobici", eco_t),
-                                     ("baseline", base_t)]})
-    byb.insert(0, "hora", [f"{(5 * 60 + 30 + 60 * int(x)) // 60 % 24:02d}:30" for x in byb.index])
-    byb.reset_index().to_csv(RESULTS / "ef_por_bloque.csv", index=False)
-    print(json.dumps(meta, indent=2, ensure_ascii=False))
-    return out
-
-
-# ======================================================================
-# 8. Tablas
-# ======================================================================
-
-SUM_COLS = ["E", "F", "EF", "E_all", "F_all", "EF_manana", "EF_tarde", "EF_noche", "moves", "moves_manana",
-            "moves_tarde", "moves_noche", "bikes_moved", "stations_touched", "A", "R", "warehouse", "clipped",
-            "recorte_bodega", "recorte_por_movimiento", "recorte_fuera_de_servicio", "bodega_min", "bodega_max",
-            "danos_no_aplicables", "taller_no_aplicable", "detours_dep", "detours_arr", "detours_dep_far",
-            "walk_m_dep", "walk_m_arr", "trips_served"]
-
-
-def summary(res: pd.DataFrame) -> pd.DataFrame:
-    """Media por día por configuración; en evaluación, días en que gana al
-    replay principal de Ecobici en E+F (sin fuera de servicio)."""
-    r = res[res["tag"] != "v1"].copy()
-    eco = r[(r["tag"] == "eval") & (r["arm"] == "ecobici") & (r["damage"] == "auto")].set_index("day")["EF"]
-    r["gana_a_ecobici"] = np.where(r["split"] == "evaluacion", (r["EF"] < r["day"].map(eco)).astype(float), np.nan)
-    agg = {c: "mean" for c in SUM_COLS if c in r}
-    agg["gana_a_ecobici"] = "sum"
-    for c in ["fallbacks", "non_optimal"]:
-        if c in r:
-            agg[c] = "sum"
-    if "decision_s_mean" in r:
-        agg["decision_s_mean"] = "mean"
-        agg["decision_s_max"] = "max"
-    s = r.groupby(KEY_COLS, dropna=False, as_index=False, sort=False).agg(agg)
-    g = r.groupby(KEY_COLS, dropna=False, sort=False)
-    s["n_dias"] = g.size().to_numpy()
-    s["recorte_bodega_max"] = g["recorte_bodega"].max().to_numpy()
-    s["recorte_por_movimiento_max"] = g["recorte_por_movimiento"].max().to_numpy()
-    return s
-
-
-def _md(df: pd.DataFrame, fmt=None) -> str:
-    fmt = fmt or {}
-    cols = list(df.columns)
-    out = ["| " + " | ".join(map(str, cols)) + " |", "|" + "---|" * len(cols)]
-    for _, r in df.iterrows():
-        cells = []
-        for c in cols:
-            v = r[c]
-            if c in fmt:
-                cells.append(fmt[c].format(v))
-            elif isinstance(v, (float, np.floating)):
-                cells.append("" if pd.isna(v) else (f"{v:,.0f}" if abs(v) >= 100 else f"{v:.3g}"))
-            else:
-                cells.append(str(v))
-        out.append("| " + " | ".join(cells) + " |")
-    return "\n".join(out)
-
-
-def run1_arms() -> pd.DataFrame:
-    """Tabla de brazos del run 1 (05:30–12:30, sus 15 días): mejor
-    configuración de L = 60 por brazo (in-sample en el run 1)."""
-    s = pd.read_csv(RUN1_DIR / "resumen.csv")
-    a = s[(s["tag"] == "arms") & ((s["L"] == 60) | s["L"].isna())]
-    a = a.sort_values(["arm", "EF"]).drop_duplicates("arm")
-    return a[["arm", "block", "H", "EF", "E", "F", "moves", "gana_a_ecobici"]].reset_index(drop=True)
-
-
-def stage_tablas():
-    res = load_results()
-    s = summary(res)
-    s.to_csv(RESULTS / "resumen.csv", index=False)
-    fz = frozen()
-    parts = ["# Tablas generadas por `ecosim.run` (run 2; no editar a mano)\n",
-             "E y F en minutos-estación por día, sin estaciones-día fuera de servicio. "
-             "Franjas: mañana 05:30–12:30, tarde 12:30–18:30, noche 18:30–00:30.\n"]
-    # --- V1
-    v1 = json.loads((V1_DIR / "v1_resumen.json").read_text())
-    t = pd.DataFrame([{"brazo": k, **v} for k, v in v1.items() if k != "criterio"])
-    parts.append("## V1: simulador vs GBFS (evaluación, media de 15 días)\n")
-    parts.append(_md(t[["brazo", "E_sim", "E_obs", "mean_abs_rel_E", "mean_rel_E", "F_sim", "F_obs",
-                        "mean_abs_rel_F", "mean_rel_F", "stock_mae", "stock_bias", "danadas_mae", "danadas_bias",
-                        "detours_dep", "clipped", "moves"]]))
-    parts.append("\n### V1 por franja (|dif| media por día)\n")
-    cols = ["brazo"] + [f"mean_abs_rel_{c}_{fr}" for fr in FRANJAS for c in "EF"]
-    parts.append(_md(t[cols], {c: "{:.1%}" for c in cols[1:]}))
-    parts.append("\n### V1 por franja (medias: simulado / observado)\n")
-    cols = ["brazo"] + [f"{c}_{w}_{fr}" for fr in FRANJAS for c in "EF" for w in ("sim", "obs")]
-    parts.append(_md(t[cols]))
-    parts.append(f"\nCriterio: `{json.dumps(v1['criterio'], ensure_ascii=False)}`\n")
-    v1d = pd.read_csv(V1_DIR / "v1_por_dia.csv", dtype={"day": str})
-    e = v1d[v1d["label"] == MAIN_REPLAY][["day", "E", "E_obs", "rel_E", "F", "F_obs", "rel_F", "rel_E_manana",
-                                          "rel_E_tarde", "rel_E_noche", "stock_mae", "danadas_mae"]]
-    parts.append("### V1 por día (replay principal: rebal, t0, sin ±1, dañadas dinámicas)\n")
-    parts.append(_md(e, {c: "{:+.1%}" for c in ["rel_E", "rel_F", "rel_E_manana", "rel_E_tarde", "rel_E_noche"]}))
-    # --- selección
-    parts.append("\n## Selección (15 días de selección)\n")
-    parts.append(f"Cota de retiro: **{fz['retiro']}** — `{json.dumps(fz['retiro_eleccion'], ensure_ascii=False)}`\n")
-    parts.append("### Grid de λ (oracle, f60, H=2, L=60)\n")
-    parts.append(_md(pd.read_csv(RESULTS / "lambda_grid.csv")))
-    parts.append(f"\nλ congelado: **{fz['lam']:g}** (Kneedle sobre la cota {fz['retiro']}; con la otra cota: "
-                 f"{fz['lambda_otra_cota']})\n")
-    if "h_busqueda" in fz:
-        hb = fz["h_busqueda"]
-        ht = pd.DataFrame(hb["EF"]).rename_axis("h").reset_index()
-        parts.append(f"### Búsqueda de h (E+F medio; {hb['regla']})\n")
-        parts.append(_md(ht))
-        parts.append(f"\nPara en: {hb['para_en']} → h_max = **{fz['h_max']}**\n")
-    if "best" in fz:
-        parts.append("### Grid (f, h) por variante (E+F medio de selección)\n")
-        g = pd.read_csv(RESULTS / "grid_seleccion.csv")
-        parts.append(_md(g.pivot_table(index=["arm", "f"], columns="H", values="EF").reset_index()))
-        parts.append(f"\nMejor por variante: `{json.dumps(fz['best'])}`; mejor brazo real: **{fz['best_real']}**\n")
-    # --- evaluación
-    cols = ["brazo", "f", "H", "L", "EF", "E", "F", "EF_manana", "EF_tarde", "EF_noche", "moves", "bikes_moved",
-            "A", "R", "warehouse", "bodega_min", "bodega_max", "clipped", "recorte_bodega", "recorte_bodega_max",
-            "recorte_por_movimiento", "gana_a_ecobici", "fallbacks", "non_optimal", "decision_s_mean", "n_dias"]
-    ev = s[s["tag"].isin(["eval", "eval_L"])].copy()
-    ev["brazo"] = ev["arm"] + np.where(ev["damage"] == "fixed", " (dañadas fijas)", "")
-    if len(ev):
-        parts.append("\n## Brazos en evaluación (media por día; gana_a_ecobici = días de 15 con menos E+F "
-                     "que el replay principal)\n")
-        parts.append(_md(ev[ev["tag"] == "eval"][[c for c in cols if c in ev]]))
-        parts.append("\n### Lead time L ∈ {45, 30}\n")
-        parts.append(_md(ev[ev["tag"] == "eval_L"][[c for c in cols if c in ev]]))
-    sens = s[s["tag"].str.startswith(("sens", "diag"))].copy()
-    if len(sens):
-        base = s[(s["tag"] == "eval") & s["arm"].isin(["oracle", fz["best_real"]])]
-        sens = pd.concat([base, sens])
-        parts.append("\n## Sensibilidades (evaluación; oracle y mejor brazo real con su configuración congelada)\n")
-        parts.append(_md(sens[[c for c in ["tag", "arm", "lam", "max_move", "tope_hora", "tope_bodega", "mu", "retiro",
-                                           "damage", "EF", "E", "F", "EF_manana", "moves", "bikes_moved",
-                                           "warehouse", "clipped", "recorte_bodega", "recorte_por_movimiento",
-                                           "gana_a_ecobici", "fallbacks"] if c in sens]]))
-    # --- comparación con el run 1 (mañana)
-    if len(ev) and (RUN1_DIR / "resumen.csv").exists():
-        r1 = run1_arms().rename(columns={"EF": "EF_run1", "moves": "moves_run1", "gana_a_ecobici": "gana_run1",
-                                         "block": "bloque_run1", "H": "H_run1"})
-        m = ev[ev["tag"] == "eval"][["brazo", "arm", "damage", "EF_manana", "moves_manana", "EF", "moves"]]
-        # el replay del run 1 es `stock` con dañadas fijas y ±1: se compara con los dos replays del run 2
-        m["arm_run1"] = m["arm"].replace({"ecobici_stock": "ecobici"})
-        m = m.merge(r1.rename(columns={"arm": "arm_run1"})[["arm_run1", "bloque_run1", "H_run1", "EF_run1", "moves_run1", "gana_run1"]], on="arm_run1", how="left")
-        parts.append("\n## Run 2 recortado a 05:30–12:30 contra el run 1 (mismos 15 días)\n")
-        parts.append("Run 1: su mejor (bloque, H) de L = 60, in-sample; su replay es `stock` con dañadas fijas y ±1. "
-                     "Run 2: configuración congelada en selección; E+F y movimientos de la franja de la mañana.\n")
-        parts.append(_md(m))
-        d1 = s[(s["tag"] == "diag_como_run1")][["arm", "EF_manana", "moves_manana", "EF"]]
-        if len(d1):
-            parts.append("\nDecisiones del run 1 a la vez (`diag_como_run1`):\n")
-            parts.append(_md(d1))
-    if (RESULTS / "donde_falla.csv").exists():
-        parts.append("\n## Dónde falla (20 estación × bloque con más E+F, suma de 15 días)\n")
-        parts.append(f"`{(RESULTS / 'donde_falla.json').read_text()}`\n")
-        parts.append(_md(pd.read_csv(RESULTS / "donde_falla.csv", dtype={"short_name": str})))
-        parts.append("\n### E+F por bloque (media por día, evaluación)\n")
-        parts.append(_md(pd.read_csv(RESULTS / "ef_por_bloque.csv")))
-    (RESULTS / "tablas.md").write_text("\n".join(parts) + "\n")
-    print(f"escrito {RESULTS / 'tablas.md'}")
-
-
-# ======================================================================
-# CLI
-# ======================================================================
-
-STAGES = ["v1", "lambda", "h", "grid", "eval", "sens", "falla", "tablas"]
+    if "lambda_por_brazo" not in fz:
+        return  # --all en curso: prueba previa no debe contaminar selección
+    df = pd.read_csv(FINAL)
+    lines = ["# Run 3: tablas reproducibles", "", "E/F = minutos-estación/día; IC95 t pareado por día, diferencia brazo − Ecobici. Empates separados.", ""]
+    if N_FILE.exists():
+        lines += ["## Horizonte n (15 días de selección)", "",
+                  "`n=1` equivale a sin rebalanceo por entrega a t+60. Regla sobre la media diaria de las tres λ: parar si n+1 no mejora significativamente o empeora.",
+                  "", _md(pd.read_csv(N_FILE)), ""]
+    summary = []
+    for mes, group in list(df.groupby(df.day.str[:7])) + [("TOTAL", df)]:
+        eco = group[group.arm == "ecobici"].set_index("day")
+        for arm, a in group.groupby("arm"):
+            a = a.set_index("day")
+            delta, lo, hi, wins, ties = paired(a.EF, eco.EF)
+            summary.append({"mes": mes, "brazo": arm, "días": len(a), "E": a.E.mean(), "F": a.F.mean(),
+                            "E+F": a.EF.mean(), "visitas": a.visitas.mean(), "bicis_movidas": a.bicis_movidas.mean(),
+                            "bicis_por_visita": a.bicis_movidas.sum()/a.visitas.sum() if a.visitas.sum() else 0,
+                            "desvios": (a.desvios_salida+a.desvios_llegada).mean(), "km_desvio": a.km_desvio_medio.mean(),
+                            "IC95_diff_inf": lo, "IC95_diff_sup": hi, "gana_dias": wins, "empata_dias": ties,
+                            "replay_neto": a.replay_neto.mean()})
+    table = pd.DataFrame(summary)
+    lines += ["## Siete brazos por mes y total", "", _md(table), "", "## Tres lecturas y tiempos", ""]
+    v1 = RESULTS / "v1_run3.csv"
+    if v1.exists():
+        v = pd.read_csv(v1)
+        lines += ["## V1: replay Ecobici contra GBFS (15 días)", "",
+                  _md(v[["E_obs", "F_obs", "E_replay", "F_replay", "rel_E", "rel_F", "blank_min", "unobs_min"]].mean().to_frame().T), ""]
+    falla = RESULTS / "donde_falla.csv"
+    if falla.exists():
+        lines += ["## Dónde falla (estación × hora, todos los días)", "", _md(pd.read_csv(falla)), ""]
+    readings=[]
+    for arm in POLICIES:
+        a = df[df.arm == arm].set_index("day"); eco = df[df.arm == "ecobici"].set_index("day")
+        delta, lo, hi, wins, ties = paired(a.EF, eco.EF)
+        readings.append({"brazo":arm,"E+F_menos_pct": -100*delta/eco.EF.mean(), "IC95_pct_inf":-100*hi/eco.EF.mean(),
+                         "IC95_pct_sup":-100*lo/eco.EF.mean(),"gana":wins,"empata":ties,
+                         "visitas_pct":100*(a.visitas.mean()/eco.visitas.mean()-1),
+                         "visitas_menos_igual_resultado_pct":fz["lambda_por_brazo"][arm]["visitas_menos_igual_resultado_pct"],
+                         "minutos_por_visita_lambda":fz["lambda_por_brazo"][arm]["lambda"],
+                         "mediana_decision_s":a.decision_mediana_s.median(),"p95_decision_s":a.decision_p95_s.quantile(.95),
+                         "max_decision_s":a.decision_max_s.max(),"limite_10s":a.decisiones_limite_10s.sum()})
+    lines += [_md(pd.DataFrame(readings)), "", "## Tiempos por decisión en estados reales, brazo × λ", ""]
+    timing = []
+    raw = saved()
+    if len(raw):
+        for (arm, lam), g in raw[raw.arm.isin(POLICIES)].groupby(["arm", "lam"]):
+            values = [t for entry in g.tiempos_decision.dropna()
+                      for t in json.loads(entry)]
+            if values:
+                timing.append({"brazo": arm, "lambda":lam, "decisiones":len(values),
+                               "mediana_s":np.median(values), "p95_s":np.percentile(values,95),
+                               "max_s":max(values), "limite_10s":sum(t >= 9.99 for t in values)})
+    if timing:
+        lines += [_md(pd.DataFrame(timing)), ""]
+    lines += ["## Brechas pareadas (modelo − oráculo; directo − diario)", ""]
+    gaps = []
+    for mes, group in list(df.groupby(df.day.str[:7])) + [("TOTAL", df)]:
+        for a, b in (("ma_diaria", "oraculo_diario"), ("lgbm_diario", "oraculo_diario"),
+                     ("lgbm_directo", "oraculo_directo"), ("oraculo_directo", "oraculo_diario")):
+            left = group[group.arm == a].set_index("day").EF
+            right = group[group.arm == b].set_index("day").EF
+            value, lo, hi, wins, ties = paired(left, right)
+            gaps.append({"mes":mes,"a":a,"b":b,"delta_EF":value,"IC95_inf":lo,"IC95_sup":hi,
+                         "gana_dias":wins,"empata_dias":ties})
+    lines += [_md(pd.DataFrame(gaps)), "", "## Evolución de topes Ecobici", ""]
+    stats = json.loads(STATS.read_text())
+    lines += [_md(pd.DataFrame(stats["meses"])[["mes","ventana","visitas_p95","bicis_p95","visitas_p99","bicis_p99"]]), ""]
+    for tag, title in (("curva_prueba", "Curvas fuera de selección"), ("sens_", "Sensibilidades"), ("prod_2026", "Producción 2026 sin Ecobici")):
+        raw = saved()
+        rows = raw[raw.tag.str.startswith(tag)] if len(raw) else pd.DataFrame()
+        if len(rows):
+            agg = rows.groupby([rows.day.str[:7], "tag", "arm", "lam"], as_index=False, dropna=False)[["EF", "visitas", "damage_external"]].mean()
+            lines += ["## "+title, "", _md(agg), ""]
+            if tag == "sens_":
+                paired_sens = []
+                for (variant, arm), group in rows.groupby(["tag", "arm"]):
+                    base = df[df.arm == arm].set_index("day")
+                    g = group.set_index("day")
+                    change, low, high, wins, ties = paired(g.EF, base.EF)
+                    paired_sens.append({"variante":variant,"brazo":arm,"EF":g.EF.mean(),
+                                        "visitas":g.visitas.mean(),"damage_external":g.damage_external.mean(),
+                                        "delta_EF_base":change,"IC95_inf":low,"IC95_sup":high,
+                                        "gana_dias":wins,"empata_dias":ties})
+                lines += ["### Sensibilidad frente al mismo brazo, mismos 32 días", "",
+                          _md(pd.DataFrame(paired_sens)), ""]
+    prod = saved()
+    prod = prod[prod.tag == "prod_2026"] if len(prod) else pd.DataFrame()
+    if len(prod):
+        comparison = []
+        all_rows = pd.concat([df, prod], ignore_index=True)
+        all_rows["mes"] = all_rows.day.str[:7]
+        for month, group in all_rows.groupby("mes"):
+            for model, oracle in (("ma_diaria", "oraculo_diario"),
+                                  ("lgbm_diario", "oraculo_diario"),
+                                  ("lgbm_directo", "oraculo_directo")):
+                a = group[group.arm == model].set_index("day").EF
+                b = group[group.arm == oracle].set_index("day").EF
+                value, lo, hi, wins, ties = paired(a, b)
+                comparison.append({"mes":month,"modelo":model,"costo_error":value,
+                                   "IC95_inf":lo,"IC95_sup":hi,"gana_dias":wins,"empata_dias":ties})
+        lines += ["## Costo del error por mes: 2025 frente a 2026", "",
+                  _md(pd.DataFrame(comparison)), ""]
+    # Pronóstico al lado del resultado; k=0, neto.
+    acc = P.OUT_RESULTS / "accuracy_run3.csv"
+    if acc.exists():
+        a = pd.read_csv(acc).query("k == 0 and objetivo == 'neto'")
+        lines += ["## Exactitud del pronóstico (neto, k=0)", "", _md(a[["mes","variante","mae","wape"]]), ""]
+    lag = RESULTS / "rezagos_abril.csv"
+    if lag.exists():
+        lines += ["## Abril 2026: rezagos afectados por marzo incompleto", "", _md(pd.read_csv(lag)), ""]
+    eff = RESULTS / "eficiencia_run3.csv"
+    if eff.exists():
+        lines += ["## Recursos y duración por paso", "", _md(pd.read_csv(eff)), ""]
+    (RESULTS / "tablas.md").write_text("\n".join(lines).rstrip()+"\n")
+    eco=df[df.arm=="ecobici"]; best=df[df.arm==fz["mejor_real"]]
+    eco_ef=eco.EF.mean(); real_ef=best.EF.mean()
+    text=["# Conclusiones — ecosim run 3", "", "Resultados dentro del simulador, no promesa operacional ni rutas verificadas.", "",
+          f"El mejor brazo real elegido en agosto fue **{fz['mejor_real']}**. En la prueba, Ecobici obtuvo {eco_ef:,.0f} minutos-estación vacíos o llenos por día; el brazo real, {real_ef:,.0f} ({100*(1-real_ef/eco_ef):.1f}% menos).",
+          "", "## Brazos con esfuerzo equiparado en selección (no en prueba)", "", _md(pd.DataFrame(readings)[["brazo","E+F_menos_pct","IC95_pct_inf","IC95_pct_sup","gana","empata","visitas_pct"]]),
+          "", f"El esfuerzo se ajustó en los 15 días de selección, no en los meses de prueba. En prueba {fz['mejor_real']} hizo {100*(1-best.visitas.mean()/eco.visitas.mean()):.1f}% menos visitas que Ecobici, así que estos resultados no son estrictamente a igual esfuerzo fuera de muestra. Cuando λ=60 aún movía más que Ecobici se extrapoló por encima de la rejilla y se confirmó con otra corrida; `frozen.json` conserva intentos y error residual. La tabla muestra las visitas fuera de muestra.",
+          f"El replay de Ecobici tiene neto aplicado medio {eco.replay_neto.mean():+.1f} bicis/día. Si es positivo, incorpora bicicletas externas dentro de la ventana y favorece a Ecobici frente a las políticas cerradas.", "",
+          "## Pronóstico y actualización", ""]
+    for model, oracle in (("ma_diaria","oraculo_diario"),("lgbm_diario","oraculo_diario"),("lgbm_directo","oraculo_directo")):
+        a=df[df.arm==model].set_index("day").EF; b=df[df.arm==oracle].set_index("day").EF
+        dif,lo,hi,w,t=paired(a,b)
+        text.append(f"{model} menos {oracle}: costo del error {dif:,.0f} min/día (IC95 [{lo:,.0f}, {hi:,.0f}]); {w} días favorecen al modelo, {t} empatan.")
+    a=df[df.arm=="oraculo_directo"].set_index("day").EF; b=df[df.arm=="oraculo_diario"].set_index("day").EF
+    dif,lo,hi,w,t=paired(a,b)
+    text += [f"Actualización en el oráculo (directo − diario): {dif:,.0f} min/día, IC95 [{lo:,.0f}, {hi:,.0f}].", "", "## Diciembre y enero", ""]
+    for month in ("2025-12", "2026-01"):
+        m = df[df.day.str.startswith(month)]
+        a = m[m.arm == fz["mejor_real"]].set_index("day").EF
+        b = m[m.arm == "ecobici"].set_index("day").EF
+        delta, low, high, wins, ties = paired(a, b)
+        text.append(f"{month}: {100*(1-a.mean()/b.mean()):.1f}% menos E+F que Ecobici; IC95 de diferencia [{low:,.0f}, {high:,.0f}] min/día, gana {wins}/{len(a)} días, empata {ties}.")
+    caps_month = pd.DataFrame(stats["meses"])
+    caps_month = caps_month[caps_month.ventana == "05:00"]
+    text += ["", "## Topes: referencia y enero–agosto", "",
+             "Caso base 67 visitas/decisión y 14 bicis/visita (referencia sep–nov); hacia adelante 47 y 19 (p95 ene–ago). Sensibilidades p99 83/24 y 62/33, respectivamente.",
+             "", _md(caps_month[["mes","visitas_p95","bicis_p95","visitas_p99","bicis_p99"]]), "",
+             "## Por mes y limitaciones", "", _md(table[table.brazo.isin(("ecobici",fz["mejor_real"]))][["mes","brazo","E+F","visitas","replay_neto"]]), "",
+             "La variante de dañadas que sigue el feed aplica flujos externos distintos entre brazos tras recortes físicos: `damage_external` se publica junto a E+F; no aisla causalmente el efecto de dañadas.",
+             "Marzo de 2026: 23–31 excluidos como verdad. De los ocho días de abril de `prod_2026`, siete tienen por lo menos un rezago 7/14 días artificialmente a cero; el 6 de abril tiene ambos. `rezagos_abril.csv` cuenta los bloques-estación afectados; no imputa viajes ni cuantifica un contrafactual inexistente.",
+             "", "## Comparación con runs anteriores", "", "Run 1 fijaba dañadas y run 2 permitía bodega neta y entrega simultánea; aquí dañadas cambian en sitio, cada decisión equilibra bicis y entrega a +60 min. Por ello los porcentajes de runs 1 y 2 no son directamente comparables; no se reemplazan sus cifras históricas.", ""]
+    sensitivity = saved()
+    sensitivity = sensitivity[sensitivity.tag.str.startswith("sens_")] if len(sensitivity) else pd.DataFrame()
+    if len(sensitivity):
+        text += ["", "## Sensibilidades en los 32 días de curva", ""]
+        for arm in ("oraculo_directo", fz["mejor_real"]):
+            base = df[(df.arm == arm) & df.day.isin(days("curva"))].set_index("day")
+            for label in ("p99", "hacia_adelante", "entrega_45", "entrega_75", "danadas_feed"):
+                g = sensitivity[(sensitivity.arm == arm) & (sensitivity.tag == "sens_"+label)].set_index("day")
+                if len(g):
+                    dif, low, high, wins, ties = paired(g.EF, base.EF)
+                    text.append(f"{arm}, {label}: {g.EF.mean():,.0f} E+F/día; Δ vs 67/14 y entrega +60 = {dif:+,.0f} (IC95 [{low:,.0f}, {high:,.0f}]); flujo externo de dañadas {g.damage_external.mean():+,.1f} bicis/día.")
+    if len(prod):
+        text += ["", "## 2026: solo contra oráculos y sin rebalanceo", "",
+                 "El feed de 2026 no permite medir el esfuerzo/E+F de Ecobici; aquí no se simula ese brazo."]
+        for month, g in prod.groupby(prod.day.str[:7]):
+            for model, oracle in (("ma_diaria", "oraculo_diario"),
+                                  ("lgbm_diario", "oraculo_diario"),
+                                  ("lgbm_directo", "oraculo_directo")):
+                left = g[g.arm == model].set_index("day").EF
+                right = g[g.arm == oracle].set_index("day").EF
+                value, low, high, wins, ties = paired(left, right)
+                text.append(f"{month}, {model} − {oracle}: {value:,.0f} min/día (IC95 [{low:,.0f}, {high:,.0f}]); referencia 2025 en tablas.md.")
+    (RESULTS / "CONCLUSIONES.md").write_text("\n".join(text)+"\n")
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--all", action="store_true", help="todos los pasos, desde cero")
-    ap.add_argument("--stage", choices=STAGES, action="append")
-    ap.add_argument("--jobs", type=int, default=JOBS)
-    ap.add_argument("--force", action="store_true", help="seguir aunque V1 falle gravemente")
-    a = ap.parse_args(argv)
-    stages = STAGES if a.all else (a.stage or [])
-    if not stages:
-        ap.error("usa --all o --stage")
-    if a.all:
-        for p in [RESULTADOS_CSV, BLOCKS_PARQUET, FROZEN_JSON]:
-            p.unlink(missing_ok=True)
-    t = _time.perf_counter()
-    for st in stages:
-        print(f"== {st} ==", flush=True)
-        if st == "v1":
-            df = stage_v1(a.jobs)
-            if v1_summary(df)["criterio"]["grave"] and not a.force:
-                print("V1 falla gravemente (> 25%): se detiene aquí (usa --force para seguir).")
-                return 2
-        elif st == "lambda":
-            stage_lambda(a.jobs)
-        elif st == "h":
-            stage_h(a.jobs)
-        elif st == "grid":
-            stage_grid(a.jobs)
-        elif st == "eval":
-            stage_eval(a.jobs)
-        elif st == "sens":
-            stage_sens(a.jobs)
-        elif st == "falla":
-            stage_falla()
-        elif st == "tablas":
-            stage_tablas()
-    print(f"listo en {(_time.perf_counter() - t) / 60:.1f} min")
-    return 0
+    parser = argparse.ArgumentParser()
+    group=parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--all", action="store_true")
+    group.add_argument("--paso", type=int, choices=range(0,7))
+    parser.add_argument("--procesos", type=int, default=2)
+    parser.add_argument("--threads", type=int, default=1)
+    args=parser.parse_args(argv)
+    if args.procesos < 1 or args.procesos > 2 or args.threads < 1 or args.procesos*args.threads > 8:
+        parser.error("máximo dos procesos; procesos × threads debe estar entre 1 y 8")
+    RESULTS.mkdir(exist_ok=True)
+    reconcile_benchmark()
+    steps=range(1,7) if args.all else [args.paso]
+    step_functions = {1: paso1, 2: paso2, 3: paso3, 4: paso4, 5: paso5, 6: paso6}
+    for step in steps:
+        if step == 0:
+            print("Paso 0: resultados de run 2 archivados en ecosim/results/run2")
+            continue
+        start=time.perf_counter()
+        print(f"Paso {step}, {args.procesos} procesos × {args.threads} threads", flush=True)
+        step_functions[step](args.procesos,args.threads)
+        minutes = (time.perf_counter()-start)/60
+        efficiency = RESULTS / "eficiencia_run3.csv"
+        pd.DataFrame([{"paso":step,"procesos":args.procesos,"threads_por_proceso":args.threads,
+                       "duracion_min":round(minutes,2),"corridas_guardadas":len(saved())}]).to_csv(
+            efficiency, mode="a", header=not efficiency.exists(), index=False)
+        if step >= 3:
+            tablas()
+        print(f"Paso {step}: {minutes:.1f} min", flush=True)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

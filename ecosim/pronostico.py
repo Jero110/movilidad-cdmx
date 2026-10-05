@@ -1,497 +1,483 @@
-"""Pronósticos de salidas/llegadas por estación y bloque de 60 min (run 2,
-plan 2026-09-28-ecosim2, subtask pronostico2).
+"""Pronósticos del run 3: cinco brazos, dos formas y una sola interfaz ForecastTable.
 
-`uv run python -m ecosim.pronostico` escribe, para cada día de evaluación y de
-selección de `days.json`:
-
-* `forecasts/{day}_daily.parquet`: UNA emisión a las 05:30 que cubre 05:30–00:30
-  (`ma` de 4 semanas, sin corrección intradía; `refresh_min = 0`).
-* `forecasts/{day}_{oracle|ma|model}_f{f}.parquet`, f ∈ {15, 60, 180} min:
-  emisiones en 05:30, 05:30+f, … (< 00:30). La emisión de la hora s cubre los
-  bloques que tocan [s, s + f + L + h_max] (L = 60 min, h_max = 6 h, recortado
-  a 00:30). El bloque que contiene a s vale lo ya observado en él + el resto
-  esperado corregido (total esperado del bloque, no solo el resto).
-* `ecosim/results/pronostico/accuracy.csv`.
-
-Todo se calcula sobre conteos `C[día, estación, bin15, {dep, arr}]` (76 bins de
-15 min en [05:30, 00:30)). Un bin/bloque pertenece a la ventana del día
-`window_day(t)`: los viajes de 00:00–00:30 son del día anterior.
-
-Corrección intradía (`ma` y `model`): la emisión en s multiplica lo que falta
-por, para cada estación y por separado salidas y llegadas,
-
-    factor = clip((observado + K) / (pronosticado + K), 0.5, 2)
-
-con lo observado y lo pronosticado sobre [05:30, s) del mismo día. K = 5 se
-fijó ANTES de ver resultados y no se tunea. Causalidad: la emisión en s solo lee
-`C[:i]` (días anteriores) y `C[i, :, :s]` (bins con fin ≤ s del propio día).
+Los oráculos reciben una copia congelada de la verdad del día: son cotas ideales,
+no predictores causales. Los otros tres brazos leen únicamente historia anterior
+al día, y el directo observa además únicamente cuartos terminados antes de t.
+Ejecutar con `uv run python -m ecosim.pronostico` (bajo scripts/heavy.py).
 """
-
 from __future__ import annotations
 
 import json
-import math
-from datetime import date, timedelta
-from functools import lru_cache
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from pathlib import Path
 
+import duckdb
 import numpy as np
 import pandas as pd
 
 from ecosim import config as C
-from ecosim import contracts as K
-from ecosim import data
 from ecosim.days import day_type
 
+DEP, ARR = 0, 1
+NB15 = C.WINDOW_MIN // 15
+SLOTS = (NB15 + 3) // 4  # 19 horas completas y 00:00–00:30
+OUT_MODELS = C.DERIVED / "modelos"
 OUT_FORECASTS = C.DERIVED / "forecasts"
 OUT_RESULTS = C.REPO_ROOT / "ecosim" / "results" / "pronostico"
-BIN_MIN = 15
-NB15 = C.WINDOW_MIN // BIN_MIN          # 76 bins de 15 min
-N60 = C.WINDOW_MIN // 60                # 19 bloques de 60 min
-PER = 60 // BIN_MIN                     # 4 bins por bloque
-DEP, ARR = 0, 1
-NUM_THREADS = 4
+FEATURES_DAILY = ["station", "minute", "dow", "holiday", "lag7", "lag14", "mean28"]
+FEATURES_DIRECT = FEATURES_DAILY + ["k", "last15", "last60", "elapsed_delta"]
+# Hiperparámetros heredados, sin búsqueda.
+LGB_PARAMS = dict(objective="poisson", n_estimators=200, learning_rate=0.05,
+                  num_leaves=31, min_child_samples=50, subsample=0.8,
+                  subsample_freq=1, colsample_bytree=0.9, random_state=0,
+                  deterministic=True, force_row_wise=True, n_jobs=4, verbose=-1)
 
-REFRESH_MIN = list(C.FORECAST_REFRESH_MIN)   # f ∈ {15, 60, 180}
-LEAD_MIN = C.LEAD_MIN                        # L = 60
-H_MAX_H = 6                                  # h_max del asignador
-K_SHRINK = 5.0                               # encogimiento, fijado a priori
-FACTOR_CLIP = (0.5, 2.0)
-DAILY_HORIZON_H = N60                        # `daily` cubre las 19 h
-
-# Hiperparámetros del run 1, SIN tunear.
-LGB_PARAMS = dict(
-    objective="poisson", n_estimators=200, learning_rate=0.05, num_leaves=31,
-    min_child_samples=50, subsample=0.8, subsample_freq=1, colsample_bytree=0.9,
-    random_state=0, deterministic=True, force_row_wise=True,
-    n_jobs=NUM_THREADS, verbose=-1,
-)
-
-
-# ============================================================================
-# Conteos
-# ============================================================================
 
 def count_trips(trips: pd.DataFrame, universe: list[str], days: list[date],
                 dep_known: np.ndarray | None = None) -> np.ndarray:
-    """Conteos reales `[día, estación, bin15, {dep, arr}]` a partir de viajes.
+    """Conteos [día, estación, cuarto, salida/llegada] con llegada independiente.
 
-    `days` debe ser contiguo. Salida: `t_dep` en la ventana de su día
-    (`window_day`) y `o` en el universo. Llegada: `t_arr` en la ventana de su
-    propio día y `d` en el universo (una llegada a una estación desconocida no
-    entra: sale del sistema). Aplica igual a un día (oracle) que a la historia.
-    `dep_known` (opcional, bool por viaje): las salidas con False se ignoran (regla
-    del simulador: salida desde estación desconocida se ignora); las llegadas de
-    esos viajes SÍ cuentan.
+    No infiere llegadas desde salidas: un viaje puede cruzar dos ventanas.
     """
-    d0 = pd.Timestamp(days[0])
-    assert all(days[k + 1] - days[k] == timedelta(days=1) for k in range(len(days) - 1)), "days no contiguo"
-    sidx = pd.Index(universe)
-    out = np.zeros((len(days), len(universe), NB15, 2), dtype=np.float32)
-    for col, scol, kind in (("t_dep", "o", DEP), ("t_arr", "d", ARR)):
-        t = trips[col]
-        day = (t - pd.Timedelta(hours=5)).dt.normalize()          # window_day, vectorizado
-        off = ((t - day) / pd.Timedelta(minutes=1)).to_numpy() - (C.DAY_START.hour * 60 + C.DAY_START.minute)
-        di = ((day - d0) / pd.Timedelta(days=1)).to_numpy()
-        si = sidx.get_indexer(trips[scol])
-        ok = (off >= 0) & (off < C.WINDOW_MIN) & (di >= 0) & (di < len(days)) & (si >= 0)
+    out = np.zeros((len(days), len(universe), NB15, 2), np.float32)
+    day_ix = {d: i for i, d in enumerate(days)}
+    station_ix = pd.Index(universe)
+    for col, station, kind in (("t_dep", "o", DEP), ("t_arr", "d", ARR)):
+        times = pd.to_datetime(trips[col])
+        shifted = times - pd.Timedelta(hours=5)
+        di = shifted.dt.date.map(day_ix).fillna(-1).to_numpy(dtype=int)
+        minutes = ((times - shifted.dt.normalize() - pd.Timedelta(hours=5)) /
+                   pd.Timedelta(minutes=1)).to_numpy()
+        si = station_ix.get_indexer(trips[station])
+        ok = (di >= 0) & (si >= 0) & (minutes >= 0) & (minutes < C.WINDOW_MIN)
         if kind == DEP and dep_known is not None:
-            ok &= np.asarray(dep_known, bool)
-        np.add.at(out, (di[ok].astype(int), si[ok], (off[ok] // BIN_MIN).astype(int), kind), 1)
+            ok &= np.asarray(dep_known, dtype=bool)
+        np.add.at(out, (di[ok], si[ok], (minutes[ok] // 15).astype(int), kind), 1)
     return out
 
 
-def load_history(universe: list[str], start: date, end: date) -> tuple[list[date], np.ndarray]:
-    """Conteos de todos los días de [start, end] (por mes, para cuidar memoria).
+def load_counts(start: date = date(2024, 1, 1), end: date = date(2026, 8, 31)) -> tuple[list[date], list[str], np.ndarray]:
+    """Agrega directamente el parquet de viajes sin cargar 54 M de filas en pandas.
 
-    Lee viajes hasta el 00:30 del día siguiente a `end` (la cola de la última
-    ventana), sin pasar del sello de diciembre.
+    El universo es la unión de IDs válidos de 2025–2026; no indexamos estaciones
+    de prueba que todavía no existían en entrenamiento por posición cambiante.
     """
-    days, d = [], start
-    while d <= end:
-        days.append(d)
-        d += timedelta(days=1)
-    counts = np.zeros((len(days), len(universe), NB15, 2), dtype=np.float32)
-    last = min(end + timedelta(days=1), C.SEALED_FROM - timedelta(days=1))
-    lo = start
-    while lo <= last:
-        hi = min((pd.Timestamp(lo) + pd.offsets.MonthEnd(0)).date(), last)
-        chunk = data.trips_range(lo, hi)
-        counts += count_trips(chunk, universe, days)
-        del chunk
-        lo = hi + timedelta(days=1)
-    return days, counts
+    con = duckdb.connect()
+    con.execute("SET threads=4")
+    path = str(C.TRIPS_PARQUET)
+    universe = [r[0] for r in con.execute(f"""select distinct station from (
+        select o station from '{path}' where t_dep >= '2025-01-01'
+        union all select d station from '{path}' where t_arr >= '2025-01-01')
+        where regexp_full_match(station, '{C.SHORT_NAME_RE}') order by station""").fetchall()]
+    days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    counts = np.zeros((len(days), len(universe), NB15, 2), np.float32)
+    idx = {s: i for i, s in enumerate(universe)}
+    for kind, tm, station in ((DEP, "t_dep", "o"), (ARR, "t_arr", "d")):
+        rows = con.execute(f"""select cast({tm} - interval 5 hour as date) wd,
+             {station} station,
+             date_diff('minute', date_trunc('day', {tm} - interval 5 hour) + interval 5 hour, {tm}) // 15 bin,
+             count(*) n from '{path}'
+             where {tm} >= ? and {tm} < ? and regexp_full_match({station}, ?)
+             group by 1,2,3""", [datetime.combine(start, C.DAY_START),
+                                    datetime.combine(end + timedelta(days=1), C.DAY_END), C.SHORT_NAME_RE]).fetchall()
+        for d, s, b, n in rows:
+            di = (d - start).days
+            if 0 <= di < len(days) and 0 <= b < NB15 and s in idx:
+                counts[di, idx[s], b, kind] += n
+    con.close()
+    # El CSV de marzo de 2026 se corta el 22: el 23 es parcial y los
+    # siguientes contienen solo filas sueltas. No sirven ni como rezagos ni
+    # como etiquetas de entrenamiento, tampoco como verdad de evaluación.
+    for d in pd.date_range("2026-03-23", "2026-03-31"):
+        if start <= d.date() <= end:
+            counts[(d.date() - start).days] = 0
+    return days, universe, counts
 
 
-def to60(c: np.ndarray, axis: int = 1) -> np.ndarray:
-    """Suma grupos de 4 bins de 15 min a lo largo de `axis` (76 → 19)."""
-    c = np.moveaxis(c, axis, 0)
-    c = c.reshape(c.shape[0] // PER, PER, *c.shape[1:]).sum(1)
-    return np.moveaxis(c, 0, axis)
+def _blocks(c: np.ndarray, starts: np.ndarray) -> np.ndarray:
+    """Ventanas de 60 min [estación, (t,k), tipo]; la última se trunca en 00:30."""
+    prefix = np.concatenate([np.zeros((c.shape[0], 1, 2)), c.cumsum(axis=1)], axis=1)
+    ends = np.minimum(starts + 4, NB15)
+    return prefix[:, ends] - prefix[:, starts]
 
 
-@lru_cache(maxsize=None)
-def _dtype(d: date) -> str:
-    return day_type(d)
+def _type(d: date) -> bool:
+    return day_type(d) == "weekday"
 
 
-def _is_weekday(d: date) -> bool:
-    return _dtype(d) == "weekday"
+def _features(counts: np.ndarray, days: list[date], i: int, kind: int,
+              ticks: np.ndarray, direct: bool, labels: bool = True) -> tuple[pd.DataFrame, np.ndarray | None]:
+    """Una construcción compartida para entrenamiento y emisión, sin días futuros.
 
-
-def _valid_days(counts: np.ndarray) -> np.ndarray:
-    """Días con algún viaje en la ventana (descarta huecos de datos)."""
-    return counts.sum(axis=(1, 2, 3)) > 0
-
-
-# ============================================================================
-# Bases sin corrección: ma / daily / model
-# ============================================================================
-
-def ma_counts(counts: np.ndarray, days: list[date], i: int, valid: np.ndarray | None = None) -> np.ndarray:
-    """Media de los días de las 4 semanas anteriores (i-28..i-1) del mismo tipo
-    de día. `[estación, 76, 2]`. Solo lee `counts[:i]`. NaN si no hay ninguno."""
-    valid = _valid_days(counts[:i]) if valid is None else valid
-    wd = _is_weekday(days[i])
-    idx = [j for j in range(max(0, i - 28), i) if valid[j] and _is_weekday(days[j]) == wd]
-    if not idx:
-        return np.full(counts.shape[1:], np.nan)
-    return counts[idx].astype(np.float64).mean(axis=0)
-
-
-FEATURES = ["station", "block", "dow", "holiday", "lag7", "lag14", "mean28"]
-
-
-def features(counts: np.ndarray, days: list[date], i: int, kind: int,
-             valid: np.ndarray | None = None) -> pd.DataFrame:
-    """Features del día `i` para (estación × bloque de 60) del tipo `kind`:
-    rezago 7 y 14 días del mismo bloque y media de 28 días del mismo bloque y
-    tipo de día (las del run 1, extendidas a 19 bloques). Solo usan
-    `counts[:i]`. NaN si no hay dato."""
+    ticks son índices de cuartos de hora desde las 05:00. La etiqueta de cada
+    fila es el conteo de [t+60k,t+60(k+1)) (o la hora de reloj en forma diaria).
+    """
     S = counts.shape[1]
-    b60 = to60(counts[:i, :, :, kind], axis=2) if i > 0 else np.zeros((0, S, N60))  # [i, S, 19]
-    valid = _valid_days(counts[:i]) if valid is None else valid
+    ticks = np.asarray(ticks, dtype=int)
+    start = (ticks[:, None] + 4 * np.arange(6 if direct else SLOTS)[None, :]).ravel()
+    start = start[start < NB15]
+    # En diaria ticks=[0]; en directa todos los ticks se expanden por k.
+    t_values = np.repeat(ticks, 6 if direct else SLOTS)
+    k_values = np.tile(np.arange(6 if direct else SLOTS), len(ticks))
+    keep = (t_values + 4 * k_values) < NB15
+    t_values, k_values = t_values[keep], k_values[keep]
+    B = len(start)
+    assert B == len(t_values)
+    valid = counts[:i].sum(axis=(1, 2, 3)) > 0
+    blank = np.full((S, B, 2), np.nan)
+    def lag(n: int) -> np.ndarray:
+        j = i - n
+        return _blocks(counts[j], start) if j >= 0 and valid[j] else blank
+    peers = [j for j in range(max(0, i - 28), i) if valid[j] and _type(days[j]) == _type(days[i])]
+    mean = np.mean([_blocks(counts[j], start) for j in peers], axis=0) if peers else blank
+    vals = {
+        "station": np.repeat(np.arange(S, dtype=np.int32), B),
+        "minute": np.tile(300 + 15 * start, S).astype(np.int16) % 1440,
+        "dow": np.full(S * B, days[i].weekday(), np.int8),
+        "holiday": np.full(S * B, int(day_type(days[i]) == "holiday"), np.int8),
+        "lag7": lag(7)[:, :, kind].ravel().astype(np.float32),
+        "lag14": lag(14)[:, :, kind].ravel().astype(np.float32),
+        "mean28": mean[:, :, kind].ravel().astype(np.float32),
+    }
+    if direct:
+        today = counts[i, :, :, kind]
+        cum = np.concatenate([np.zeros((S, 1)), today.cumsum(axis=1)], axis=1)
+        # Solo observaciones con fin <= t, nunca del bloque que empieza en t.
+        last15 = np.where(t_values > 0, cum[:, t_values] - cum[:, np.maximum(t_values - 1, 0)], 0)
+        last60 = cum[:, t_values] - cum[:, np.maximum(t_values - 4, 0)]
+        expected = np.mean([counts[j, :, :, kind].cumsum(axis=1) for j in peers], axis=0) if peers else None
+        prior_mean = np.column_stack([np.zeros(S) if t == 0 or expected is None else expected[:, t-1]
+                                      for t in t_values])
+        vals.update(k=np.tile(k_values, S).astype(np.int8),
+                    last15=last15.ravel().astype(np.float32),
+                    last60=last60.ravel().astype(np.float32),
+                    elapsed_delta=(cum[:, t_values] - prior_mean).ravel().astype(np.float32))
+    y = _blocks(counts[i], start)[:, :, kind].ravel() if labels else None
+    return pd.DataFrame(vals), y
 
-    def lag(k):
-        return b60[i - k] if i - k >= 0 and valid[i - k] else np.full((S, N60), np.nan)
 
-    wd = _is_weekday(days[i])
-    idx = [j for j in range(max(0, i - 28), i) if valid[j] and _is_weekday(days[j]) == wd]
-    mean28 = b60[idx].mean(axis=0) if idx else np.full((S, N60), np.nan)
-    return pd.DataFrame({
-        "station": np.repeat(np.arange(S), N60),
-        "block": np.tile(np.arange(N60), S),
-        "dow": days[i].weekday(),
-        "holiday": int(_dtype(days[i]) == "holiday"),
-        "lag7": lag(7).ravel(), "lag14": lag(14).ravel(), "mean28": mean28.ravel(),
-    })
+def _ticks(direct: bool, day: date | None = None) -> np.ndarray:
+    """Una de cada 12 decisiones; fase rota diariamente y cubre los 78 ticks.
+
+    Referencia fija (sin azar): 2024-01-01 tiene fase cero. El mismo día
+    conserva su fase independientemente del inicio de la historia cargada.
+    """
+    if not direct:
+        return np.array([0])
+    if day is None:
+        raise ValueError("El submuestreo directo requiere el día")
+    phase = (day - date(2024, 1, 1)).days % 12
+    return np.arange(phase, NB15, 12)
 
 
-class Model:
-    """Dos LightGBM Poisson (salidas, llegadas) por (estación, bloque de 60)."""
+def _eligible(counts: np.ndarray, days: list[date], start: date, end: date,
+              excluded: set[date] | None = None) -> list[int]:
+    """Días con historia de 28 días y etiqueta disponible dentro del corte."""
+    excluded = excluded or set()
+    return [i for i, d in enumerate(days) if start + timedelta(days=28) <= d <= end
+            and d not in excluded and counts[i].sum() > 0]
 
-    def __init__(self, counts, days, train_end: date, universe_size: int):
-        import lightgbm as lgb
-        self.S = universe_size
-        valid_all = _valid_days(counts)
-        tr = [i for i, d in enumerate(days) if d <= train_end and valid_all[i]]
-        assert tr and days[max(tr)] <= train_end
-        self.models = {}
-        for kind in (DEP, ARR):
-            X, y = [], []
-            for i in tr:
-                X.append(features(counts, days, i, kind, valid_all))
-                y.append(to60(counts[i, :, :, kind], axis=1).ravel())
-            X = pd.concat(X, ignore_index=True)
-            X["station"] = pd.Categorical(X["station"], categories=range(self.S))
-            m = lgb.LGBMRegressor(**LGB_PARAMS)
-            m.fit(X[FEATURES], np.concatenate(y), categorical_feature=["station"])
-            self.models[kind] = m
 
-    def predict(self, counts, days, i, valid=None) -> np.ndarray:
-        """Pronóstico base `[estación, 19, 2]` (bloques de 60) del día i."""
-        out = np.zeros((self.S, N60, 2))
-        for kind in (DEP, ARR):
-            X = features(counts, days, i, kind, valid)
-            X["station"] = pd.Categorical(X["station"], categories=range(self.S))
-            out[:, :, kind] = np.clip(self.models[kind].predict(X[FEATURES]), 0, None).reshape(self.S, N60)
+def sampling_table(counts: np.ndarray, days: list[date]) -> pd.DataFrame:
+    """Auditoría por corte/tick: número de días, filas y horizontes por estación."""
+    rows = []
+    S = counts.shape[1]
+    for fold in C.FOLDS:
+        ticks_days = np.zeros(NB15, dtype=int)
+        for i in _eligible(counts, days, fold["train_start"], fold["train_end"]):
+            ticks_days[_ticks(True, days[i])] += 1
+        for tick, n_days in enumerate(ticks_days):
+            k_validos = min(6, (NB15 - tick + 3) // 4)
+            rows.append({"corte": fold["name"], "tick": tick,
+                         "hora": (datetime.combine(date(2024, 1, 1), C.DAY_START)
+                                  + timedelta(minutes=15*tick)).strftime("%H:%M"),
+                         "dias": int(n_days), "k_validos": k_validos,
+                         "filas_por_target": int(n_days * k_validos * S)})
+    return pd.DataFrame(rows)
+
+
+def train(counts: np.ndarray, days: list[date], start: date, end: date,
+          direct: bool, output: Path | None = None, excluded: set[date] | None = None):
+    """Dos Poisson, entrenados solo con días del corte y 28 días previos íntegros."""
+    import lightgbm as lgb
+    eligible = _eligible(counts, days, start, end, excluded)
+    if not eligible:
+        raise ValueError("Sin días de entrenamiento con rezagos íntegros")
+    models = []
+    cols = FEATURES_DIRECT if direct else FEATURES_DAILY
+    for kind in (DEP, ARR):
+        pairs = [_features(counts, days, i, kind, _ticks(direct, days[i]), direct) for i in eligible]
+        X = pd.concat([p[0] for p in pairs], ignore_index=True)[cols]
+        y = np.concatenate([p[1] for p in pairs])
+        X["station"] = pd.Categorical(X["station"], categories=range(counts.shape[1]))
+        model = lgb.LGBMRegressor(**LGB_PARAMS)
+        model.fit(X, y, categorical_feature=["station"])
+        models.append(model)
+        del X, y, pairs
+    if output is not None:
+        import joblib
+        output.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(models, output)
+    return models
+
+
+def predict(models, counts: np.ndarray, days: list[date], i: int,
+            ticks: np.ndarray, direct: bool) -> np.ndarray:
+    """Predicción [estación, bloques válidos, 2], mismas features que train."""
+    result = []
+    for kind, model in enumerate(models):
+        X, _ = _features(counts, days, i, kind, ticks, direct, labels=False)
+        cols = FEATURES_DIRECT if direct else FEATURES_DAILY
+        X["station"] = pd.Categorical(X["station"], categories=range(counts.shape[1]))
+        result.append(np.clip(model.predict(X[cols]), 0, None).reshape(counts.shape[1], -1))
+    return np.stack(result, axis=-1)
+
+
+@dataclass
+class Forecast:
+    """ForecastTable: diario congelado a 05:00; directo calculado para cada t."""
+    modelo: str
+    days: list[date]
+    counts: np.ndarray
+    day: date
+    models: list | None = None
+
+    def __post_init__(self):
+        self.forma = "directa" if self.modelo.endswith("directo") else "diaria"
+        self.i = self.days.index(self.day)
+        self._truth = self.counts[self.i].copy() if self.modelo.startswith("oraculo") else None
+        self._cache = {}
+        if self.forma == "diaria":
+            if self.modelo == "ma_diaria":
+                peers = [j for j in range(max(0, self.i - 28), self.i)
+                         if _type(self.days[j]) == _type(self.day) and self.counts[j].sum() > 0]
+                base = self.counts[peers].mean(axis=0) if peers else np.zeros_like(self.counts[self.i])
+                self._daily = _blocks(base, np.arange(0, NB15, 4))
+            elif self.modelo == "oraculo_diario":
+                self._daily = _blocks(self._truth, np.arange(0, NB15, 4))
+            else:
+                self._daily = predict(self.models, self.counts, self.days, self.i, np.array([0]), False)
+
+    def table(self, t: datetime, n_hours: int) -> np.ndarray:
+        start, end = C.day_bounds(self.day)
+        if t < start or t >= end or (t - start).total_seconds() % 900 or n_hours < 1:
+            raise ValueError("Decisión fuera de la rejilla/ventana o n_hours inválido")
+        offset = int((t - start).total_seconds() // 900)
+        out = np.zeros((self.counts.shape[1], 4 * n_hours, 2), np.float64)
+        remaining = min(4 * n_hours, NB15 - offset)
+        if self.forma == "diaria":
+            for j in range(remaining):
+                b = (offset + j) // 4
+                width = min(4, NB15 - 4 * b)
+                out[:, j, :] = self._daily[:, b, :] / width
+        else:
+            if self.modelo == "oraculo_directo":
+                starts = offset + 4 * np.arange(n_hours)
+                starts = starts[starts < NB15]
+                blocks = _blocks(self._truth, starts)
+            else:
+                if not self._cache:
+                    ticks = np.arange(NB15)
+                    whole = predict(self.models, self.counts, self.days, self.i, ticks, True)
+                    cursor = 0
+                    for slot in ticks:
+                        n = min(6, (NB15 - slot + 3) // 4)
+                        self._cache[slot] = whole[:, cursor:cursor+n, :]
+                        cursor += n
+                blocks = self._cache[offset]
+            for k in range(min(n_hours, blocks.shape[1])):
+                width = min(4, NB15 - offset - 4 * k)
+                out[:, 4*k:4*k+width, :] = blocks[:, k:k+1, :] / width
         return out
 
 
-def base15(variant: str, counts, days, i, model: Model | None = None, valid=None) -> np.ndarray:
-    """Base sin corrección `[estación, 76, 2]` en bins de 15 min. Solo lee `counts[:i]`.
-    `model` se reparte parejo dentro de su bloque de 60."""
-    valid = _valid_days(counts[:i]) if valid is None else valid
-    if variant in ("ma", "daily"):
-        return np.nan_to_num(ma_counts(counts, days, i, valid))   # sin días comparables → 0
-    if variant == "model":
-        return np.repeat(model.predict(counts, days, i, valid) / PER, PER, axis=1)
-    raise ValueError(variant)
+def forecast(modelo: str, counts: np.ndarray, days: list[date], day: date,
+             models: list | None = None) -> Forecast:
+    """Factory estable para los siete brazos (cinco pronósticos)."""
+    if modelo not in {"ma_diaria", "lgbm_diario", "oraculo_diario", "lgbm_directo", "oraculo_directo"}:
+        raise ValueError(modelo)
+    if modelo.startswith("lgbm") and models is None:
+        raise ValueError("LightGBM requiere sus modelos entrenados para el corte")
+    return Forecast(modelo, days, counts, day, models)
 
 
-def correction_factor(base: np.ndarray, today: np.ndarray, sb: int) -> np.ndarray:
-    """`[estación, 1, 2]`: (obs + K)/(pred + K) sobre los primeros `sb` bins
-    del día, acotado a [0.5, 2]. Solo lee `today[:, :sb]`."""
-    obs = today[:, :sb, :].astype(np.float64).sum(axis=1)
-    pred = base[:, :sb, :].sum(axis=1)
-    return np.clip((obs + K_SHRINK) / (pred + K_SHRINK), *FACTOR_CLIP)[:, None, :]
+def accuracy(days: list[date], counts: np.ndarray, test_days: list[date], models_daily,
+             models_direct) -> pd.DataFrame:
+    """Error de todos los días del periodo, todas las decisiones y cada k.
 
-
-def emit_day(variant: str, base: np.ndarray, today: np.ndarray, sb: int) -> np.ndarray:
-    """Emisión en el bin `sb` (s = 05:30 + 15·sb min): pronóstico de TODO el día
-    en bloques de 60, `[estación, 19, 2]`. `daily` no corrige.
-
-    Para `ma`/`model` se re-escala solo lo que FALTA (bins ≥ sb) por el factor;
-    los bins ya transcurridos valen lo observado. Así el bloque en curso vale
-    `observado_en_el_bloque + factor · resto_esperado`, y los bloques futuros
-    `factor · base`. Solo lee `today[:, :sb]`."""
-    if variant == "daily":
-        return to60(base, axis=1)
-    factor = correction_factor(base, today, sb)
-    adj = base * factor
-    adj[:, :sb, :] = today[:, :sb, :]
-    return to60(adj, axis=1)
-
-
-# ============================================================================
-# Calendario de emisiones y formato Forecast
-# ============================================================================
-
-def emission_offsets(f: int) -> list[int]:
-    """Minutos desde 05:30 de cada emisión de la serie de frecuencia f."""
-    return list(range(0, C.WINDOW_MIN, f))
-
-
-def covered_blocks(s_min: int, f: int) -> range:
-    """Bloques de 60 que toca [s, s + f + L + h_max], recortado a 00:30."""
-    end = min(s_min + f + LEAD_MIN + H_MAX_H * 60, C.WINDOW_MIN)
-    return range(s_min // 60, math.ceil(end / 60))
-
-
-def series_frame(day, variant: str, f: int, universe: list[str], full_by_emission) -> pd.DataFrame:
-    """DataFrame Forecast de una serie. `full_by_emission(s_min)` →
-    `[estación, 19, 2]`. f = 0 (`daily`): una emisión que cubre las 19 h."""
-    start, _ = C.day_bounds(day)
-    S = len(universe)
-    parts = []
-    offs = [0] if f == 0 else emission_offsets(f)
-    for s_min in offs:
-        blocks = range(N60) if f == 0 else covered_blocks(s_min, f)
-        full = full_by_emission(s_min)
-        nb = len(blocks)
-        parts.append(pd.DataFrame({
-            "issued_at": start + timedelta(minutes=s_min),
-            "variant": variant,
-            "short_name": np.repeat(universe, nb),
-            "block_start": np.tile([start + timedelta(minutes=60 * b) for b in blocks], S),
-            "block_min": 60,
-            "departures": full[:, list(blocks), DEP].ravel().astype(float),
-            "arrivals": full[:, list(blocks), ARR].ravel().astype(float),
-            "refresh_min": f,
-            "horizon_h": DAILY_HORIZON_H if f == 0 else H_MAX_H,
-        }))
-    df = pd.concat(parts, ignore_index=True)
-    for c in K.FORECAST_OPTIONAL:
-        df[c] = np.nan
-    df["issued_at"] = pd.to_datetime(df["issued_at"])
-    return K.validate_forecast(df[K.FORECAST_COLUMNS])
-
-
-def forecast_path(day, variant: str, f: int):
-    d = C.as_date(day).isoformat()
-    return OUT_FORECASTS / (f"{d}_daily.parquet" if variant == "daily" else f"{d}_{variant}_f{f}.parquet")
-
-
-def build_day(day, universe, counts, days, model: Model, oracle15: np.ndarray, write=True) -> dict:
-    """Todas las series del día. Devuelve `{(variant, f): DataFrame}`:
-    daily (f=0) y {oracle, ma, model} × f ∈ {15, 60, 180}. `oracle15` = conteos
-    reales del día `[estación, 76, 2]`."""
-    i = days.index(C.as_date(day))
-    valid = _valid_days(counts[:i])
-    today = counts[i]
-    bases = {v: base15(v, counts, days, i, model, valid) for v in ("ma", "model")}
-    out = {("daily", 0): series_frame(day, "daily", 0, universe,
-                                      lambda s: emit_day("daily", bases["ma"], today, 0))}
-    oracle60 = to60(oracle15.astype(np.float64), axis=1)
-    for f in REFRESH_MIN:
-        out[("oracle", f)] = series_frame(day, "oracle", f, universe, lambda s: oracle60)
-        for v in ("ma", "model"):
-            out[(v, f)] = series_frame(day, v, f, universe,
-                                       lambda s, v=v: emit_day(v, bases[v], today, s // BIN_MIN))
-    if write:
-        OUT_FORECASTS.mkdir(parents=True, exist_ok=True)
-        for (v, f), df in out.items():
-            df.to_parquet(forecast_path(day, v, f), index=False)
-    return out
-
-
-# ============================================================================
-# Exactitud
-# ============================================================================
-
-def censored(day, universe: list[str]) -> np.ndarray:
-    """`[estación, 19]` bool: algún snapshot GBFS no en blanco con 0 bicis
-    disponibles dentro del bloque de 60."""
-    s = data.snapshots(day)
-    s = s[(~s["blank"]) & (s["bikes"] == 0)]
-    start, _ = C.day_bounds(day)
-    off = ((s["t"] - start) / pd.Timedelta(minutes=1)).to_numpy()
-    sidx = pd.Index(universe).get_indexer(s["short_name"])
-    ok = (off >= 0) & (off < C.WINDOW_MIN) & (sidx >= 0)
-    out = np.zeros((len(universe), N60), bool)
-    out[sidx[ok], (off[ok] // 60).astype(int)] = True
-    return out
-
-
-def _acc_add(store: dict, key: tuple, err: np.ndarray, act: np.ndarray) -> None:
-    a = store.setdefault(key, [0, 0.0, 0.0, 0.0])
-    a[0] += err.size
-    a[1] += float(np.abs(err).sum())
-    a[2] += float(np.abs(act).sum())
-    a[3] += float(err.sum())
-
-
-def accumulate(store: dict, split: str, df: pd.DataFrame, universe: list[str],
-               truth60: np.ndarray, cens60: np.ndarray, day) -> None:
-    """Suma errores de una serie (verdad = conteos reales `[estación, 19, 2]`).
-
-    Distancia a la emisión = piso((block_start − issued_at) / 1 h), con el
-    bloque en curso (que empezó antes de s) en la cubeta 0.
+    El oráculo se evalúa sobre sus mismos bloques (no sobre una rejilla ajena).
+    MAE, WAPE y sesgo se acumulan con denominadores exactos, incluido neto.
     """
-    start, _ = C.day_bounds(day)
-    si = pd.Index(universe).get_indexer(df["short_name"])
-    bi = ((df["block_start"] - start) / pd.Timedelta(minutes=60)).to_numpy().astype(int)
-    dist = np.maximum(0, np.floor((df["block_start"] - df["issued_at"]) / pd.Timedelta(hours=1))).to_numpy().astype(int)
-    tdep, tarr = truth60[si, bi, DEP], truth60[si, bi, ARR]
-    pred = {"salidas": df["departures"].to_numpy(), "llegadas": df["arrivals"].to_numpy()}
-    act = {"salidas": tdep, "llegadas": tarr}
-    pred["neto"], act["neto"] = pred["llegadas"] - pred["salidas"], tarr - tdep
-    cm = cens60[si, bi]
-    variant, f = df["variant"].iat[0], int(df["refresh_min"].iat[0])
-    for target in pred:
-        err = pred[target] - act[target]
-        for h in np.unique(dist):
-            m = dist == h
-            for subset, sel in (("all", m), ("censurado", m & cm), ("no_censurado", m & ~cm)):
-                if sel.any():
-                    _acc_add(store, (split, variant, f, int(h), subset, target), err[sel], act[target][sel])
+    store = {}
+    for d in test_days:
+        variants = {name: forecast(name, counts, days, d, models_daily if name == "lgbm_diario" else
+                                    models_direct if name == "lgbm_directo" else None)
+                    for name in ("ma_diaria", "lgbm_diario", "oraculo_diario", "lgbm_directo", "oraculo_directo")}
+        for t in C.decision_times(d):
+            offset = int((t - C.day_bounds(d)[0]).total_seconds() // 900)
+            for name, f in variants.items():
+                table = f.table(t, 6)
+                truth_table = variants["oraculo_directo" if f.forma == "directa" else "oraculo_diario"].table(t, 6)
+                for k in range(6):
+                    start = offset + 4*k
+                    if start >= NB15:
+                        continue
+                    width = min(4, NB15 - start)
+                    pred = table[:, 4*k:4*k+width, :].sum(axis=1)
+                    truth = truth_table[:, 4*k:4*k+width, :].sum(axis=1)
+                    # Verdad expresada en la misma forma del oráculo gemelo:
+                    # sin fuga de resolución intrahoraria hacia la métrica.
+                    for label, p, y in (("salidas", pred[:, DEP], truth[:, DEP]),
+                                        ("llegadas", pred[:, ARR], truth[:, ARR]),
+                                        ("neto", pred[:, ARR]-pred[:, DEP], truth[:, ARR]-truth[:, DEP])):
+                        key = (d.strftime("%Y-%m"), name, k, label)
+                        bucket = store.setdefault(key, np.zeros(4))
+                        bucket += (len(y), np.abs(p-y).sum(), np.abs(y).sum(), (p-y).sum())
+        print("exactitud", d, flush=True)
+    return pd.DataFrame([dict(mes=m, variante=v, k=k, objetivo=target, n=int(a[0]),
+                              mae=a[1]/a[0], wape=a[1]/a[2] if a[2] else np.nan,
+                              sesgo=a[3]/a[0]) for (m,v,k,target), a in store.items()])
 
 
-def accuracy_table(store: dict) -> pd.DataFrame:
-    rows = [dict(split=k[0], variant=k[1], refresh_min=k[2], dist_h=k[3], subset=k[4], target=k[5],
-                 n=v[0], mae=v[1] / v[0], wape=v[1] / max(v[2], 1e-9), bias=v[3] / v[0])
-            for k, v in store.items()]
-    return pd.DataFrame(rows).sort_values(["split", "variant", "refresh_min", "subset", "target", "dist_h"]).reset_index(drop=True)
-
-
-def pooled(acc: pd.DataFrame) -> pd.DataFrame:
-    """MAE / WAPE por variante × f sobre todas las distancias (subset all), ponderado por n."""
-    a = acc[acc["subset"] == "all"].copy()
-    a["sum_abs"] = a["mae"] * a["n"]
-    a["sum_act"] = a["sum_abs"] / a["wape"].replace(0, np.nan)
-    g = a.groupby(["split", "target", "variant", "refresh_min"]).agg(n=("n", "sum"), sum_abs=("sum_abs", "sum"), sum_act=("sum_act", "sum"))
-    g["mae"] = g["sum_abs"] / g["n"]
-    g["wape"] = g["sum_abs"] / g["sum_act"]
-    return g[["n", "mae", "wape"]].reset_index()
-
-
-# ============================================================================
-# Comparación justa a igual (bloque objetivo, antelación): como decide el asignador
-# ============================================================================
-
-K_AHEAD = range(6)      # k-ésima hora de la ventana [t+L, t+L+6h]
-
-
-def lead_table() -> pd.DataFrame:
-    """Lee los parquet ya escritos. Para cada decisión t de la rejilla de 15 min
-    (`C.decision_times`, con t + L < 00:30) y cada k = 0..5, el objetivo es el
-    bloque que contiene t + L + 60·k min (la k-ésima hora de la ventana del
-    asignador). Cada serie usa su emisión más reciente con `issued_at ≤ t`
-    (daily: la única). Todas las series se evalúan sobre EXACTAMENTE los mismos
-    (día, estación, t, k), contra los conteos del oracle. Devuelve MAE/WAPE de
-    salidas, llegadas y neto por split × serie × k (`ahead_h` = k)."""
-    cfg = json.loads(C.DAYS_JSON.read_text())
-    split_of = {d["day"]: "evaluacion" for d in cfg["evaluacion"]}
-    split_of.update({d["day"]: "seleccion" for d in cfg["seleccion"]})
-    series = [("daily", 0)] + [(v, f) for v in ("ma", "model") for f in REFRESH_MIN]
-    acc: dict = {}
-    for day, split in split_of.items():
-        start, end = C.day_bounds(day)
-        o = pd.read_parquet(forecast_path(day, "oracle", 60)).drop_duplicates(["short_name", "block_start"])
-        o = o.set_index(["short_name", "block_start"])[["departures", "arrivals"]]
-        rows = []
-        for t in C.decision_times(day):
-            for k in K_AHEAD:
-                tt = t + timedelta(minutes=LEAD_MIN + 60 * k)
-                if tt < end:
-                    rows.append((t, k, start + timedelta(hours=int((tt - start) / pd.Timedelta(hours=1)))))
-        grid = pd.DataFrame(rows, columns=["t", "ahead_h", "block_start"])
-        for v, f in series:
-            df = pd.read_parquet(forecast_path(day, v, f))
-            ems = np.sort(df["issued_at"].unique())
-            g = grid.copy()
-            g["issued_at"] = ems[np.searchsorted(ems, g["t"].to_numpy(), side="right") - 1]
-            m = g.merge(df, on=["issued_at", "block_start"])
-            assert len(m) == len(g) * df["short_name"].nunique(), (v, f, len(m), len(g))
-            m = m.join(o, on=["short_name", "block_start"], rsuffix="_true")
-            e_dep, a_dep = m["departures"] - m["departures_true"], m["departures_true"]
-            e_arr, a_arr = m["arrivals"] - m["arrivals_true"], m["arrivals_true"]
-            for target, e, a in (("salidas", e_dep, a_dep), ("llegadas", e_arr, a_arr),
-                                 ("neto", e_arr - e_dep, a_arr - a_dep)):
-                for h, idx in m.groupby("ahead_h").groups.items():
-                    _acc_add(acc, (split, v, f, int(h), "all", target), e.loc[idx].to_numpy(), a.loc[idx].to_numpy())
-    return accuracy_table(acc).rename(columns={"dist_h": "ahead_h"}).drop(columns=["subset"])
-
-
-# ============================================================================
 def main() -> None:
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "lead":
-        t = lead_table()
-        t.to_csv(OUT_RESULTS / "accuracy_by_lead.csv", index=False)
-        print(t[(t.target == "salidas") & (t.split == "evaluacion")].pivot_table(
-            index="ahead_h", columns=["variant", "refresh_min"], values="mae").round(3).to_string())
-        return
+    import joblib
+    days, universe, counts = load_counts()
+    print(f"conteos: {len(days)} días, {len(universe)} estaciones", flush=True)
     cfg = json.loads(C.DAYS_JSON.read_text())
-    split_of = {C.as_date(d["day"]): "evaluacion" for d in cfg["evaluacion"]}
-    split_of.update({C.as_date(d["day"]): "seleccion" for d in cfg["seleccion"]})
-    run_days = sorted(split_of)
-    assert len(run_days) == 30 and max(run_days) < C.SEALED_FROM
-    universe = sorted(set().union(*[set(data.stations(d)["short_name"]) for d in run_days]))
-    hist_days, counts = load_history(universe, C.TRAIN_START, max(run_days))
-    print(f"historial: {len(hist_days)} días, {len(universe)} estaciones", flush=True)
-    # Los 30 días usan la regla del simulador (salida desde estación desconocida
-    # se ignora; las llegadas de esos viajes sí cuentan). La historia previa usa
-    # "origen en el universo" (unión de las estaciones de los 30 días): no hay
-    # lista de estaciones por día antes de agosto. Se reporta la diferencia.
-    oracle, dropped, total = {}, 0, 0
-    for d in run_days:
-        tr = data.trips(d)
-        oracle[d] = count_trips(tr, universe, [d], dep_known=tr["o_known"].to_numpy())[0]
-        raw = count_trips(tr, universe, [d])[0]
-        dropped += raw[:, :, DEP].sum() - oracle[d][:, :, DEP].sum()
-        total += raw[:, :, DEP].sum()
-        counts[hist_days.index(d)] = oracle[d]
-    print(f"salidas ignoradas por o_known en los 30 días: {int(dropped)} de {int(total)} ({dropped / total:.4%})", flush=True)
-    model = Model(counts, hist_days, C.TRAIN_END, len(universe))
-    print("modelo entrenado", flush=True)
-
-    store: dict = {}
-    for d in run_days:
-        frames = build_day(d, universe, counts, hist_days, model, oracle[d])
-        truth60 = to60(oracle[d].astype(np.float64), axis=1)
-        cens = censored(d, universe)
-        for df in frames.values():
-            accumulate(store, split_of[d], df, universe, truth60, cens, d)
-        print("listo", d, flush=True)
-
     OUT_RESULTS.mkdir(parents=True, exist_ok=True)
-    acc = accuracy_table(store)
-    acc.to_csv(OUT_RESULTS / "accuracy.csv", index=False)
-    orc = acc[acc["variant"] == "oracle"]
-    print("oracle MAE máx:", orc["mae"].max())
-    p = pooled(acc)
-    p.to_csv(OUT_RESULTS / "accuracy_pooled.csv", index=False)
-    print(p[p["target"] != "neto"].to_string())
+    OUT_MODELS.mkdir(parents=True, exist_ok=True)
+    OUT_FORECASTS.mkdir(parents=True, exist_ok=True)
+    (OUT_FORECASTS / "universe_run3.json").write_text(json.dumps(universe) + "\n")
+    tables = []
+    for fold in C.FOLDS:
+        name, first, last = fold["name"], fold["train_start"], fold["train_end"]
+        month = fold["test_month"]
+        # Exactitud: todos los días con viajes íntegros, no solo los que tienen
+        # fotos GBFS para simulación. Marzo 2026 termina el día 22 en el CSV.
+        test = [d for i, d in enumerate(days) if d.strftime("%Y-%m") == month
+                and counts[i].sum() > 0 and (month != "2026-03" or d <= C.TRIPS_2026_MARCH_LAST_COMPLETE)]
+        models = []
+        for direct in (False, True):
+            path = OUT_MODELS / f"{name}_{first}_{last}_{'directo' if direct else 'diario'}.joblib"
+            if path.exists():
+                m = joblib.load(path)
+            else:
+                m = train(counts, days, first, last, direct, path)
+            models.append(m)
+            print("entrenado", name, "directo" if direct else "diario", flush=True)
+        if test:
+            tables.append(accuracy(days, counts, test, *models))
+    acc = pd.concat(tables, ignore_index=True)
+    acc.to_csv(OUT_RESULTS / "accuracy_run3.csv", index=False)
+    sampling = sampling_table(counts, days)
+    sampling.to_csv(OUT_RESULTS / "direct_sampling.csv", index=False)
+    report(acc, days, counts, cfg, sampling)
+    print("reporte:", OUT_RESULTS / "REPORT.md", flush=True)
+
+
+def report(acc, days, counts, cfg, sampling):
+    """Tablas de exactitud con baseline del mismo mes, y dos pruebas de control."""
+    selected = [date.fromisoformat(r["day"]) for r in cfg["seleccion"]]
+    # La comparación de 2024 y la fuga aleatoria usan exclusivamente selección.
+    tests = []
+    for label, start, end, excluded in (
+        ("hacia adelante", date(2025,1,1), date(2025,7,31), set()),
+        ("con 2024", date(2024,1,1), date(2025,7,31), set()),
+        ("al azar (sin 15 días de selección)", date(2025,1,1), date(2025,8,31), set(selected))):
+        model = train(counts, days, start, end, False, excluded=excluded)
+        errors = []
+        for d in selected:
+            i = days.index(d)
+            p = predict(model, counts, days, i, np.array([0]), False)[:, :, DEP]
+            y = _blocks(counts[i], np.arange(0, NB15, 4))[:, :, DEP]
+            errors.append((np.abs(p-y).sum(), np.abs(y).sum()))
+        tests.append((label, np.array(errors)))
+    base = tests[0][1]
+    lines = ["# Pronósticos ecosim run 3", "", "## Método", "",
+             "Dos Poisson LightGBM por forma y corte, parámetros fijos del run 2. "
+             "Entrenamiento desde el día 29 de cada ventana (28 días previos completos). "
+             "Directo toma uno de cada 12 ticks de decisión (cada 3 h): la fase "
+             "(día − 2024-01-01) módulo 12 rota por día, de modo que todos los "
+             "instantes de 15 min aparecen en entrenamiento. No hay azar ni ajuste "
+             "de hiperparámetros. La evaluación usa todos los ticks de 15 min. "
+             "MA diaria: 28 días anteriores del mismo tipo. El oráculo conoce la verdad futura: "
+             "es cota ideal, no pronóstico desplegable. En evaluación cada k mide "
+             "la hora móvil, con cuartos repartidos según el reloj (diaria) o según t (directa). "
+             "Se rellenan con cero los cuartos posteriores a 00:30. Se excluyen "
+             "del entrenamiento y la evaluación 23–31 de marzo de 2026 por CSV incompleto. "
+             "El universo ordenado de 677 estaciones está en `forecasts/universe_run3.json`.",
+             "", "## Auditoría del submuestreo directo", "",
+             "`direct_sampling.csv` detalla, para cada corte y cada uno de los 78 ticks, "
+             "los días de entrenamiento y las filas por target "
+             "(días × estaciones × horizontes k válidos). Resumen por corte:", "",
+             "| Corte | Filas/target total | Días/tick mín–máx | Filas/target por tick mín–máx |",
+             "|---|---:|---:|---:|"]
+    for name, group in sampling.groupby("corte", sort=False):
+        lines.append(f"| {name} | {group.filas_por_target.sum():,} | "
+                     f"{group.dias.min()}–{group.dias.max()} | "
+                     f"{group.filas_por_target.min():,}–{group.filas_por_target.max():,} |")
+    lines += ["", "## Exactitud por mes y k", "",
+              "MAE, WAPE y sesgo (predicción menos verdad). El baseline `ma_diaria` del mismo "
+              "mes figura junto a cada variante; el WAPE neto divide por |llegadas−salidas|.", ""]
+    for month in sorted(acc.mes.unique()):
+        lines += [f"### {month}", "", "| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |",
+                  "|---|---:|---|---:|---:|---:|---:|---:|---:|"]
+        df = acc[acc.mes == month]
+        baseline = df[df.variante == "ma_diaria"].set_index(["k", "objetivo"])
+        for r in df.itertuples():
+            b = baseline.loc[(r.k, r.objetivo)]
+            lines.append(f"| {r.variante} | {r.k} | {r.objetivo} | {r.mae:.3f} | {r.wape:.3f} | {r.sesgo:.3f} | {b.mae:.3f} | {b.wape:.3f} | {b.sesgo:.3f} |")
+        lines.append("")
+    old_path = OUT_RESULTS / "accuracy_run3_before_rotation.csv"
+    if old_path.exists():
+        before = pd.read_csv(old_path)
+        old = before[before.variante == "lgbm_directo"]
+        new = acc[acc.variante == "lgbm_directo"]
+        comparison = []
+        for label, frame in (("antes", old), ("despues", new)):
+            frame = frame.copy()
+            frame["error_abs"] = frame.mae * frame.n
+            frame["verdad_abs"] = frame.error_abs / frame.wape
+            for (month, k, target), group in frame.groupby(["mes", "k", "objetivo"]):
+                comparison.append({"mes": month, "k": k, "objetivo": target,
+                                   "periodo": label, "error_abs": group.error_abs.sum(),
+                                   "verdad_abs": group.verdad_abs.sum()})
+            for (k, target), group in frame.groupby(["k", "objetivo"]):
+                comparison.append({"mes": "TOTAL", "k": k, "objetivo": target,
+                                   "periodo": label, "error_abs": group.error_abs.sum(),
+                                   "verdad_abs": group.verdad_abs.sum()})
+        comparison = pd.DataFrame(comparison)
+        comparison["wape"] = comparison.error_abs / comparison.verdad_abs
+        pivot = comparison.pivot(index=["mes", "k", "objetivo"], columns="periodo", values="wape").reset_index()
+        pivot["diferencia_pp"] = 100 * (pivot["despues"] - pivot["antes"])
+        pivot.to_csv(OUT_RESULTS / "accuracy_direct_comparison.csv", index=False)
+        lines += ["## Efecto de rotar el submuestreo directo", "",
+                  "WAPE de `lgbm_directo` antes (fase siempre cero) y después "
+                  "(fase rotativa) por k. `accuracy_direct_comparison.csv` contiene "
+                  "también el desglose por mes; TOTAL pondera los errores y la "
+                  "verdad absoluta, no promedia WAPE mensuales.", "",
+                  "| k | Objetivo | WAPE antes | WAPE después | Δ puntos porcentuales |",
+                  "|---:|---|---:|---:|---:|"]
+        for r in pivot[pivot.mes == "TOTAL"].itertuples():
+            lines.append(f"| {r.k} | {r.objetivo} | {r.antes:.4f} | {r.despues:.4f} | {r.diferencia_pp:+.2f} |")
+        lines.append("")
+    lines += ["## Comprobaciones (solo 15 días de selección, lgbm_diario, salidas)", "",
+              "| Entrenamiento | WAPE | Δ WAPE relativo vs hacia adelante | IC95 por bootstrap pareado |",
+              "|---|---:|---:|---:|"]
+    rng = np.random.default_rng(20261002)
+    for label, vals in tests:
+        delta = 1 - vals[:, 0].sum()/base[:, 0].sum()
+        picks = rng.integers(0, len(selected), size=(2000, len(selected)))
+        draws = 1 - vals[picks, 0].sum(axis=1)/base[picks, 0].sum(axis=1)
+        low, high = np.quantile(draws, [.025, .975])
+        lines.append(f"| {label} | {vals[:,0].sum()/vals[:,1].sum():.4f} | {delta:+.2%} | [{low:+.2%}, {high:+.2%}] |")
+    # IC pareado: mismos índices del bootstrap en numerador y denominador.
+    pick = np.random.default_rng(20261002).integers(0, len(selected), (2000, len(selected)))
+    ci = np.quantile(1-tests[1][1][pick,0].sum(axis=1)/base[pick,0].sum(axis=1), .025)
+    verdict = "usar 2024 (avisar al executor)" if 1-tests[1][1][:,0].sum()/base[:,0].sum() > .02 and ci > 0 else "mantener ventana desde 2025"
+    lines += ["", f"Decisión 2024: **{verdict}**. División al azar solo es diagnóstico, nunca entrena los brazos del simulador.", ""]
+    (OUT_RESULTS / "REPORT.md").write_text("\n".join(lines))
 
 
 if __name__ == "__main__":

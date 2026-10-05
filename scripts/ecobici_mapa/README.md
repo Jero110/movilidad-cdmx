@@ -1,234 +1,287 @@
-# Mapa Ecobici en tiempo real · producto final de ecosim
+# App Ecobici · rebalanceo (ecosim run 3)
 
-Mapa de las 677 estaciones de Ecobici con disponibilidad de bicis en vivo,
-alimentado por el feed GBFS oficial, más las dos pestañas del producto final
-de ecosim (run 2): **Replay** de un día con las decisiones del asignador cada
-15 min y **Predicción** en vivo (qué mover ahora y qué tan bueno habría sido).
+App local con tres pestañas: **Ahora**, **Replay** y **Predicción**.
 
 ```bash
 cd scripts/ecobici_mapa
-uv run python3 server.py                  # abre http://localhost:8000
-uv run python3 server.py --no-browser     # sin abrir el navegador
+uv run python3 server.py --no-browser          # http://localhost:8000
+uv run python3 server.py --no-browser --port 8765
+uv run python3 server.py --no-browser --no-live # sin bitácora del feed
 ```
 
-Opciones: `--port 9000`, `--no-browser`, `--no-live` (sin el loop en vivo),
-`--results-dir <carpeta>` (dónde están `frozen.json` y `resultados.csv`; por
-defecto `ECOSIM_RESULTS_DIR` o `ecosim/results`). Ctrl-C para detener.
+Opciones: `--port`, `--host`, `--no-browser`, `--no-live`, `--results-dir`.
 
-Capturas en [`screenshots/`](screenshots/) y descripción corta de la
-arquitectura en [`screenshots/APP.md`](screenshots/APP.md).
-
-## Por qué hay un servidor y no solo un HTML
-
-El feed GBFS **no manda header `Access-Control-Allow-Origin`**, así que un
-`fetch()` desde el navegador se bloquea por CORS. `server.py` resuelve eso:
-sirve el mapa y actúa de proxy hacia GBFS, cacheando por feed según su
-volatilidad (status 15s, información 1h, alertas 5min).
-
-El servidor es FastAPI + uvicorn (dependencias del proyecto; `uv sync` basta).
-
-## Qué muestra
-
-Vista 3D de la ciudad (MapLibre GL) con la cámara inclinada 58°.
-
-- **Ciudad en 3D**: edificios extruidos con altura real sobre un mapa claro.
-- **Estaciones como iconos de bici**: una por estación, con color por estado
-  (rojo 0 bicis, ámbar 1-3, verde 4+, azul sin espacio, gris inactiva).
-- **Click en una estación** → tarjeta con bicis disponibles, ocupación,
-  espacios libres, bicis fuera de uso, capacidad, antigüedad del dato y enlace
-  a Street View. Se mantiene al día sola mientras esté abierta.
-- **Cifra dominante**: total de bicis disponibles en el sistema, más
-  estaciones activas / sin bicis / sin espacio.
-- **Buscador**: filtra por nombre o número, ordena por escasez, y al elegir
-  vuela a la estación y abre su tarjeta.
-- **Alertas**: `system_alerts` del feed.
-
-Refresco cada 15s. Si el feed se cae, conserva el último estado bueno y lo
-señala en el pie en vez de vaciar el mapa.
-
-### Snapshots diarios (05:30 / 12:30)
-
-La pestaña **Snapshots** muestra el mismo mapa/tarjeta que "Bicis ahora" pero
-alimentado por un corte histórico fijo en vez del feed en vivo: para una
-fecha y horario (05:30 o 12:30, hora CDMX) elegidos en el selector, pinta el
-snapshot real más cercano a esa hora ese día. Útil para ver cómo se veía la
-red en un momento pasado sin depender de que el collector propio lleve mucho
-tiempo corriendo.
-
-Los datos vienen de `data/derived/daily_snapshots.parquet`, construido por
-`scripts/fetch_daily_snapshots.py` a partir del histórico público de
-terceros (`MaxHalford/bike-sharing-history`, ver
-[[Pruebas-MVP-fuentes-datos]] §4) — no del feed GBFS en vivo. El script se
-puede re-correr para agregar días nuevos sin duplicar los ya guardados:
+Preparar los datos (desde la raíz del repo):
 
 ```bash
-uv run python3 scripts/fetch_daily_snapshots.py --since 2026-09-01
+uv run python -m ecosim.replay --force   # precálculo del Replay (16 días × 7 brazos, ~20 min con 4 procesos)
+uv run python -m ecosim.actualizar       # cada mes: baja el mes nuevo y reentrena los modelos de producción
 ```
 
-Los endpoints `/api/snapshots/dates` y `/api/snapshots/{date}/{slot}` sirven
-la lista de fechas disponibles y el snapshot de un día/horario, en el mismo
-formato que `/api/snapshot`.
+## Qué es medido y qué es estimado
 
-### Diagnóstico de reubicaciones (día completo, no solo de noche)
+| Dato | Origen | Tipo |
+|---|---|---|
+| Ahora: bicis, anclajes, `raw` | feed oficial de Ecobici (GBFS), tal cual | medido |
+| Replay: viajes (salida, llegada, estación) | CSV de datos abiertos de Ecobici | medido |
+| Replay: estado a las 05:00 | foto del feed más cercana, llevada a 05:00 con los viajes | medido + ajuste documentado en `ecosim/data.py` |
+| Replay: movimientos de Ecobici (brazo `ecobici`) | cambios entre fotos del feed menos viajes (`ecosim/medicion.py`) | inferido |
+| Replay: órdenes de los brazos de política, desvíos, E y F | simulador `ecosim/sim.py` | simulado |
+| Predicción: pronósticos | modelos de producción (`ecosim/actualizar.py`) | estimado |
+| Predicción: viajes del día (forma directa y `salidas_est`/`llegadas_est`) | cambios del feed entre lecturas (`live.infer_flows`) | estimado (`"viajes_del_dia": "inferidos_feed"`) |
+| Predicción: órdenes de asignación | `Asignador` sobre el estado del feed | recomendación; no se ejecuta |
 
-La pestaña **Rebalanceo** muestra 2,639 pares estación→estación y 8,257
-bicis para el 2025-09-17. Los datos se derivan de viajes consecutivos: una
-bici que termina en A y cuyo siguiente viaje inicia en B ≠ A se registra
-como una **reubicación entre viajes**. Es consistente con rebalanceo, pero
-también puede reflejar mantenimiento, retiro o errores de registro; por eso
-la app no lo presenta como una ruta oficial ni como prueba de un camión.
+En vivo no se calcula E+F ni ahorro: Ecobici sigue operando y no hay contra
+qué comparar.
 
-**Ya no se filtra a una ventana nocturna fija.** La versión anterior solo
-contaba saltos dentro de 18:00–00:35 → 05:00–10:00, asumiendo rebalanceo
-exclusivamente nocturno. Medido sobre el histórico completo (ver
-[[Rebalanceo-Ecobici-suposicion-horario]]), **70.6% de los saltos detectados
-ocurre el mismo día calendario** en que se dejó la bici (gap mediano 2.3h),
-y solo 26.1% cruza a otro día con la forma overnight (visto de noche,
-recuperado a primera hora). Por eso la pestaña muestra ambos: líneas
-sólidas para mismo día, punteadas para overnight, con un toggle
-Todo/Mismo día/Overnight.
+## Contratos JSON
 
-Los endpoints `/api/rebalance` y `/api/rebalance/station/{short_name}` sirven
-el agregado (con `days_crossed` por ruta) y el detalle por bicicleta. Los
-Parquet se construyen con `analysis/rebalance_routes.py <día>` (un solo
-argumento de fecha, ej. `2025-09-17`).
+### `GET /api/snapshot` (Ahora)
 
-## Producto final de ecosim (run 2)
+`{"generated_at", "last_updated", "stale", "stations": [...], "alerts": [...]}`.
+Cada estación: `id, name, short_name, lat, lon, capacity, bikes, docks,
+bikes_disabled, docks_disabled, renting, returning, installed, last_reported,
+alerted` y **`raw`**: el objeto completo de `station_information` fusionado
+con el de `station_status`, con todas las llaves que mande la API
+(`station_id` es igual en ambos). Las bicis disponibles para rentar son
+`num_bikes_available` (`bikes`); las no rentables (`bikes_disabled`) no se suman.
 
-### Pestaña Replay: un día con las decisiones cada 15 min
+### `GET /api/zonas` (coropleta)
 
-Eliges un día (los 15 de evaluación de `ecosim/days.json`; también los de
-selección si se precalcularon) y un brazo: el **mejor brazo real congelado**
-(`best_real` de `frozen.json`, hoy `daily`), el **oracle**, el **replay de
-Ecobici** y el **baseline** sin rebalanceo. El reloj va de 05:30 a 00:30 en
-pasos de 15 min (play/pausa, paso adelante/atrás, velocidad 1–8×, slider).
-En cada paso:
+GeoJSON `FeatureCollection` (EPSG:4326) de las **AGEB urbanas del INEGI** que
+tienen al menos una estación. Cada feature: geometría `Polygon` o
+`MultiPolygon` y `properties = {"cvegeo", "alcaldia", "estaciones": [short_name, ...]}`.
+El servidor reparte las estaciones del snapshot vigente entre esas AGEB (la que
+la contiene; si una estación nueva cae fuera de todas, la más cercana, anotada
+en `metadata.cercanas_snapshot`), así que cada estación del snapshot aparece en
+exactamente una zona. `metadata` trae la fuente.
 
-- **Estado** del simulador por estación (vacía, 1–3, 4+, llena, fuera de
-  servicio; anillo morado = tiene dañadas).
-- **Viajes reales** que salen en el intervalo (arcos origen→destino; al
-  reproducir, puntos que viajan), como los usa el simulador, y desvíos.
-- **Decisión del asignador** en t: órdenes (±bicis por estación), cuándo se
-  hacen efectivas (t + L), proyección y cotas por estación, y E+F esperado
-  sin/con las órdenes.
-- **Insumos** de esa decisión: emisión de pronóstico usada (variante, f, H,
-  L), estado que vio, bodega acumulada, pendientes, topes (por hora, bodega,
-  bicis por movimiento), λ, μ y cota de retiro, estado de HiGHS.
-- **Órdenes efectivas** en el intervalo con sus recortes (por movimiento,
-  fuera de servicio, físico, bodega) y **movimientos de Ecobici** medidos por
-  GBFS en el mismo intervalo.
-- **Métricas acumuladas**: E+F (min-estación vacías + llenas, sin fuera de
-  servicio), movimientos y bicis movidas del brazo contra Ecobici y baseline.
+- **Fuente:** Marco Geoestadístico 2024 del INEGI (corte de actualización
+  cartográfica agosto 2024; archivos con fecha 26-nov-2024), entidad 09 Ciudad
+  de México, capa `09a` (AGEB urbanas) y `09mun` (nombre de la alcaldía):
+  <https://www.inegi.org.mx/contenidos/productos/prod_serv/contenidos/espanol/bvinegi/productos/geografia/marcogeo/794551132173/09_ciudaddemexico.zip>
+  (descargado el 2026-10-05; no encontramos una edición 2025 publicada).
+- **Cómo se genera:** `uv run python scripts/ecobici_mapa/zonas_ageb.py` (o
+  `--shp ruta/09_ciudaddemexico.zip` si la descarga falla) → `zonas_ageb.geojson`
+  (se commitea). Reproyecta de Cónica Conforme de Lambert (ITRF2008) a WGS84,
+  asigna cada estación de `station_information` a su AGEB (o a la más cercana,
+  anotado en `metadata.cercanas`; el 2026-10-05 fueron 0 de 677), se queda con las
+  AGEB con estaciones (243) y simplifica 4 m sin cambiar la topología de cada
+  polígono (0.11 MB).
 
-Los datos se **precalculan** con `ecosim/replay.py`, que llama a
-`sim.simulate` con exactamente los mismos insumos y parámetros que
-`run.run_one` (el asignador va envuelto en una grabadora que solo lee). El
-E+F final de cada (día, brazo) se compara contra `resultados.csv` y tiene que
-ser igual (tolerancia 0; lo exige `tests/ecosim/test_replay.py`):
+### `GET /api/replay/index`
 
-```bash
-# desde la raíz del repo; los 15 días de evaluación × 4 brazos (~12 min, 1 thread)
-uv run python -m ecosim.replay
-uv run python -m ecosim.replay --days 2025-09-03            # un día
-uv run python -m ecosim.replay --split seleccion            # días de selección
-uv run python -m ecosim.replay --results-dir ../ecosim2-integracion/ecosim/results
+Días y brazos precalculados, con `final`, `check` (incluye `igual` contra
+`resultados.csv` y `cuadre_todas_las_fotos`), `spec`, `cuadre` y `cum` por brazo.
+
+### `GET /api/replay/{día}/dia`
+
+Lo común a todos los brazos: `day, start, step_min, n_frames, times,
+stations{short_name,name,lat,lon,cap,docks_disabled,out_of_service},
+trips{id,o,d,dep,arr}, ecobici_moves`.
+
+- **79 fotos**: 05:00, 05:15, …, 00:15 y la foto de **cierre 00:30** (estado
+  final, después de todos los eventos del día). `times[k]` es la hora de la foto `k`.
+- `trips.id`: índice estable del viaje en `ecosim.data.trips(día)` (el mismo
+  que usan `desvios`). `dep`/`arr` en minutos desde las 05:00.
+
+### `GET /api/replay/{día}/{brazo}`
+
+`bikes[k][i]`, `dis[k][i]` (no rentables), `cum{E,F,moves,bikes_moved}`,
+`applied[k]`, `decision[k]`, `final`, `check`, `spec`, y además:
+
+- `snap[k]`: lo ocurrido en la foto `k`, es decir en el intervalo
+  **(t<sub>k−1</sub>, t<sub>k</sub>]** (eventos justo en `t_k` incluidos: ahí se emiten
+  órdenes y se aplican recogidas y entregas). En `k = 0` solo cuenta lo que pasa
+  a las 05:00 exactas y el “anterior” es `inicial`.
+  - Contrato: `min_desde_anterior, salidas, llegadas, desvios_salida,
+    desvios_llegada, emitidas, recogidas, entregadas, a_rentable,
+    a_no_rentable, E, F, EF, EF_acum, cuadre_ok, descuadre_estaciones,
+    bicis_sistema`.
+  - Agregados: `bicis_emitidas` (bicis pedidas por las órdenes emitidas),
+    `devueltas`, `bicis_no_aplicadas`, `etiquetas_no_aplicadas`,
+    `cuadre_sistema_ok`, `disponibles`, `no_rentables`, `en_camioneta`,
+    `en_viaje`, `entran_externas`, `salen_externas`, `externo_ecobici`.
+  - `salidas`/`llegadas` son las **reales** del simulador (después de desvíos).
+    `emitidas` cuenta visitas (órdenes) emitidas en `t_k`; `recogidas` y
+    `entregadas` son bicis efectivamente movidas.
+  - `E`/`F`: minutos-estación vacía / llena del intervalo
+    [t<sub>k−1</sub>, t<sub>k</sub>) con la misma serie minuto a minuto que da `cum` y
+    `resultados.csv`; `EF_acum[último] = final.EF`.
+- `est[k]`: solo estaciones con algún cambio,
+  `[i, entregadas, recogidas, a_rentable, a_no_rentable, salidas, llegadas, devueltas]`
+  (columnas en `est_cols`; `i` = índice en `stations`).
+- `desvios[k]`: `[trip_id, "salida"|"llegada", i_original, i_real, metros]`.
+- `inicial`: `{bikes, dis, en_viaje, bicis_sistema}` a las 05:00, para la cuenta de `k = 0`.
+- `final` agrega `recortes`, `danadas_no_aplicables`, `km_desvio_medio`,
+  `bicis_sistema_inicio` y `bicis_sistema_cierre`.
+
+**Cuadre** (lo calcula `ecosim/replay.py` y lo vuelve a hacer
+`tests/ecosim/test_replay.py` en todas las fotos de todos los archivos):
+
+```
+por estación:  bikes[k] = bikes[k−1] − salidas + llegadas + entregadas − recogidas + devueltas + a_rentable − a_no_rentable
+               dis[k]   = dis[k−1]   + a_no_rentable − a_rentable
+sistema:       bicis_sistema = disponibles + no_rentables + en_camioneta + en_viaje
+               bicis_sistema[k] = bicis_sistema[k−1] + entran_externas − salen_externas + externo_ecobici
 ```
 
-Salida en `data/derived/ecosim/replay/` (fuera de git, ~40 MB los 15 días):
-`{día}/dia.json` (estaciones, viajes, movimientos de Ecobici),
-`{día}/{brazo}.json` (frames) e `index.json`. Si `frozen.json` cambia, la
-pestaña lo avisa y basta con volver a correr el módulo (los archivos que ya
-son del `frozen.json` actual se saltan; `--force` recalcula todo).
+`cuadre_ok` exige ambas; `descuadre_estaciones` cuenta las estaciones que no cuadran.
+Eventos del simulador que no estaban en el contrato y se agregan explícitos:
 
-Endpoints: `/api/replay/index`, `/api/replay/{día}/dia`, `/api/replay/{día}/{brazo}`.
-Enlace directo: `/#replay?day=2025-09-03&arm=daily&k=30` (k = paso de 15 min).
+- **`devueltas`** (regla de `sim.py`): si al entregar no hay anclajes o la carga
+  no alcanza, el remanente de la camioneta vuelve a la estación con anclaje más
+  cercana al origen de la recogida, en la hora de entrega. Son bicis que entran a
+  esa estación sin ser una entrega pedida.
+- **`entran_externas` / `salen_externas`**: viajes que salen de una estación que
+  no está en el feed de ese día (la bici aparece al llegar) o llegan a una que no
+  está (la bici sale del sistema). Por estación ya están dentro de `llegadas`.
+- **`externo_ecobici`**: en el brazo `ecobici` las órdenes son los movimientos
+  medidos del feed, que no tienen camioneta ni neto cero: su neto cambia las
+  bicis del sistema.
+- `bicis_no_aplicadas` (bicis pedidas y no movidas: tope por visita, sin bicis o
+  sin anclajes, estación fuera de servicio) y `etiquetas_no_aplicadas` (cambios
+  rentable ↔ no rentable observados que no se pudieron aplicar por falta de
+  bicis) no cambian el inventario; se publican para que nada quede oculto.
 
-### Pestaña Predicción: pipeline en vivo
+Un cambio no rentable ↔ rentable (`a_rentable`, `a_no_rentable`) es la misma bici
+en la misma estación que cambia de etiqueta; no es rebalanceo.
 
-`server.py` arranca un hilo (`ecosim.live.LiveLoop`, se apaga con `--no-live`):
+### Predicción (`/api/live/…`, solo en vivo)
 
-1. **Cada 60 s** lee el feed (el mismo proxy de `/api/snapshot`) y guarda la
-   lectura en `data/derived/ecosim/live/gbfs/{día}.jsonl` (bicis, dañadas,
-   anclajes libres, capacidad y en servicio, por estación). Ese registro es
-   el estado y la base para medir.
-2. **Cada 15 min** (05:30, 05:45, …; y con el botón **Correr ahora**) corre
-   `ecosim.live.run_at(t)`:
-   - **estado** = última lectura con hora ≤ t;
-   - **pronóstico** de salidas y llegadas por estación y bloque de 60 min
-     con el modelo elegido. **Por default `daily`** (el mejor brazo real del
-     run 2: media de 4 semanas del mismo tipo de día, una emisión, sin
-     corrección; el loop corre con él). En el selector también está `ma` (la
-     misma media + corrección intradía con viajes inferidos del feed, solo
-     sobre los bins de 15 min que el registro cubre; **sesgo**: compara
-     viajes inferidos, que son netos y menos que los reales, contra una base
-     de viajes reales, así que el factor tiende a bajar el pronóstico). `model` (LightGBM) queda enchufable en `live.FORECASTERS`
-     pero no disponible: necesita los viajes reales del día anterior;
-   - **asignador** con lo congelado en `frozen.json` (λ, μ, cota de retiro,
-     L, topes, bicis por movimiento; f y H del mejor (f, H) del modelo),
-     bodega inicial 0 y sin órdenes pendientes;
-   - **riesgo**: flujo sin mover nada en [t, t + L + H): primer minuto en que
-     cada estación se vacía o se llena.
-   Cada corrida se guarda en `data/derived/ecosim/live/runs/{fecha-hora}_{modelo}.json`.
-3. **Qué tan bueno sería** (`live.evaluate`, `/api/live/eval`): cuando un
-   bloque pronosticado ya terminó, compara salidas y llegadas pronosticadas
-   contra las **inferidas** de los cambios de stock del feed (neto por
-   lectura de ~1 min, así que subestiman; cambios ≥ 5 bicis se toman como
-   camión), el stock proyectado sin mover contra el observado y E/F en el
-   horizonte completo. Muestra el error acumulado por antelación.
+Sin parámetro de fecha ni modo histórico: todo usa el feed de este momento.
 
-**Datos para el `ma` en vivo.** Los datos abiertos de Ecobici en
-`data/ecobici/` llegan hasta **agosto 2026** (último día completo
-2026-08-30), así que para hoy no hay las 4 semanas previas. Se usa un
-**fallback declarado**: las 4 semanas que terminan en el último día
-publicado, del mismo tipo de día (la pestaña lo rotula en naranja). Nunca se
-lee `2025-12.csv` (sellado) ni un día ≥ el de la corrida. Cuando se publiquen
-meses nuevos basta con dejarlos en `data/ecobici/`.
+**Watcher del feed.** Desde que arranca (salvo `--no-live`), el servidor consulta
+el feed cada `POLL_S` = 15 s y registra una **lectura** solo cuando el feed
+cambió (otra `last_updated` de `station_status` o distinto contenido). Cada
+lectura va a la bitácora del día, `data/derived/ecosim/live/gbfs/{día}.jsonl`
+(foto completa) y `{día}_lecturas.jsonl` (resumen), y se emite como evento
+`feed`. Lecturas iguales no generan nada.
 
-Una corrida sin servidor: `uv run python -m ecosim.live` (`--model ma` para la otra variante); la
-evaluación acumulada: `uv run python -m ecosim.live --eval`.
+`lectura = {"t_feed", "t_detectado", "primera", "estaciones_cambiaron", "salidas_est", "llegadas_est", "saltos_camioneta", "bicis_disponibles", "no_rentables", "anclajes_libres", "estaciones", "estaciones_vacias", "estaciones_llenas"}`
 
-Endpoints: `/api/live/status`, `/api/live/latest?model=daily`,
-`POST /api/live/run?model=daily`, `/api/live/eval`. Enlace directo: `/#vivo`.
+- `t_feed`: hora del feed (`last_updated`). `t_detectado`: cuándo el watcher vio
+  el cambio. Ambas en hora local con segundos.
+- `salidas_est`/`llegadas_est`: estimadas contra la lectura anterior con la regla
+  de `infer_flows` (cambio de disponibles + no rentables, saltos de 5 o más =
+  camioneta, contados en `saltos_camioneta`). En la primera lectura van `null`.
+- `estaciones_vacias`/`estaciones_llenas`: estaciones en servicio con 0 bicis
+  disponibles / 0 anclajes libres.
 
-## Dos rarezas del feed que el código maneja
+- `GET /api/live/feed` →
+  `{"ultima_lectura": lectura, "ultimo_cambio", "ultima_consulta", "lecturas_hoy", "desde", "poll_s", "error", "lecturas": [últimas 20 lecturas]}`.
+- `GET /api/live/eventos`: **Server-Sent Events** (`text/event-stream`). Al conectarse
+  manda la última lectura y después cada evento con `id:`, `event:` y `data:` (JSON
+  con `id` consecutivo y `hora`). Manda un comentario `: latido` cada 15 s.
+  - `event: feed`: una lectura nueva (`data` = `{"id", "evento": "feed", "hora", …lectura}`).
+  - `event: paso`: una sesión registró un paso:
+    `{"id", "evento": "paso", "hora", "sesion", "n", "t", "t_feed", "disparo", "espera_s", "feed_atrasado", "visitas", "bicis_a_mover", "aplicadas", "estado_feed"}`.
+  - `event: sesion`: una sesión arrancó o cambió de estado o de fase:
+    `{"id", "evento": "sesion", "hora", "sesion", "estado", "fase", "siguiente_paso", "pasos", "error"}`.
+  - En el navegador: `new EventSource("/api/live/eventos")` con
+    `addEventListener("feed" | "paso" | "sesion", …)`. `GET /api/live/assign/{id}`
+    queda como respaldo.
 
-Ambas verificadas contra datos reales el 2026-09-16, y ninguna está en la
-especificación GBFS:
+- `GET /api/live/models` →
+  `{"datos": {"ultimo_dia_publicado", "actualizado", "dia"}, "modelos": [{"key", "forma", "label", "disponible", "motivo", "corte": {"train_start", "train_end"}, "n", "lambda", "nota", "rezagos_hoy", "horizontes"}]}`.
+  Modelos: `ma_diaria`, `lgbm_diario`, `lgbm_directo` (los oráculos no se
+  ofrecen en vivo). Cada uno se prueba una vez al día; si falla, queda
+  `disponible: false` con la causa en `motivo`. `horizontes` es la lista de
+  valores válidos de `horizonte` para ese modelo: `["dia"]` en la forma diaria,
+  `[1, 2, 3, 4]` en la directa.
+- `POST /api/live/forecast?model=&horizonte=` → (forma diaria — `ma_diaria`,
+  `lgbm_diario` — solo `horizonte=dia`; forma directa — `lgbm_directo` — solo
+  `horizonte=1|2|3|4`; cualquier otra combinación, y cualquier otro parámetro
+  como `at`, responde **400** con el motivo)
+  `{"id", "issued_at", "t", "t_feed", "model", "forma", "horizonte", "referencia": {"rezagos": "reales"|"dia_referencia", "dia_referencia", "faltan", "feed_hoy": {"desde", "fotos", "completo", "hueco_max_min", "nota"?}|null, "viajes_del_dia": "inferidos_feed"|null, "inferencia", "estaciones_sin_pronostico"}, "minutes": [15, 30, …], "stations": {"short_name", "name", "lat", "lon", "cap"}, "bikes_now": [...], "proyeccion": [[...] por paso], "salidas": [[...] por paso], "llegadas": [[...] por paso], "riesgos": [{"short_name", "tipo": "vacia"|"llena", "minutos"}], "notas", "estimado": true}`.
+  - `t` = cuarto de hora en curso del feed; `proyeccion[j][i]` es la estación `i`
+    a `t + minutes[j]`; `salidas`/`llegadas` tienen la misma forma (esperadas en ese cuarto).
+  - `dia` llega hasta las 00:30 (la forma diaria es el pronóstico del día
+    completo); la directa, de 1 a 4 h. Si el horizonte pasa de las 00:30, se corta
+    ahí y lo dice en `notas`.
+  - Fuera de 05:00–00:30 responde 409.
+  - Fechas y horas: hora local sin zona; `issued_at` y `t_feed` con segundos.
+- `POST /api/live/assign/start?forecast_id=&horas=` → `{"session_id"}`. La
+  decisión sigue siendo cada 15 min (recoge a t+15, entrega a t+60, topes por
+  decisión), pero cada paso lo **dispara el feed**:
+  - el primer paso corre de inmediato con el feed actual (`t` = hora actual
+    redondeada a 15 min; `disparo: "inicio"`);
+  - en cada marca `t` siguiente, el paso espera la **primera lectura del feed con
+    `t_feed ≥ t`** (`disparo: "cambio_feed"`, `espera_s` = segundos de `t` a que se
+    detectó);
+  - si en `ESPERA_MAX_S` = 300 s no llega, corre con la última lectura
+    (`disparo: "sin_cambio_feed"`, `feed_atrasado: true`). Si el feed quedó más de
+    15 min atrás de `t`, ese paso no emite órdenes y lo dice en `nota`.
+- `GET /api/live/assign/{id}` →
+  `{"estado": "corriendo"|"terminada"|"detenida"|"error", "fase": "emitiendo"|"cerrando", "model", "inicio", "horas", "fin_emision", "params", "inicio_estado": estado, "pasos": [{"t", "t_feed", "disparo": "inicio"|"cambio_feed"|"sin_cambio_feed", "espera_s", "feed_atrasado", "estado_feed": estado, "lecturas_desde_paso": [lectura], "emitidas": [orden], "aplicadas": [orden], "bicis_a_mover", "visitas", "salidas_est", "llegadas_est", "ventana_est", "saltos_camioneta", "nota"}], "totales": {"bicis_a_mover", "visitas", "recogidas", "entregadas"}, "pendientes": [orden], "siguiente_paso", "error", "nota"}`,
+  con `orden = {"short_name", "accion": "recoger"|"entregar", "n", "emitida", "recoge", "entrega"}`
+  y `estado = {"t_feed", "bicis_disponibles", "no_rentables", "anclajes_libres", "estaciones_vacias", "estaciones_llenas"}`.
+  - `inicio_estado`: el feed con que arrancó la sesión; `estado_feed`: el del paso;
+    `lecturas_desde_paso`: las lecturas del feed entre el paso anterior y este.
+  - Durante `horas` emite órdenes (fase `emitiendo`); después sigue cada 15 min
+    sin emitir hasta que se aplica la última entrega pendiente (fase `cerrando`)
+    y termina con recogidas = entregadas.
+  - `aplicadas` = órdenes cuya recogida (`recoge`) o entrega (`entrega`) toca en ese paso.
+  - `salidas_est`/`llegadas_est`: viajes estimados del feed en `ventana_est` (los 15 min previos).
+- `POST /api/live/assign/{id}/stop` detiene la sesión antes del siguiente paso.
+- `GET /api/live/assign` lista las sesiones guardadas (para retomar la activa al recargar).
 
-1. **Las alertas no llenan `station_ids`.** Ecobici manda los números de
-   estación en el texto libre de `description` ("Cuauhtémoc: 176, 264 a 269 y
-   271 a 275"). `parse_station_numbers()` los extrae, expande los rangos y
-   descarta las fechas del mismo texto ("del 13 al 16 de septiembre"), que de
-   otro modo se leerían como números de estación.
+Las sesiones se guardan en `data/derived/ecosim/live/asignaciones/{id}.json`
+y los pronósticos en `data/derived/ecosim/live/pronosticos/{id}.json`; recargar la
+página no las pierde. Si el servidor se reinicia, una sesión que estaba
+corriendo queda en `estado: "error"` con la causa (su hilo no sobrevive).
 
-2. **`short_name` puede ser compuesto.** Además de `"033"`, el feed trae
-   `"264-275"`, `"268-269"`, `"390-391"`: una estación física que agrupa varios
-   números. `short_name_keys()` los expande.
+**Cómo pronostica en vivo.** `ecosim/live.py` llama a `ecosim.pronostico.forecast`
+(misma construcción de variables que el experimento) sobre los conteos y modelos
+de producción. Rezagos (`lag7`, `lag14`, `mean28`): si existen en los viajes
+publicados se usan tal cual. `mean28` cuenta como existente solo con al menos
+`MIN_RECENT_PEERS` = 4 días comparables (mismo tipo: entre semana / fin de semana)
+con viajes publicados en los 28 días previos; con menos, se trata como faltante
+(`faltan` lo dice, p. ej. `"mean28: 3 días comparables publicados (< 4)"`). Con todos
+presentes, `"rezagos": "reales"`; si falta alguno, el pronóstico se hace para el día publicado
+más reciente del mismo tipo que sí los tiene (`"dia_referencia"`) y se alinea al
+reloj de hoy. Nunca se rellenan con ceros. La forma directa calcula `last15`,
+`last60` y `elapsed_delta` con la misma función, alimentada con salidas y
+llegadas inferidas del feed de hoy (cambios de disponibles + no rentables entre
+lecturas; saltos de 5 o más bicis se toman como camioneta). Si hoy no hay
+lecturas desde las 05:00 sin huecos de más de 15 min, `feed_hoy.completo` es `false`.
+El asignador usa n, λ y topes congelados en `ecosim/results/frozen.json`.
 
-   Cuidado adicional: `station_id` y `short_name` son espacios de
-   identificadores **distintos** — la estación con `short_name` `"033"` tiene
-   `station_id` `"545"`. Cruzarlos marca estaciones equivocadas.
+## Datos y modelos de producción (`ecosim/actualizar.py`)
 
-   Validación de que el matching quedó bien: las 15 estaciones que la alerta
-   menciona resuelven a 10 estaciones físicas, y las 10 reportan
-   `is_renting=0` en el feed en vivo — confirmación independiente, sin falsos
-   positivos.
+`uv run python -m ecosim.actualizar` (una vez al mes):
 
-## Fuente
+1. Lee <https://ecobici.cdmx.gob.mx/datos-abiertos/> y baja el mes más nuevo a
+   `data/ecobici/` si no está. Si la página o la descarga fallan, lo avisa y usa
+   los CSV que haya ahí (el usuario puede dejarlos a mano). Con `--sin-red` no lo intenta.
+2. Audita el encabezado de cada CSV contra las columnas que lee `ecosim.data.build_trips`.
+3. Arma `data/derived/ecosim/produccion/viajes.parquet` con todos los meses
+   (desde 2024-01) usando `build_trips` (misma limpieza y auditoría,
+   `viajes_auditoria.json`) y los conteos por estación y cuarto de hora (`conteos.npz`).
+4. Entrena `lgbm_diario` y `lgbm_directo` con `ecosim.pronostico.train`
+   (mismas variables y parámetros del run 3) con todos los días disponibles y
+   los guarda en `produccion/modelos/`.
+5. Escribe `produccion/manifiesto.json` (último día publicado, rango de
+   entrenamiento, fecha de actualización, filas, archivos y resultado de la descarga).
 
-`https://gbfs.mex.lyftbikes.com/gbfs/gbfs.json` → sub-feeds `es`.
-Detalle de los 5 sub-feeds en [[Pruebas-MVP-fuentes-datos]] §1.bis.
+Sin meses nuevos no reentrena (`--forzar` para hacerlo). No toca
+`trips_2024_01_2026_08.parquet` ni `modelos/` del run 3 (los usan el replay y el reporte).
 
-## Siguiente paso posible
+## Endpoints
 
-El servidor no guarda historia: cada poll reemplaza al anterior. Persistir los
-snapshots a disco construiría la serie temporal propia que el wiki señala como
-100% original del proyecto (nadie más la tiene) — ver
-[[Pruebas-MVP-fuentes-datos]] §1.bis, punto 2.
+Activos: `/api/snapshot`, `/api/zonas`, `/api/replay/index`, `/api/replay/{día}/dia`,
+`/api/replay/{día}/{brazo}`, `/api/live/models`, `POST /api/live/forecast`,
+`POST /api/live/assign/start`, `GET /api/live/assign`, `GET /api/live/assign/{id}`,
+`POST /api/live/assign/{id}/stop`, `GET /api/live/feed`, `GET /api/live/eventos` (SSE).
 
-La siguiente etapa es convertir el pronóstico actual de la tarjeta en un
-backtest reproducible y, después, comparar reglas de inventario y min-cost
-flow/MPC en un simulador. La pestaña **Rebalanceo** actual es un diagnóstico de
-reubicaciones históricas, no un recomendador de camiones. El diseño y los
-criterios para avanzar están en [[Demo-Ecobici-pronostico-intradia]] y
-[[Rebalanceo-Ecobici-modelos-optimizacion-RL]].
+`/api/replay/{día}/{brazo}` solo sirve días `AAAA-MM-DD` y los siete brazos; en
+`data/derived/ecosim/replay/` quedan archivos viejos (`baseline.json`,
+`daily.json`, `oracle.json` del run 2, sin `snap`) y cuatro carpetas mal nombradas
+(`"2025-09-01 2025-09-11 2025-09-20 2025-09-30"`, etc., de una corrida con
+`--days` entre comillas) que ni se sirven ni se listan. `ecosim.replay` ahora
+rechaza días mal escritos.
+
+Eliminados en ecosim3-ux (eran del prototipo de Predicción con corridas
+guardadas y calificación de avisos): `/api/live/status`, `POST /api/live/run`,
+`/api/live/latest`, `/api/live/eval`, `/api/live/orders.csv`. Eliminados en run 3:
+`/api/snapshots/*`, `/api/rebalance*`, `/forecast/{short_name}`.

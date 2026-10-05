@@ -1,704 +1,1551 @@
 {
-  "range": [
-    "2025-09-01",
-    "2025-11-29"
-  ],
+  "coverage_def": "fracción de 20 bloques (19 de 60 min y uno de 30 min) en [05:00, 00:30) con foto",
   "coverage_min": 0.9,
-  "coverage_def": "fracción de los 19 bloques de 60 min en [05:30, 00:30 del día siguiente) con ≥1 snapshot GBFS crudo",
-  "eval_seed": 20260928,
-  "selection_seed": 20260929,
-  "pool": {
-    "weekday": 62,
-    "weekend_or_holiday": 27,
-    "excluded_low_coverage": [
-      "2025-09-10"
-    ],
-    "excluded_sealed_window": [
-      "2025-11-30"
-    ]
-  },
-  "reemplazos_evaluacion": [],
-  "evaluacion": [
-    {
-      "day": "2025-09-03",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-15",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-26",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-28",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-07",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-11",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-13",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-15",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-22",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-25",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-07",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-12",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-15",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-19",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-24",
-      "type": "weekday",
-      "coverage": 1.0
-    }
-  ],
+  "selection_seed": 20261001,
+  "curve_seed": 20261002,
   "seleccion": [
     {
-      "day": "2025-09-01",
+      "day": "2025-08-01",
       "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.816666666666666
     },
     {
-      "day": "2025-09-08",
+      "day": "2025-08-04",
       "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 7.483333333333333
     },
     {
-      "day": "2025-09-13",
+      "day": "2025-08-06",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 6.983333333333333
+    },
+    {
+      "day": "2025-08-08",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 6.716666666666667
+    },
+    {
+      "day": "2025-08-09",
       "type": "weekend",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 7.316666666666666
     },
     {
-      "day": "2025-09-17",
+      "day": "2025-08-11",
       "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 7.05
     },
     {
-      "day": "2025-09-21",
+      "day": "2025-08-12",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 6.583333333333333
+    },
+    {
+      "day": "2025-08-13",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 6.6
+    },
+    {
+      "day": "2025-08-16",
       "type": "weekend",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 5.883333333333334
     },
     {
-      "day": "2025-09-25",
+      "day": "2025-08-18",
       "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.65
     },
     {
-      "day": "2025-10-09",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-10",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-18",
+      "day": "2025-08-23",
       "type": "weekend",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 5.6
     },
     {
-      "day": "2025-10-30",
+      "day": "2025-08-26",
       "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.566666666666666
     },
     {
-      "day": "2025-10-31",
+      "day": "2025-08-27",
       "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.133333333333334
     },
     {
-      "day": "2025-11-01",
+      "day": "2025-08-28",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 23.066666666666666
+    },
+    {
+      "day": "2025-08-31",
       "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-06",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-26",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-28",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 5.583333333333333
     }
   ],
-  "days": [
-    {
-      "day": "2025-09-03",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-15",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-26",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-28",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-07",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-11",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-13",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-15",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-22",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-25",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-07",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-12",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-15",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-19",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-24",
-      "type": "weekday",
-      "coverage": 1.0
-    }
-  ],
-  "all_candidates": [
-    {
-      "day": "2025-09-01",
-      "type": "weekday",
-      "coverage": 1.0
-    },
+  "prueba": {
+    "2025-09": [
+      {
+        "day": "2025-09-01",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.083333333333333
+      },
+      {
+        "day": "2025-09-02",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.033333333333333
+      },
+      {
+        "day": "2025-09-03",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.183333333333334
+      },
+      {
+        "day": "2025-09-04",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 5.85
+      },
+      {
+        "day": "2025-09-05",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.0
+      },
+      {
+        "day": "2025-09-06",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.35
+      },
+      {
+        "day": "2025-09-07",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.6
+      },
+      {
+        "day": "2025-09-08",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 5.883333333333334
+      },
+      {
+        "day": "2025-09-09",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.4
+      },
+      {
+        "day": "2025-09-11",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.183333333333334
+      },
+      {
+        "day": "2025-09-12",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 5.666666666666667
+      },
+      {
+        "day": "2025-09-13",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.083333333333333
+      },
+      {
+        "day": "2025-09-14",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 7.0
+      },
+      {
+        "day": "2025-09-15",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.45
+      },
+      {
+        "day": "2025-09-16",
+        "type": "holiday",
+        "coverage": 1.0,
+        "open_offset_min": 6.25
+      },
+      {
+        "day": "2025-09-17",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.383333333333334
+      },
+      {
+        "day": "2025-09-18",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 5.933333333333334
+      },
+      {
+        "day": "2025-09-19",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.333333333333333
+      },
+      {
+        "day": "2025-09-20",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.7
+      },
+      {
+        "day": "2025-09-21",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.716666666666667
+      },
+      {
+        "day": "2025-09-22",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.4
+      },
+      {
+        "day": "2025-09-23",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.466666666666667
+      },
+      {
+        "day": "2025-09-24",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 5.883333333333334
+      },
+      {
+        "day": "2025-09-25",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.55
+      },
+      {
+        "day": "2025-09-26",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.216666666666667
+      },
+      {
+        "day": "2025-09-27",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.666666666666667
+      },
+      {
+        "day": "2025-09-28",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.883333333333334
+      },
+      {
+        "day": "2025-09-29",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.383333333333334
+      },
+      {
+        "day": "2025-09-30",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.6
+      }
+    ],
+    "2025-10": [
+      {
+        "day": "2025-10-01",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.633333333333334
+      },
+      {
+        "day": "2025-10-02",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.216666666666667
+      },
+      {
+        "day": "2025-10-03",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.216666666666667
+      },
+      {
+        "day": "2025-10-04",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.8
+      },
+      {
+        "day": "2025-10-05",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.95
+      },
+      {
+        "day": "2025-10-06",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.3
+      },
+      {
+        "day": "2025-10-07",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.266666666666667
+      },
+      {
+        "day": "2025-10-08",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.166666666666667
+      },
+      {
+        "day": "2025-10-09",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.516666666666667
+      },
+      {
+        "day": "2025-10-10",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.433333333333334
+      },
+      {
+        "day": "2025-10-11",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.883333333333334
+      },
+      {
+        "day": "2025-10-12",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.883333333333334
+      },
+      {
+        "day": "2025-10-13",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.466666666666667
+      },
+      {
+        "day": "2025-10-14",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.45
+      },
+      {
+        "day": "2025-10-15",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.45
+      },
+      {
+        "day": "2025-10-16",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.3
+      },
+      {
+        "day": "2025-10-17",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.433333333333334
+      },
+      {
+        "day": "2025-10-18",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.516666666666667
+      },
+      {
+        "day": "2025-10-19",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.833333333333333
+      },
+      {
+        "day": "2025-10-20",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.65
+      },
+      {
+        "day": "2025-10-21",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.583333333333333
+      },
+      {
+        "day": "2025-10-22",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.65
+      },
+      {
+        "day": "2025-10-23",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.716666666666667
+      },
+      {
+        "day": "2025-10-24",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.4
+      },
+      {
+        "day": "2025-10-25",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.65
+      },
+      {
+        "day": "2025-10-26",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.066666666666666
+      },
+      {
+        "day": "2025-10-27",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.7
+      },
+      {
+        "day": "2025-10-28",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.3
+      },
+      {
+        "day": "2025-10-29",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.583333333333333
+      },
+      {
+        "day": "2025-10-30",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.383333333333334
+      },
+      {
+        "day": "2025-10-31",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.433333333333334
+      }
+    ],
+    "2025-11": [
+      {
+        "day": "2025-11-01",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.866666666666666
+      },
+      {
+        "day": "2025-11-02",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.816666666666666
+      },
+      {
+        "day": "2025-11-03",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.283333333333333
+      },
+      {
+        "day": "2025-11-04",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.75
+      },
+      {
+        "day": "2025-11-05",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.533333333333333
+      },
+      {
+        "day": "2025-11-06",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.616666666666666
+      },
+      {
+        "day": "2025-11-07",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.566666666666666
+      },
+      {
+        "day": "2025-11-08",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.216666666666667
+      },
+      {
+        "day": "2025-11-09",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.966666666666667
+      },
+      {
+        "day": "2025-11-10",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.65
+      },
+      {
+        "day": "2025-11-11",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.666666666666667
+      },
+      {
+        "day": "2025-11-12",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.616666666666666
+      },
+      {
+        "day": "2025-11-13",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 24.366666666666667
+      },
+      {
+        "day": "2025-11-14",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.7
+      },
+      {
+        "day": "2025-11-15",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.95
+      },
+      {
+        "day": "2025-11-16",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.983333333333333
+      },
+      {
+        "day": "2025-11-17",
+        "type": "holiday",
+        "coverage": 1.0,
+        "open_offset_min": 6.7
+      },
+      {
+        "day": "2025-11-18",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.75
+      },
+      {
+        "day": "2025-11-19",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.65
+      },
+      {
+        "day": "2025-11-20",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.983333333333333
+      },
+      {
+        "day": "2025-11-21",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.45
+      },
+      {
+        "day": "2025-11-22",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.7
+      },
+      {
+        "day": "2025-11-23",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.9
+      },
+      {
+        "day": "2025-11-24",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.683333333333334
+      },
+      {
+        "day": "2025-11-25",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.883333333333334
+      },
+      {
+        "day": "2025-11-26",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.666666666666667
+      },
+      {
+        "day": "2025-11-27",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.766666666666667
+      },
+      {
+        "day": "2025-11-28",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.483333333333333
+      },
+      {
+        "day": "2025-11-29",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 7.066666666666666
+      },
+      {
+        "day": "2025-11-30",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.05
+      }
+    ],
+    "2025-12": [
+      {
+        "day": "2025-12-01",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.266666666666667
+      },
+      {
+        "day": "2025-12-02",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.216666666666667
+      },
+      {
+        "day": "2025-12-03",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.133333333333334
+      },
+      {
+        "day": "2025-12-04",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.183333333333334
+      },
+      {
+        "day": "2025-12-05",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.383333333333334
+      },
+      {
+        "day": "2025-12-06",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 7.166666666666667
+      },
+      {
+        "day": "2025-12-07",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.1
+      },
+      {
+        "day": "2025-12-08",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.1
+      },
+      {
+        "day": "2025-12-09",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.083333333333333
+      },
+      {
+        "day": "2025-12-10",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.283333333333333
+      },
+      {
+        "day": "2025-12-11",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.25
+      },
+      {
+        "day": "2025-12-12",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.516666666666667
+      },
+      {
+        "day": "2025-12-13",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.966666666666667
+      },
+      {
+        "day": "2025-12-14",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.566666666666666
+      },
+      {
+        "day": "2025-12-15",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.233333333333333
+      },
+      {
+        "day": "2025-12-16",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.433333333333334
+      },
+      {
+        "day": "2025-12-17",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.45
+      },
+      {
+        "day": "2025-12-18",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.5
+      },
+      {
+        "day": "2025-12-19",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.95
+      },
+      {
+        "day": "2025-12-20",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 5.933333333333334
+      },
+      {
+        "day": "2025-12-21",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.166666666666667
+      },
+      {
+        "day": "2025-12-22",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.933333333333334
+      },
+      {
+        "day": "2025-12-23",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.083333333333333
+      },
+      {
+        "day": "2025-12-24",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.05
+      },
+      {
+        "day": "2025-12-25",
+        "type": "holiday",
+        "coverage": 1.0,
+        "open_offset_min": 6.65
+      },
+      {
+        "day": "2025-12-26",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.116666666666666
+      },
+      {
+        "day": "2025-12-27",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.316666666666666
+      },
+      {
+        "day": "2025-12-28",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.533333333333333
+      },
+      {
+        "day": "2025-12-29",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 8.0
+      },
+      {
+        "day": "2025-12-30",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.916666666666667
+      },
+      {
+        "day": "2025-12-31",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.133333333333334
+      }
+    ],
+    "2026-01": [
+      {
+        "day": "2026-01-01",
+        "type": "holiday",
+        "coverage": 1.0,
+        "open_offset_min": 24.633333333333333
+      },
+      {
+        "day": "2026-01-02",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 6.933333333333334
+      },
+      {
+        "day": "2026-01-03",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 7.2
+      },
+      {
+        "day": "2026-01-04",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 7.266666666666667
+      },
+      {
+        "day": "2026-01-05",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.683333333333334
+      },
+      {
+        "day": "2026-01-06",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.05
+      },
+      {
+        "day": "2026-01-07",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.383333333333334
+      },
+      {
+        "day": "2026-01-08",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 8.066666666666666
+      },
+      {
+        "day": "2026-01-09",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.2
+      },
+      {
+        "day": "2026-01-10",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.516666666666667
+      },
+      {
+        "day": "2026-01-11",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 7.45
+      },
+      {
+        "day": "2026-01-12",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.566666666666666
+      },
+      {
+        "day": "2026-01-13",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 8.7
+      },
+      {
+        "day": "2026-01-14",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 8.216666666666667
+      },
+      {
+        "day": "2026-01-15",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 8.733333333333333
+      },
+      {
+        "day": "2026-01-16",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 7.283333333333333
+      },
+      {
+        "day": "2026-01-17",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.466666666666667
+      },
+      {
+        "day": "2026-01-18",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.0
+      },
+      {
+        "day": "2026-01-19",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 12.55
+      },
+      {
+        "day": "2026-01-20",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 9.883333333333333
+      },
+      {
+        "day": "2026-01-21",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 10.866666666666667
+      },
+      {
+        "day": "2026-01-22",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 12.383333333333333
+      },
+      {
+        "day": "2026-01-23",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 8.033333333333333
+      },
+      {
+        "day": "2026-01-24",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.583333333333333
+      },
+      {
+        "day": "2026-01-25",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 6.4
+      },
+      {
+        "day": "2026-01-26",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 8.216666666666667
+      },
+      {
+        "day": "2026-01-27",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 10.933333333333334
+      },
+      {
+        "day": "2026-01-28",
+        "type": "weekday",
+        "coverage": 0.95,
+        "open_offset_min": 11.566666666666666
+      },
+      {
+        "day": "2026-01-29",
+        "type": "weekday",
+        "coverage": 0.95,
+        "open_offset_min": 17.4
+      },
+      {
+        "day": "2026-01-30",
+        "type": "weekday",
+        "coverage": 1.0,
+        "open_offset_min": 13.2
+      },
+      {
+        "day": "2026-01-31",
+        "type": "weekend",
+        "coverage": 1.0,
+        "open_offset_min": 7.716666666666667
+      }
+    ]
+  },
+  "curva": [
     {
       "day": "2025-09-02",
       "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.033333333333333
     },
     {
       "day": "2025-09-03",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-04",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.183333333333334
     },
     {
       "day": "2025-09-05",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-06",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-07",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-08",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.0
     },
     {
       "day": "2025-09-09",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-10",
-      "type": "weekday",
-      "coverage": 0.7895
-    },
-    {
-      "day": "2025-09-11",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-12",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-13",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-14",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-15",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-16",
-      "type": "holiday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-17",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-18",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-19",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.4
     },
     {
       "day": "2025-09-20",
       "type": "weekend",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 5.7
     },
     {
       "day": "2025-09-21",
       "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-22",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 5.716666666666667
     },
     {
       "day": "2025-09-23",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-24",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-25",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.466666666666667
     },
     {
       "day": "2025-09-26",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-27",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-28",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-29",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-09-30",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.216666666666667
     },
     {
       "day": "2025-10-01",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-02",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-03",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-04",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-05",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-06",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-07",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 7.633333333333334
     },
     {
       "day": "2025-10-08",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-09",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.166666666666667
     },
     {
       "day": "2025-10-10",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-11",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-12",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-13",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-14",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-15",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.433333333333334
     },
     {
       "day": "2025-10-16",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-17",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-18",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-19",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-20",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-21",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-22",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-23",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-24",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.3
     },
     {
       "day": "2025-10-25",
       "type": "weekend",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 5.65
     },
     {
       "day": "2025-10-26",
       "type": "weekend",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.066666666666666
     },
     {
       "day": "2025-10-27",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-28",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.7
     },
     {
       "day": "2025-10-29",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-30",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-10-31",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.583333333333333
     },
     {
       "day": "2025-11-01",
       "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-02",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-03",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-04",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-05",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-06",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-07",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-08",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-09",
-      "type": "weekend",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 5.866666666666666
     },
     {
       "day": "2025-11-10",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-11",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.65
     },
     {
       "day": "2025-11-12",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-13",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-14",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-15",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-16",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-17",
-      "type": "holiday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.616666666666666
     },
     {
       "day": "2025-11-18",
       "type": "weekday",
-      "coverage": 0.9474
+      "coverage": 1.0,
+      "open_offset_min": 6.75
     },
     {
       "day": "2025-11-19",
       "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 7.65
     },
     {
       "day": "2025-11-20",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-21",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-22",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-23",
-      "type": "weekend",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-24",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-25",
-      "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-26",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.983333333333333
     },
     {
       "day": "2025-11-27",
       "type": "weekday",
-      "coverage": 1.0
-    },
-    {
-      "day": "2025-11-28",
-      "type": "weekday",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 6.766666666666667
     },
     {
       "day": "2025-11-29",
       "type": "weekend",
-      "coverage": 1.0
+      "coverage": 1.0,
+      "open_offset_min": 7.066666666666666
+    },
+    {
+      "day": "2025-12-03",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 7.133333333333334
+    },
+    {
+      "day": "2025-12-04",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 7.183333333333334
+    },
+    {
+      "day": "2025-12-06",
+      "type": "weekend",
+      "coverage": 1.0,
+      "open_offset_min": 7.166666666666667
+    },
+    {
+      "day": "2025-12-10",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 7.283333333333333
+    },
+    {
+      "day": "2025-12-11",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 7.25
+    },
+    {
+      "day": "2025-12-12",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 7.516666666666667
+    },
+    {
+      "day": "2025-12-22",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 6.933333333333334
+    },
+    {
+      "day": "2025-12-28",
+      "type": "weekend",
+      "coverage": 1.0,
+      "open_offset_min": 6.533333333333333
     }
-  ]
+  ],
+  "prod_2026": {
+    "2026-02": [
+      {
+        "day": "2026-02-01",
+        "type": "weekend",
+        "offset_min": 8.05,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-02-07",
+        "type": "weekend",
+        "offset_min": 8.03,
+        "coverage": 1.0
+      },
+      {
+        "day": "2026-02-08",
+        "type": "weekend",
+        "offset_min": 9.93,
+        "coverage": 1.0
+      },
+      {
+        "day": "2026-02-09",
+        "type": "weekday",
+        "offset_min": 7.15,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-02-14",
+        "type": "weekend",
+        "offset_min": 8.38,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-02-15",
+        "type": "weekend",
+        "offset_min": 9.65,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-02-21",
+        "type": "weekend",
+        "offset_min": 9.28,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-02-22",
+        "type": "weekend",
+        "offset_min": 8.05,
+        "coverage": 0.95
+      }
+    ],
+    "2026-03": [
+      {
+        "day": "2026-03-01",
+        "type": "weekend",
+        "offset_min": 7.33,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-03-07",
+        "type": "weekend",
+        "offset_min": 7.25,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-03-16",
+        "type": "holiday",
+        "offset_min": 8.63,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-03-17",
+        "type": "weekday",
+        "offset_min": 6.07,
+        "coverage": 1.0
+      },
+      {
+        "day": "2026-03-21",
+        "type": "weekend",
+        "offset_min": 8.87,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-03-22",
+        "type": "weekend",
+        "offset_min": 9.1,
+        "coverage": 0.95
+      }
+    ],
+    "2026-04": [
+      {
+        "day": "2026-04-01",
+        "type": "weekday",
+        "offset_min": 8.78,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-04-02",
+        "type": "weekday",
+        "offset_min": 6.7,
+        "coverage": 1.0
+      },
+      {
+        "day": "2026-04-06",
+        "type": "weekday",
+        "offset_min": 7.85,
+        "coverage": 1.0
+      },
+      {
+        "day": "2026-04-08",
+        "type": "weekday",
+        "offset_min": 9.27,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-04-09",
+        "type": "weekday",
+        "offset_min": 9.2,
+        "coverage": 1.0
+      },
+      {
+        "day": "2026-04-10",
+        "type": "weekday",
+        "offset_min": 7.7,
+        "coverage": 1.0
+      },
+      {
+        "day": "2026-04-13",
+        "type": "weekday",
+        "offset_min": 2.85,
+        "coverage": 0.9
+      },
+      {
+        "day": "2026-04-15",
+        "type": "weekday",
+        "offset_min": 9.38,
+        "coverage": 0.9
+      }
+    ],
+    "2026-05": [
+      {
+        "day": "2026-05-02",
+        "type": "weekend",
+        "offset_min": 5.0,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-05-03",
+        "type": "weekend",
+        "offset_min": 5.58,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-05-09",
+        "type": "weekend",
+        "offset_min": 7.67,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-05-12",
+        "type": "weekday",
+        "offset_min": 3.57,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-05-16",
+        "type": "weekend",
+        "offset_min": 9.02,
+        "coverage": 0.9
+      },
+      {
+        "day": "2026-05-31",
+        "type": "weekend",
+        "offset_min": 9.68,
+        "coverage": 0.9
+      }
+    ],
+    "2026-06": [
+      {
+        "day": "2026-06-14",
+        "type": "weekend",
+        "offset_min": 6.67,
+        "coverage": 0.9
+      },
+      {
+        "day": "2026-06-20",
+        "type": "weekend",
+        "offset_min": 5.27,
+        "coverage": 0.9
+      }
+    ],
+    "2026-07": [],
+    "2026-08": [
+      {
+        "day": "2026-08-19",
+        "type": "weekday",
+        "offset_min": 8.72,
+        "coverage": 0.95
+      },
+      {
+        "day": "2026-08-21",
+        "type": "weekday",
+        "offset_min": 3.18,
+        "coverage": 0.9
+      },
+      {
+        "day": "2026-08-25",
+        "type": "weekday",
+        "offset_min": 4.72,
+        "coverage": 0.9
+      }
+    ]
+  },
+  "coverage_by_month": {
+    "2025-01": {
+      "days": 31,
+      "complete": 31,
+      "coverage_mean": 0.9968,
+      "eligible_90": 31
+    },
+    "2025-02": {
+      "days": 28,
+      "complete": 28,
+      "coverage_mean": 1.0,
+      "eligible_90": 28
+    },
+    "2025-03": {
+      "days": 31,
+      "complete": 31,
+      "coverage_mean": 1.0,
+      "eligible_90": 31
+    },
+    "2025-04": {
+      "days": 30,
+      "complete": 30,
+      "coverage_mean": 1.0,
+      "eligible_90": 30
+    },
+    "2025-05": {
+      "days": 31,
+      "complete": 31,
+      "coverage_mean": 0.9952,
+      "eligible_90": 30
+    },
+    "2025-06": {
+      "days": 30,
+      "complete": 30,
+      "coverage_mean": 1.0,
+      "eligible_90": 30
+    },
+    "2025-07": {
+      "days": 31,
+      "complete": 20,
+      "coverage_mean": 0.579,
+      "eligible_90": 19
+    },
+    "2025-08": {
+      "days": 31,
+      "complete": 31,
+      "coverage_mean": 1.0,
+      "eligible_90": 31
+    },
+    "2025-09": {
+      "days": 30,
+      "complete": 30,
+      "coverage_mean": 0.995,
+      "eligible_90": 29
+    },
+    "2025-10": {
+      "days": 31,
+      "complete": 31,
+      "coverage_mean": 1.0,
+      "eligible_90": 31
+    },
+    "2025-11": {
+      "days": 30,
+      "complete": 30,
+      "coverage_mean": 1.0,
+      "eligible_90": 30
+    },
+    "2025-12": {
+      "days": 31,
+      "complete": 31,
+      "coverage_mean": 1.0,
+      "eligible_90": 31
+    },
+    "2026-01": {
+      "days": 31,
+      "complete": 31,
+      "coverage_mean": 0.9968,
+      "eligible_90": 31
+    },
+    "2026-02": {
+      "days": 28,
+      "complete": 28,
+      "coverage_mean": 0.9536,
+      "eligible_90": 27
+    },
+    "2026-03": {
+      "days": 31,
+      "complete": 31,
+      "coverage_mean": 0.9565,
+      "eligible_90": 31
+    },
+    "2026-04": {
+      "days": 30,
+      "complete": 30,
+      "coverage_mean": 0.9433,
+      "eligible_90": 29
+    },
+    "2026-05": {
+      "days": 31,
+      "complete": 31,
+      "coverage_mean": 0.879,
+      "eligible_90": 19
+    },
+    "2026-06": {
+      "days": 30,
+      "complete": 30,
+      "coverage_mean": 0.81,
+      "eligible_90": 11
+    },
+    "2026-07": {
+      "days": 31,
+      "complete": 31,
+      "coverage_mean": 0.5839,
+      "eligible_90": 0
+    },
+    "2026-08": {
+      "days": 31,
+      "complete": 30,
+      "coverage_mean": 0.6774,
+      "eligible_90": 12
+    }
+  }
 }

@@ -1,68 +1,19 @@
-"""Simulador por eventos, viaje por viaje (plan 2026-09-28-ecosim, regla 1.4,
-con los cambios del plan 2026-09-28-ecosim2, subtask simulador2).
+"""Simulación conservativa de Ecobici, ventana [05:00, 00:30).
 
-Arranca de `data.initial_state(day)` a las 05:30 y nunca vuelve a leer el
-stock real: el estado evoluciona solo con los viajes reales de `data.trips`,
-los eventos exógenos de dañadas y las órdenes (tabla fija de replay o las que
-emite una política). Ventana del día d: [d 05:30, d+1 00:30).
-
-Reglas (todas de 1.4 y del plan ecosim2, más los supuestos marcados en
-`ecosim/results/simulador/REPORT.md`):
-
-* Salida en estación sin bicis → la estación más cercana con bici. Si está
-  a ≤ 500 m es el desvío "dentro del radio"; si no hay ninguna en 500 m, la
-  más cercana a cualquier distancia (las dos reglas juntas equivalen a "la
-  más cercana con bici"; se registra si quedó dentro o fuera del radio).
-* Llegada a estación sin anclaje libre → la más cercana con anclaje libre,
-  sin radio. El destino del viaje no cambia aunque su salida se haya
-  desviado: la bici sigue ligada al viaje y llega a `d`.
-* El tiempo caminando se ignora (el viaje conserva sus horas).
-* Viajes que salieron antes de 05:30 y llegan en la ventana entregan su bici;
-  viajes que salen en la ventana y llegan a las 00:30 o después cuentan la
-  salida y su llegada queda fuera. Los que cruzan medianoche dentro de la
-  ventana son viajes normales (timestamps completos).
-* Estaciones desconocidas (`o_known`/`d_known` de `data.trips`): la salida
-  desde una desconocida se ignora; la llegada a una desconocida saca la bici
-  del sistema (`arrivals_unknown`).
-* Dañadas dinámicas (`damage_events`, contrato `DamageEvents`), iguales en
-  todos los brazos y aplicadas en su `t` antes que cualquier orden:
-  `daño` (disponible → dañada), `reparacion` (dañada → disponible) y
-  `taller_retiro` (sale del sistema una dañada). Lo que no se puede aplicar
-  (sin disponibles que dañar, sin dañadas que reparar o retirar) se cuenta.
-  Sin eventos, las dañadas quedan fijas en el valor de las 05:30 (run 1).
-* Órdenes `(issued_at, effective_at, short_name, delta)` aplicadas en el
-  instante exacto `effective_at`. Todas las órdenes de un mismo instante son
-  un lote. A cada orden de *política* se le aplica, en este orden:
-  1. tope de bicis por movimiento: |delta| > `params.max_bikes_per_move` se
-     recorta a ese valor (`recorte_por_movimiento`);
-  2. estación fuera de servicio (`out_of_service` de `initial_state`): la
-     orden se recorta completa (`extra["recorte_fuera_de_servicio"]`);
-  3. recorte físico: se quita lo que hay y se pone lo que cabe (`clipped`);
-  4. bodega finita sobre lo aplicado: −tope_bodega ≤ A − R ≤ +tope_bodega al
-     cerrar el lote; si el lote se pasa, se recortan puestas (o retiros),
-     repartidas entre estaciones en proporción a lo aplicado de ese lado
-     (`recorte_bodega`), sin importar la posición de la orden en el lote.
-  El replay de Ecobici es un dato: solo lleva el recorte físico.
-* Anclajes libres = cap − disponibles − dañadas − anclajes deshabilitados;
-  los anclajes deshabilitados quedan fijos en el valor de las 05:30.
-
-Orden de eventos en un mismo instante: dañadas → órdenes → decisión de la
-política → llegadas → salidas → muestra del minuto. E y F se cuentan minuto
-a minuto: el minuto [m, m+1) de una estación cuenta como vacío (lleno) si al
-instante m, después de todos los eventos con tiempo ≤ m, tiene 0 bicis
-disponibles (0 anclajes libres). Hay 1140 minutos por estación en
-[05:30, 00:30).
+Las decisiones equilibradas recogen en pickup_at y entregan en delivery_at.
+Cada decisión tiene su propia carga: si faltan bicis al recoger, las entregas
+se reducen por resto mayor, ordenadas por estación (y orden original en empates).
+El remanente tras entregas sin anclaje vuelve al origen con anclaje más cercano.
+El replay es una medición, no una política: sus movimientos pueden tener neto
+no nulo; ese neto se contabiliza explícitamente como flujo externo observado.
 """
-
 from __future__ import annotations
 
 import argparse
 import heapq
 import json
-import sys
-import time as _time
-import warnings
-from datetime import datetime, timedelta
+import time
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
@@ -70,693 +21,521 @@ import pandas as pd
 from ecosim import config as C
 from ecosim import contracts as K
 
-# Archivos de `medicion`. `stock` y `rebal` leen el mismo archivo (columnas
-# distintas); `avail` tiene su propio archivo (ver `ecobici_orders`).
-MOVES_FILES = {
-    "rebal": C.DERIVED / "ecobici_moves.parquet",        # delta_rebal: rebalanceo sin taller
-    "stock": C.DERIVED / "ecobici_moves.parquet",        # delta con disponibles + dañadas (run 1)
-    "avail": C.DERIVED / "ecobici_moves_avail.parquet",  # delta solo con disponibles (run 1)
-}
-MOVES_COLUMN = {"rebal": "delta_rebal", "stock": "delta", "avail": "delta"}
-# Dañadas con las que va cada variante del replay: `stock` y `avail` ya
-# traen en su delta el taller (stock) o los daños y reparaciones (avail), así
-# que con dañadas dinámicas los contarían dos veces.
-REPLAY_DAMAGE = {"rebal": "auto", "stock": "fixed", "avail": "fixed"}
 DAMAGE_EVENTS_FILE = C.DERIVED / "damage_events.parquet"
-
-# prioridades de eventos en un mismo instante
-_P_DAMAGE, _P_ORDER, _P_DECIDE, _P_ARR, _P_DEP, _P_SAMPLE = 0, 1, 2, 3, 4, 5
+MOVES_FILE = C.DERIVED / "ecobici_moves.parquet"
 _NS_MIN = 60_000_000_000
-# orden de aplicación de los eventos de dañadas de un mismo instante
-_DAMAGE_RANK = {"daño": 0, "taller_retiro": 1, "reparacion": 2}
-
-
-# ======================================================================
-# Órdenes de Ecobici (replay) y eventos de dañadas
-# ======================================================================
-
-def ecobici_orders(day, when: str = "t0", variant: str = "rebal", undo: bool | None = None,
-                   path=None) -> list[K.Order]:
-    """Movimientos medidos de Ecobici → órdenes para el replay.
-
-    `when="t0"` (principal): la orden se hace efectiva al inicio del
-    intervalo; `when="t1"` (sensibilidad): al final. `issued_at =
-    effective_at` (el replay no tiene lead time).
-
-    `variant`:
-    * `"rebal"` (principal, run 2): `ecobici_moves.parquet`, columna
-      `delta_rebal` (rebalanceo sin el taller; el taller entra como evento
-      `taller_retiro` de `damage_events`).
-    * `"stock"` (run 1): mismo archivo, columna `delta` (disponibles +
-      dañadas, con el taller dentro).
-    * `"avail"` (run 1): `ecobici_moves_avail.parquet`, columna `delta`. No se
-      usa `delta_avail` del archivo principal: ese archivo solo trae los
-      intervalos con delta de stock ≠ 0 y perdería los de delta = 0 y
-      delta_avail ≠ 0.
-
-    **`stock` y `avail` van siempre con dañadas fijas** (`REPLAY_DAMAGE`,
-    `damage_events="fixed"`): con dañadas dinámicas contarían dos veces lo
-    mismo. `stock` ya trae el taller dentro de su delta, y `avail` (delta de
-    disponibles) ya trae los daños y las reparaciones (una disponible que se
-    daña baja las disponibles). La CLI lo hace cumplir (`resolve_damage`);
-    quien arme el brazo a mano (p. ej. `run.py`) debe usar `REPLAY_DAMAGE`.
-
-    `undo`: si se incluyen los pares ±1 que se deshacen (columna `undo`).
-    `None` (por defecto) = `False` para `rebal` (sin ±1, principal) y `True`
-    para `stock`/`avail` (como el run 1). `path` reemplaza el archivo (tests).
-
-    Solo entran órdenes con `effective_at` en [05:30, 00:30) del día y delta ≠ 0.
-    """
-    if when not in ("t0", "t1"):
-        raise ValueError(f"when debe ser 't0' o 't1', llegó {when!r}")
-    if variant not in MOVES_FILES:
-        raise ValueError(f"variant debe ser uno de {sorted(MOVES_FILES)}, llegó {variant!r}")
-    if undo is None:
-        undo = variant != "rebal"
-    col = MOVES_COLUMN[variant]
-    mv = pd.read_parquet(path or MOVES_FILES[variant])
-    K.validate_ecobici_moves(mv)
-    start, end = C.day_bounds(day)
-    eff = mv[when]
-    keep = (eff >= start) & (eff < end) & (mv[col] != 0)
-    if not undo:
-        keep &= ~mv["undo"].astype(bool)
-    mv = mv[keep].sort_values([when, "short_name"], kind="stable")
-    return [
-        K.Order(t.to_pydatetime(), t.to_pydatetime(), str(s), int(d))
-        for t, s, d in zip(mv[when], mv["short_name"], mv[col])
-    ]
-
-
-def load_damage_events(day, damage_events="auto", path=None):
-    """Eventos de dañadas del día → (DataFrame o None, fuente).
-
-    `"auto"`: lee `damage_events.parquet` (o `path`) si existe; si no, dañadas
-    fijas con un aviso. `"fixed"` o `None`: dañadas fijas (run 1). DataFrame:
-    se usa tal cual. Se valida con `contracts.validate_damage_events` y se
-    filtra a los eventos con `t` en [05:30, 00:30) del día.
-    """
-    if damage_events is None or (isinstance(damage_events, str) and damage_events == "fixed"):
-        return None, "fixed"
-    if isinstance(damage_events, str):
-        if damage_events != "auto":
-            raise ValueError(f"damage_events: 'auto', 'fixed', None o DataFrame; llegó {damage_events!r}")
-        p = path or DAMAGE_EVENTS_FILE
-        if not p.exists():
-            warnings.warn(f"{p} no existe: se simula con dañadas fijas (run 1)", stacklevel=2)
-            return None, "fixed (sin archivo)"
-        ev, source = pd.read_parquet(p), str(p.name)
-    elif isinstance(damage_events, pd.DataFrame):
-        ev, source = damage_events, "DataFrame"
-    else:
-        raise TypeError(f"damage_events: tipo no válido {type(damage_events).__name__}")
-    K.validate_damage_events(ev)
-    start, end = C.day_bounds(day)
-    ev = ev[(ev["t"] >= start) & (ev["t"] < end)]
-    return ev, source
 
 
 def _spread(total: int, caps: list[int]) -> list[int]:
-    """Reparte `total` en enteros proporcionales a `caps` (resto mayor), sin
-    pasarse de cada cap. Empates del resto: gana el índice menor (el caller
-    ordena, p. ej. por short_name). Requiere 0 ≤ total ≤ sum(caps)."""
-    S = sum(caps)
-    if total <= 0:
+    """Reparto entero proporcional por resto mayor; empate por índice."""
+    size = sum(caps)
+    if total < 0 or total > size:
+        raise AssertionError("reparto fuera de capacidad")
+    if not size:
         return [0] * len(caps)
-    if total > S:
-        raise AssertionError(f"_spread: {total} > {S}")
-    out = [total * c // S for c in caps]
-    rem = [total * c % S for c in caps]
-    for k in sorted(range(len(caps)), key=lambda k: -rem[k])[: total - sum(out)]:
-        out[k] += 1
+    out = [total * c // size for c in caps]
+    rem = [total * c % size for c in caps]
+    for i in sorted(range(len(caps)), key=lambda i: -rem[i])[:total - sum(out)]:
+        out[i] += 1
     return out
 
 
-def _as_order_list(orders) -> list[K.Order]:
-    if orders is None:
-        return []
-    if isinstance(orders, pd.DataFrame):
-        return K.frame_to_orders(orders)
-    return list(orders)
+def ecobici_orders(day, when="t1", undo=False, path=None):
+    """Movimientos observados (pares excluidos por defecto) al t1 del feed.
+
+    `when='t0'` permite auditar el desfase de aplicación. Las órdenes del
+    replay llevan ambos instantes iguales: no simulan camionetas.
+    """
+    if when not in ("t0", "t1"):
+        raise ValueError("when debe ser t0 o t1")
+    df = pd.read_parquet(path or MOVES_FILE)
+    K.validate_ecobici_moves(df)
+    start, end = C.day_bounds(day)
+    df = df[(df[when] >= start) & (df[when] < end) & (df.delta != 0)]
+    if not undo:
+        df = df[~df.par]
+    df = df.sort_values([when, "short_name"], kind="stable")
+    return [K.Order(t.to_pydatetime(), t.to_pydatetime(), t.to_pydatetime(), str(s), int(d))
+            for t, s, d in zip(df[when], df.short_name, df.delta)]
 
 
-# ======================================================================
-# Motor
-# ======================================================================
+def load_damage_events(day, damage_events="auto", path=None):
+    """Carga los cambios observados; nunca cae silenciosamente a dañadas fijas."""
+    if damage_events is None or (isinstance(damage_events, str) and damage_events == "fixed"):
+        return None, "fixed"
+    if isinstance(damage_events, pd.DataFrame):
+        df, source = damage_events, "DataFrame"
+    elif damage_events == "auto":
+        p = path or DAMAGE_EVENTS_FILE
+        df, source = pd.read_parquet(p), str(p.name)
+    else:
+        raise ValueError("damage_events debe ser auto, fixed o DataFrame")
+    K.validate_damage_events(df)
+    start, end = C.day_bounds(day)
+    return df[(df.t >= start) & (df.t < end)], source
 
-def _ns(ts, start) -> int:
-    """Tiempo relativo a las 05:30 en nanosegundos enteros."""
-    return int((pd.Timestamp(ts) - pd.Timestamp(start)) / pd.Timedelta(1, "ns"))
 
+def simulate(init, trips, nbrs, start, end, orders=None, policy=None, forecast=None,
+             params=None, record_at=None, day=None, arm=None, damage_events=None,
+             damage_variant="onsite", feed_moves=None, neutralize_replay=False) -> K.DayResult:
+    """Motor único: eventos exactos y E/F muestreados tras eventos de cada minuto.
 
-def simulate(
-    init: pd.DataFrame,
-    trips: pd.DataFrame,
-    nbrs: pd.DataFrame,
-    start: datetime,
-    end: datetime,
-    orders=None,
-    policy=None,
-    lead_min: int = C.LEAD_MIN,
-    forecast=None,
-    params: K.PolicyParams | None = None,
-    record_at=None,
-    day: str | None = None,
-    arm: str | None = None,
-    damage_events: pd.DataFrame | None = None,
-) -> K.DayResult:
-    """Motor único para todos los brazos.
-
-    init: estado inicial (columnas de `contracts.INITIAL_STATE_COLUMNS`, al
-    menos short_name, bikes, disabled, docks_disabled, cap; `out_of_service`
-    opcional).
-    trips: viajes (`contracts.TRIP_COLUMNS`, opcional o_known/d_known; si
-    faltan, se consideran conocidas las estaciones de `init`).
-    nbrs: vecinos (short_name, nbr, dist_m), como `data.neighbors`.
-    orders: tabla fija de órdenes (list[Order] o DataFrame) para el replay.
-    policy: objeto con `decide(t, state, pending, forecast, params)`; se
-    llama en 05:30, 05:45, … mientras t + lead_min < end, y sus órdenes se
-    hacen efectivas en t + lead_min. Sus órdenes llevan tope por movimiento,
-    fuera de servicio y bodega finita (`params`).
-    damage_events: eventos `DamageEvents` (None = dañadas fijas). Los que
-    caen fuera de [start, end) se ignoran.
-    record_at: instantes extra en los que guardar bicis y dañadas por
-    estación (p. ej. los timestamps GBFS, para validar contra lo observado).
+    `damage_variant='feed'` aplica entradas/salidas dañadas observadas como
+    flujo exógeno idéntico para política, baseline y replay. `feed_moves`
+    aporta los deltas de los intervalos, no depende de las órdenes emitidas.
     """
     if orders is not None and policy is not None:
-        raise ValueError("run_day: usar `orders` (replay) o `policy`, no los dos")
-    if policy is not None:
-        if params is None:
-            params = K.PolicyParams(lead_min=lead_min)
-        elif params.lead_min != lead_min:
-            raise ValueError(f"params.lead_min={params.lead_min} ≠ lead_min={lead_min}")
-    if arm is None:
-        arm = "policy" if policy is not None else ("replay" if orders is not None else "baseline")
-    is_policy = policy is not None
-    max_move = params.max_bikes_per_move if is_policy else None
-    tope_bodega = int(params.tope_bodega) if is_policy else None
-
-    start, end = pd.Timestamp(start).to_pydatetime(), pd.Timestamp(end).to_pydatetime()
-    end_ns = _ns(end, start)
+        raise ValueError("orders y policy son excluyentes")
+    if damage_variant not in ("onsite", "feed"):
+        raise ValueError("damage_variant debe ser onsite o feed")
+    if damage_variant == "feed" and feed_moves is None:
+        raise ValueError("variante feed requiere feed_moves (EcobiciMoves), incluso con política")
+    if neutralize_replay and orders is None:
+        raise ValueError("neutralize_replay es solo diagnóstico de replay")
+    start, end = pd.Timestamp(start), pd.Timestamp(end)
+    end_ns = int((end - start).value)
     n_min = end_ns // _NS_MIN
+    def ns(t):
+        return int((pd.Timestamp(t) - start).value)
 
-    # --- estaciones -------------------------------------------------------
     init = init.sort_values("short_name").reset_index(drop=True)
-    names = init["short_name"].astype(str).to_numpy()
-    idx = {s: i for i, s in enumerate(names)}
+    names = init.short_name.astype(str).to_numpy()
+    ix = {s: i for i, s in enumerate(names)}
     n = len(names)
-    bikes = init["bikes"].to_numpy(dtype=np.int64).copy()
-    dis = init["disabled"].to_numpy(dtype=np.int64).copy()          # dañadas: cambian con los eventos
-    docks_dis = init["docks_disabled"].to_numpy(dtype=np.int64)     # fijos
-    cap = init["cap"].to_numpy(dtype=np.int64)
-    room = cap - dis - docks_dis            # máximo de disponibles que caben (se actualiza in situ)
-    oos = (init["out_of_service"].to_numpy(dtype=bool) if "out_of_service" in init
-           else np.zeros(n, dtype=bool))
-    if (bikes < 0).any() or (bikes > room).any():
-        raise ValueError("estado inicial fuera de [0, cap − dañadas − anclajes deshabilitados]")
-    bikes0_total, dis0_total = int(bikes.sum()), int(dis.sum())
+    bikes = init.bikes.to_numpy(dtype=np.int64).copy()
+    dis = init.disabled.to_numpy(dtype=np.int64).copy()
+    cap = init.cap.to_numpy(dtype=np.int64)
+    docks_dis = init.docks_disabled.to_numpy(dtype=np.int64)
+    room = cap - docks_dis - dis
+    oos = init.out_of_service.to_numpy(dtype=bool) if "out_of_service" in init else np.zeros(n, bool)
+    if (bikes < 0).any() or (dis < 0).any() or (bikes > room).any():
+        raise ValueError("estado inicial inválido")
+    initial_total = int(bikes.sum() + dis.sum())
+    nb = nbrs[nbrs.short_name.isin(ix) & nbrs.nbr.isin(ix)].sort_values(
+        ["short_name", "dist_m", "nbr"], kind="stable")
+    neighbors = [[] for _ in names]
+    for s, g in nb.groupby("short_name"):
+        neighbors[ix[s]] = [(ix[r.nbr], float(r.dist_m)) for r in g.itertuples()]
+    def nearest(i, predicate, allow_self=False):
+        if allow_self and predicate(i):
+            return i, 0.0
+        for j, d in neighbors[i]:
+            if predicate(j):
+                return j, d
+        # Estación sin coordenadas: elegir determinísticamente y declarar NaN.
+        for j in range(n):
+            if j != i and predicate(j):
+                return j, float("nan")
+        raise ValueError("No hay estación apta para desvío o devolución; imposible atender sin crear bicis")
 
-    # vecinos por estación, ordenados por distancia
-    nb = nbrs[nbrs["short_name"].isin(idx) & nbrs["nbr"].isin(idx)]
-    nb = nb.sort_values(["short_name", "dist_m", "nbr"], kind="stable")
-    nb_idx = [np.empty(0, dtype=np.int64)] * n
-    nb_dist = [np.empty(0)] * n
-    for s, g in nb.groupby("short_name", sort=False):
-        nb_idx[idx[s]] = g["nbr"].map(idx).to_numpy(dtype=np.int64)
-        nb_dist[idx[s]] = g["dist_m"].to_numpy(dtype=float)
-    # Guarda: estación sin vecinos (sin coordenadas válidas en `data.neighbors`).
-    # Si hay que desviar desde ella, no hay distancias: se usa la primera
-    # estación con coordenadas válidas (orden de short_name) que cumpla la
-    # condición, con dist_m = NaN, y se cuenta en `detours_no_coords`.
-    has_nb = np.array([len(a) > 0 for a in nb_idx], dtype=bool)
-    fallback_idx = np.flatnonzero(has_nb)
-
-    # --- eventos ------------------------------------------------------------
-    heap: list = []
+    heap = []
     seq = 0
-
-    def push(t_ns, prio, kind, payload):
+    def push(t, priority, kind, payload):
         nonlocal seq
-        heapq.heappush(heap, (t_ns, prio, seq, kind, payload))
+        heapq.heappush(heap, (int(t), priority, seq, kind, payload))
         seq += 1
 
-    if (trips["t_arr"] < trips["t_dep"]).any():
-        raise ValueError("trips: hay viajes con t_arr < t_dep")
-    o_known = trips["o_known"].to_numpy() if "o_known" in trips else trips["o"].isin(idx).to_numpy()
-    d_known = trips["d_known"].to_numpy() if "d_known" in trips else trips["d"].isin(idx).to_numpy()
-    t_dep = ((trips["t_dep"] - pd.Timestamp(start)) / pd.Timedelta(1, "ns")).to_numpy().astype(np.int64)
-    t_arr = ((trips["t_arr"] - pd.Timestamp(start)) / pd.Timedelta(1, "ns")).to_numpy().astype(np.int64)
-    o_arr, d_arr = trips["o"].astype(str).to_numpy(), trips["d"].astype(str).to_numpy()
-
-    in_transit = 0
-    inflow_unknown = 0          # llegadas a estación conocida de viajes cuya salida se ignoró
-    n_dep_unknown = 0
-    n_arr_after_end = 0         # salen en la ventana y llegan a las 00:30 o después
-    for k in range(len(trips)):
-        dep_in = 0 <= t_dep[k] < end_ns
-        if t_dep[k] < 0:
-            in_transit += 1     # salió antes de 05:30: está en tránsito al arrancar
-        elif dep_in:
-            if o_known[k] and o_arr[k] in idx:
-                push(int(t_dep[k]), _P_DEP, "dep", k)
+    if (trips.t_arr < trips.t_dep).any():
+        raise ValueError("viaje con llegada antes de salida")
+    transit = 0
+    unknown_in = unknown_out = 0
+    trip_served = 0
+    dep_unknown = 0
+    after_end = 0
+    trip_ok = np.ones(len(trips), bool)
+    for k, r in enumerate(trips.itertuples(index=False)):
+        dep, arr = ns(r.t_dep), ns(r.t_arr)
+        known_o = getattr(r, "o_known", r.o in ix) and r.o in ix
+        known_d = getattr(r, "d_known", r.d in ix) and r.d in ix
+        if dep < 0 and arr >= 0:
+            if known_o:
+                transit += 1
             else:
-                n_dep_unknown += 1
-        if 0 <= t_arr[k] < end_ns:
-            # Guarda: un viaje de duración 0 que sale en la ventana no puede
-            # llegar antes de salir. Su llegada va justo después de su salida
-            # (misma prioridad, empujada después), no con las llegadas.
-            zero = dep_in and t_arr[k] == t_dep[k]
-            push(int(t_arr[k]), _P_DEP if zero else _P_ARR, "arr", k)
-        elif dep_in and t_arr[k] >= end_ns:
-            n_arr_after_end += 1
-    transit0 = in_transit
-
-    for m in range(n_min):
-        push(m * _NS_MIN, _P_SAMPLE, "sample", m)
-
-    # decisiones: cada STEP_MIN desde start mientras t + L < end
-    decide_times = []
-    if is_policy:
-        t = start
-        while t + timedelta(minutes=lead_min) < end:
-            decide_times.append(t)
-            push(_ns(t, start), _P_DECIDE, "decide", t)
-            t += timedelta(minutes=C.STEP_MIN)
-
-    rec_times = []
-    for t in (record_at if record_at is not None else []):
-        tn = _ns(t, start)
-        if 0 <= tn < end_ns:
-            push(tn, _P_SAMPLE, "record", len(rec_times))
-            rec_times.append(pd.Timestamp(t))
-
-    # dañadas: ordenadas por (t, tipo, estación) para que el orden en un mismo
-    # instante sea determinista (daño → taller_retiro → reparacion)
-    n_damage_outside = 0
-    if damage_events is not None and len(damage_events):
-        K.validate_damage_events(damage_events)
-        ev = damage_events.assign(_rank=damage_events["kind"].map(_DAMAGE_RANK))
-        ev = ev.sort_values(["t", "_rank", "short_name"], kind="stable")
-        for t, s, kd, nn in zip(ev["t"], ev["short_name"].astype(str), ev["kind"], ev["n"]):
-            tn = _ns(t, start)
-            if 0 <= tn < end_ns:
-                push(tn, _P_DAMAGE, "damage", (str(s), str(kd), int(nn)))
+                trip_ok[k] = False  # la bici entra desde una estación no observada
+        if 0 <= dep < end_ns:
+            if known_o:
+                push(dep, 4, "dep", (k, str(r.o)))
             else:
-                n_damage_outside += 1
+                trip_ok[k] = False
+                dep_unknown += 1
+        if 0 <= arr < end_ns:
+            push(arr, 5 if dep == arr and dep >= 0 else 3, "arr", (k, str(r.d), known_d))
+        elif 0 <= dep < end_ns and arr >= end_ns:
+            after_end += 1
+    transit_initial = transit
 
-    # órdenes: un lote por instante efectivo
-    batches: dict[int, list] = {}
-    n_orders_outside = 0
+    events = damage_events
+    if events is not None:
+        K.validate_damage_events(events)
+        for r in events.sort_values(["t", "short_name", "kind"]).itertuples(index=False):
+            t = ns(r.t)
+            if 0 <= t < end_ns:
+                push(t, 0, "damage", (str(r.short_name), r.kind, int(r.n)))
 
-    def schedule(o: K.Order):
-        nonlocal n_orders_outside
-        tn = _ns(o.effective_at, start)
-        if not (0 <= tn < end_ns):
-            n_orders_outside += 1
+    is_policy = policy is not None
+    params = params or K.PolicyParams()
+    batches = {}  # decision id → pickups, deliveries, carga
+    observed_moves = {}  # (t1, estación) → delta TOTAL del feed (sin depender del brazo)
+    if feed_moves is not None:
+        K.validate_ecobici_moves(feed_moves)
+        for row in feed_moves.itertuples(index=False):
+            observed_moves[(ns(row.t1), str(row.short_name))] = int(row.delta)
+    feed_replay_offset = {}  # misma entrada/salida exógena ya aplicada antes de replay
+    replay_groups = {}  # t → órdenes del mismo instante para neutralización diagnóstica
+    diagnostic_returns = []
+    replay_nets = {}  # neto aplicado por instante, antes de neutralizar
+    pending = []
+    applied = []
+    visited = set()
+    cut = {"fisico": 0, "tope": 0, "fuera_servicio": 0, "entrega_sin_recogida": 0,
+           "devolucion_origen": 0, "visitas": 0}
+    truck = 0
+    truck_max = 0
+    replay_external = 0
+    damage_external = 0
+    return_log = []
+    order_log = []
+    def register(group):
+        nonlocal seq
+        if not group:
             return
-        if tn not in batches:
-            batches[tn] = []
-            push(tn, _P_ORDER, "orders", tn)
-        batches[tn].append(o)
-
-    for o in _as_order_list(orders):
-        schedule(o)
-
-    # --- estado y bitácoras -------------------------------------------------
-    trip_ok = np.ones(len(trips), dtype=bool)   # False si la salida no encontró bici
-    pending: list[K.Order] = []
-    empty_min = np.zeros((n_min, n), dtype=bool)
-    full_min = np.zeros((n_min, n), dtype=bool)
-    bikes_min = np.zeros((n_min, n), dtype=np.int32)
-    dis_min = np.zeros((n_min, n), dtype=np.int16)
-    rec = np.zeros((len(rec_times), n), dtype=np.int32)
-    rec_dis = np.zeros((len(rec_times), n), dtype=np.int32)
-    detours = []                                  # (t, kind, orig, to, dist_m)
-    applied_log = []                              # ver columnas de `orders_applied`
-    damage_log = []                               # (t, short_name, kind, n, applied)
-    A = R = clipped = moves = 0
-    cut_move_total = cut_wh_total = cut_oos_total = 0
-    wh_min = wh_max = 0                           # bodega neta mínima y máxima al cerrar cada lote
-    touched = set()
-    trips_served = arrivals_unknown = dep_failed = arr_failed = 0
-    dmg = {"daño": [0, 0], "reparacion": [0, 0], "taller_retiro": [0, 0]}  # [aplicado, no aplicable]
-    n_arr = 0
-
-    n_no_coords = 0
-
-    def nearest(i, cond):
-        nonlocal n_no_coords
-        if not has_nb[i]:
-            cand = fallback_idx[fallback_idx != i]
-            ok = cond(cand)
-            if not ok.any():
-                return -1, np.nan
-            n_no_coords += 1
-            return int(cand[int(np.argmax(ok))]), np.nan
-        cand = nb_idx[i]
-        ok = cond(cand)
-        if not ok.any():
-            return -1, np.nan
-        j = int(np.argmax(ok))
-        return int(cand[j]), float(nb_dist[i][j])
-
-    def apply_batch(t_ns, batch):
-        """Aplica un lote de órdenes del mismo instante (ver docstring del módulo)."""
-        nonlocal A, R, clipped, moves, cut_move_total, cut_wh_total, cut_oos_total, wh_min, wh_max
-        recs = []   # [orden, i, pedido tras tope y fuera de servicio, aplicado, rec_mov, rec_oos, rec_fis, rec_bod]
-        for o in batch:
-            if o in pending:
-                pending.remove(o)
-            i = idx.get(o.short_name)
-            req, cut_mov, cut_oos = o.delta, 0, 0
-            if is_policy:
-                if abs(req) > max_move:
-                    cut_mov = abs(req) - max_move
-                    req = max_move if req > 0 else -max_move
-                if i is not None and oos[i]:
-                    cut_oos, req = abs(req), 0
-            if i is None or req == 0:
-                ap = 0
-            elif req > 0:
-                ap = int(min(req, room[i] - bikes[i]))
-            else:
-                ap = -int(min(-req, bikes[i]))
-            if i is not None:
-                bikes[i] += ap
-            recs.append([o, i, req, ap, cut_mov, cut_oos, abs(req) - abs(ap), 0])
         if is_policy:
-            # Bodega finita sobre lo aplicado: el lote no puede dejar A − R fuera
-            # de [−tope, +tope]. Si se pasa arriba se recortan puestas (sign = +1);
-            # si se pasa abajo, retiros (sign = −1). El recorte se reparte entre
-            # estaciones en proporción a lo aplicado de ese lado (`_spread`), así
-            # que no depende de la posición de la orden en el lote. Por estación
-            # se recorta a lo más lo que puede deshacer: una puesta no puede dejar
-            # bicis negativas ni un retiro pasarse de la capacidad; con eso
-            # siempre alcanza (ver REPORT).
-            w = (A - R) + sum(r[3] for r in recs)
-            need, sign = (w - tope_bodega, 1) if w > tope_bodega else (-tope_bodega - w, -1)
-            if need > 0:
-                by_st: dict[int, list] = {}
-                for r in recs:
-                    if sign * r[3] > 0:
-                        by_st.setdefault(r[1], []).append(r)
-                sts = sorted(by_st, key=lambda i: names[i])
-                caps = [min(sum(sign * r[3] for r in by_st[i]),
-                            int(bikes[i]) if sign > 0 else int(room[i] - bikes[i])) for i in sts]
-                for i, c in zip(sts, _spread(need, caps)):
-                    if c == 0:
-                        continue
-                    bikes[i] -= sign * c
-                    rs = by_st[i]
-                    for r, cc in zip(rs, _spread(c, [sign * r[3] for r in rs])):
-                        r[3] -= sign * cc
-                        r[7] += cc
-        for o, i, req, ap, cut_mov, cut_oos, cut_fis, cut_bod in recs:
-            clipped += cut_fis
-            cut_move_total += cut_mov
-            cut_oos_total += cut_oos
-            cut_wh_total += cut_bod
-            if ap != 0:
-                moves += 1
-                touched.add(o.short_name)
-                if ap > 0:
-                    A += ap
-                else:
-                    R -= ap
-            applied_log.append((o.issued_at, o.effective_at, o.short_name, o.delta, ap,
-                                cut_mov, cut_oos, cut_fis, cut_bod))
-        w = A - R
-        if is_policy and not (-tope_bodega <= w <= tope_bodega):
-            raise AssertionError(f"bodega fuera del tope: {w} ∉ [±{tope_bodega}]")
-        wh_min, wh_max = min(wh_min, w), max(wh_max, w)
+            picks = [o for o in group if o.delta < 0]
+            gives = [o for o in group if o.delta > 0]
+            if sum(-o.delta for o in picks) != sum(o.delta for o in gives):
+                raise ValueError("cada decisión debe equilibrar recogidas y entregas")
+            if len(group) > params.visits_per_decision:
+                raise ValueError("visitas por decisión exceden tope")
+            if len({(o.pickup_at, o.delivery_at) for o in group}) != 1:
+                raise ValueError("tiempos distintos dentro de una decisión")
+            key = seq
+            batches[key] = {"picks": picks, "gives": gives, "picked": [], "load": 0}
+            push(ns(picks[0].pickup_at), 1, "pickup", key)
+            push(ns(gives[0].delivery_at), 1, "delivery", key)
+        else:
+            for o in group:
+                if 0 <= ns(o.pickup_at if o.delta < 0 else o.delivery_at) < end_ns:
+                    tt = ns(o.pickup_at if o.delta < 0 else o.delivery_at)
+                    replay_groups.setdefault(tt, []).append(o)
+                    push(tt, 1, "replay", o)
+
+    if orders is not None:
+        oo = K.frame_to_orders(orders) if isinstance(orders, pd.DataFrame) else list(orders)
+        register(oo)
+        if neutralize_replay:
+            for tt in replay_groups:
+                push(tt, 2, "neutralize", tt)
+    if is_policy:
+        for t in C.decision_times(day or C.window_day(start)):
+            if start <= pd.Timestamp(t) and pd.Timestamp(t) + timedelta(minutes=params.delivery_min) < end:
+                push(ns(t), 2, "decide", t)
+
+    minutes = pd.date_range(start, periods=n_min, freq="min")
+    bikes_min = np.empty((n_min, n), np.int16)
+    dis_min = np.empty((n_min, n), np.int16)
+    rec_times = [pd.Timestamp(t) for t in (record_at or []) if 0 <= ns(t) < end_ns]
+    record = np.zeros((len(rec_times), n), np.int16)
+    record_dis = np.zeros_like(record)
+    for i, t in enumerate(rec_times):
+        push(ns(t), 6, "record", i)
+    for m in range(n_min):
+        push(m * _NS_MIN, 6, "sample", m)
+
+    detours = []
+    damage_log = []
+    times_decision = []
+    no_damage = 0
+    moves_pick = moves_give = bikes_moved = 0
+    def invariant(t):
+        # Un cambio de flota del replay queda explícito como flujo observado:
+        # nunca se confunde con carga disponible en una camioneta.
+        actual = int(bikes.sum() + dis.sum() + transit + truck + unknown_out - unknown_in - replay_external - damage_external)
+        if actual != initial_total + transit_initial:
+            raise AssertionError(f"conservación rota en {start + pd.Timedelta(t, unit='ns')}: {actual} != {initial_total + transit_initial}")
+        if truck < 0 or (bikes < 0).any() or (dis < 0).any() or (bikes > room).any():
+            raise AssertionError("stock/camionetas físicamente inválidos")
 
     while heap:
-        t_ns, prio, _, kind, p = heapq.heappop(heap)
-        if kind == "dep":
-            i = idx[o_arr[p]]
-            if bikes[i] == 0:
-                j, dist = nearest(i, lambda c: bikes[c] > 0)
-                if j < 0:
-                    dep_failed += 1
-                    trip_ok[p] = False
-                    continue
-                detours.append((t_ns, "dep", names[i], names[j], dist))
+        t, _, _, kind, p = heapq.heappop(heap)
+        if kind == "damage":
+            s, kd, count = p
+            i = ix.get(s)
+            delta = observed_moves.get((t, s), 0) if damage_variant == "feed" else 0
+            requested_external = min(count, max(0, delta if kd == "sube" else -delta))
+            if i is None:
+                carried = 0
+            elif kd == "sube":
+                carried = min(requested_external, int(room[i] - bikes[i]))
+                dis[i] += carried
+                room[i] -= carried
+                damage_external += carried
+            else:
+                carried = min(requested_external, int(dis[i]))
+                dis[i] -= carried
+                room[i] += carried
+                damage_external -= carried
+            if carried:
+                feed_replay_offset[(t, s)] = feed_replay_offset.get((t, s), 0) + (carried if kd == "sube" else -carried)
+            v = min(count - carried, int(bikes[i] if kd == "sube" else dis[i])) if i is not None else 0
+            if kd == "sube":
+                bikes[i] -= v
+                dis[i] += v
+                room[i] -= v
+            else:
+                dis[i] -= v
+                bikes[i] += v
+                room[i] += v
+            no_damage += count - carried - v
+            damage_log.append((start + pd.Timedelta(t, unit="ns"), s, kd, count, v + carried))
+        elif kind == "replay":
+            o = p
+            i = ix.get(o.short_name)
+            offset = feed_replay_offset.pop((t, o.short_name), 0)
+            req = o.delta - offset  # no contar dos veces la dañada exógena
+            if i is None:
+                v = 0
+            elif req > 0:
+                v = min(req, int(room[i] - bikes[i]))
+            else:
+                v = -min(-req, int(bikes[i]))
+            if i is not None:
+                bikes[i] += v
+            replay_external += v
+            replay_nets[t] = replay_nets.get(t, 0) + v
+            cut["fisico"] += abs(req) - abs(v)
+            if v:
+                visited.add(o.short_name)
+                moves_give += int(v > 0)
+                moves_pick += int(v < 0)
+                bikes_moved += abs(v)
+            order_log.append((o.issued_at, o.pickup_at, o.delivery_at, o.short_name, req, v))
+        elif kind == "neutralize":
+            # Contrafactual únicamente: redistribuye el exceso neto de cada
+            # foto entre estaciones, sin flujo externo. Primero revierte en
+            # estaciones del mismo signo; después recorre IDs alfabéticos.
+            net = replay_nets.pop(t, 0)
+            if net:
+                primary = sorted({o.short_name for o in replay_groups[t] if o.delta * net > 0})
+                candidates = primary + [s for s in names if s not in primary]
+                remaining = abs(net)
+                for s in candidates:
+                    i = ix.get(s)
+                    if i is None:
+                        continue
+                    quantity = min(remaining, int(bikes[i] if net > 0 else room[i] - bikes[i]))
+                    if quantity:
+                        bikes[i] -= quantity if net > 0 else -quantity
+                        correction = -quantity if net > 0 else quantity
+                        replay_external += correction
+                        diagnostic_returns.append((start + pd.Timedelta(t, unit="ns"), s, correction))
+                        remaining -= quantity
+                    if not remaining:
+                        break
+                if remaining:
+                    raise AssertionError("imposible neutralizar neto observado sin violar capacidad")
+        elif kind == "pickup":
+            b = batches[p]
+            for o in b["picks"]:
+                i = ix.get(o.short_name)
+                limit = min(-o.delta, params.max_bikes_per_visit)
+                cut["tope"] += -o.delta - limit
+                if i is None or oos[i]:
+                    cut["fuera_servicio"] += limit
+                    v = 0
+                else:
+                    v = min(limit, int(bikes[i]))
+                    bikes[i] -= v
+                cut["fisico"] += limit - v if i is not None and not oos[i] else 0
+                if v:
+                    b["picked"].append((i, v))
+                    truck += v
+                    b["load"] += v
+                    moves_pick += 1
+                    bikes_moved += v
+                    visited.add(o.short_name)
+                order_log.append((o.issued_at, o.pickup_at, o.delivery_at, o.short_name, o.delta, -v))
+            truck_max = max(truck_max, truck)
+            pending = [o for o in pending if o not in b["picks"]]
+        elif kind == "delivery":
+            b = batches[p]
+            gives = b["gives"]
+            limits = [min(o.delta, params.max_bikes_per_visit) for o in gives]
+            for o, limit in zip(gives, limits):
+                cut["tope"] += o.delta - limit
+            # Distribución determinista independiente del orden de emisión.
+            order_idx = sorted(range(len(gives)), key=lambda j: (gives[j].short_name, j))
+            caps = [limits[j] for j in order_idx]
+            allocation = _spread(min(b["load"], sum(caps)), caps)
+            quotas = dict(zip(order_idx, allocation))
+            cut["entrega_sin_recogida"] += sum(limits) - sum(allocation)
+            for j, o in enumerate(gives):
+                limit = quotas[j]
+                i = ix.get(o.short_name)
+                if i is None or oos[i]:
+                    cut["fuera_servicio"] += limit
+                    v = 0
+                else:
+                    v = min(limit, int(room[i] - bikes[i]))
+                    bikes[i] += v
+                cut["fisico"] += limit - v if i is not None and not oos[i] else 0
+                truck -= v
+                if v:
+                    moves_give += 1
+                    bikes_moved += v
+                    visited.add(o.short_name)
+                order_log.append((o.issued_at, o.pickup_at, o.delivery_at, o.short_name, o.delta, v))
+            remainder = b["load"] - sum(max(0, row[-1]) for row in order_log[-len(gives):])
+            for origin, quantity in b["picked"]:
+                while quantity and remainder:
+                    j, dist = nearest(origin, lambda z: bikes[z] < room[z], allow_self=True)
+                    v = min(quantity, remainder, int(room[j] - bikes[j]))
+                    bikes[j] += v
+                    truck -= v
+                    quantity -= v
+                    remainder -= v
+                    cut["devolucion_origen"] += v
+                    return_log.append((names[origin], names[j], v, dist))
+            if remainder:
+                raise AssertionError("quedaron bicis en camioneta sin anclaje de devolución")
+            pending = [o for o in pending if o not in gives]
+            del batches[p]
+        elif kind == "decide":
+            st = K.SimState(t=p, stations=pd.DataFrame({"short_name": names, "bikes": bikes.copy(),
+                            "disabled": dis.copy(), "docks": room - bikes, "cap": cap,
+                            "out_of_service": oos.copy()}), warehouse=truck)
+            tic = time.perf_counter()
+            new = policy.decide(p, st, list(pending), forecast, params) or []
+            times_decision.append(time.perf_counter() - tic)
+            for o in new:
+                if o.issued_at != p or o.pickup_at != p + timedelta(minutes=params.pickup_min) or o.delivery_at != p + timedelta(minutes=params.delivery_min):
+                    raise ValueError("orden fuera de los tiempos de la decisión")
+            register(new)
+            pending.extend(new)
+        elif kind == "dep":
+            k, origin = p
+            i = ix[origin]
+            if not bikes[i]:
+                j, d = nearest(i, lambda z: bikes[z] > 0)
+                detours.append((start + pd.Timedelta(t, unit="ns"), "dep", origin, names[j], d))
                 i = j
             bikes[i] -= 1
-            in_transit += 1
-            trips_served += 1
+            transit += 1
+            trip_served += 1
         elif kind == "arr":
-            if t_dep[p] >= 0 and not trip_ok[p]:
-                continue                          # la salida no ocurrió: no hay bici
-            i = idx[d_arr[p]] if (d_known[p] and d_arr[p] in idx) else -1
+            k, dest, known = p
+            i = ix[dest] if known else -1
             if i >= 0 and bikes[i] >= room[i]:
-                j, dist = nearest(i, lambda c: bikes[c] < room[c])
-                if j < 0:
-                    arr_failed += 1               # nadie tiene anclaje: la bici queda en tránsito
-                    continue
-                detours.append((t_ns, "arr", names[i], names[j], dist))
+                j, d = nearest(i, lambda z: bikes[z] < room[z])
+                detours.append((start + pd.Timedelta(t, unit="ns"), "arr", dest, names[j], d))
                 i = j
-            n_arr += 1
-            if t_dep[p] >= 0 and not (o_known[p] and o_arr[p] in idx):
-                inflow_unknown += 1               # bici que entra desde una desconocida
+            if trip_ok[k]:
+                transit -= 1
             else:
-                in_transit -= 1
+                unknown_in += 1
             if i < 0:
-                arrivals_unknown += 1             # llega a una desconocida: sale del sistema
+                unknown_out += 1
             else:
                 bikes[i] += 1
-        elif kind == "damage":
-            s, kd, nn = p
-            i = idx.get(s)
-            if i is None:
-                a = 0
-            elif kd == "daño":                    # disponible → dañada (ocupa el mismo anclaje)
-                a = int(min(nn, bikes[i]))
-                bikes[i] -= a
-                dis[i] += a
-                room[i] -= a
-            elif kd == "reparacion":              # dañada → disponible
-                a = int(min(nn, dis[i]))
-                dis[i] -= a
-                bikes[i] += a
-                room[i] += a
-            else:                                 # taller_retiro: la dañada sale del sistema
-                a = int(min(nn, dis[i]))
-                dis[i] -= a
-                room[i] += a
-            dmg[kd][0] += a
-            dmg[kd][1] += nn - a
-            damage_log.append((t_ns, s, kd, nn, a))
-        elif kind == "orders":
-            apply_batch(t_ns, batches.pop(p))
-        elif kind == "decide":
-            t = p
-            st = pd.DataFrame({
-                "short_name": names, "bikes": bikes.copy(), "disabled": dis.copy(),
-                "docks": room - bikes, "cap": cap.copy(), "out_of_service": oos.copy(),
-            })
-            state = K.SimState(t=t, stations=st, warehouse=A - R)
-            new = policy.decide(t, state, list(pending), forecast, params) or []
-            eff = t + timedelta(minutes=lead_min)
-            for o in new:
-                if not isinstance(o, K.Order):
-                    raise TypeError(f"policy.decide devolvió {type(o).__name__}, se esperaba Order")
-                if o.issued_at != t or o.effective_at != eff:
-                    raise ValueError(f"orden con issued_at/effective_at ≠ ({t}, {eff}): {o}")
-                pending.append(o)
-                schedule(o)
         elif kind == "sample":
-            m = p
-            bikes_min[m] = bikes
-            dis_min[m] = dis
-            empty_min[m] = bikes == 0
-            full_min[m] = bikes >= room
+            bikes_min[p] = bikes
+            dis_min[p] = dis
         elif kind == "record":
-            rec[p] = bikes
-            rec_dis[p] = dis
+            record[p] = bikes
+            record_dis[p] = dis
+        invariant(t)
 
-    # --- conservación -------------------------------------------------------
-    # disponibles: estaciones + tránsito − bodega + fugas a desconocidas
-    #              + dañadas netas (daño − reparación) = constante
-    total0 = bikes0_total + transit0
-    total1 = (int(bikes.sum()) + in_transit - (A - R) + arrivals_unknown - inflow_unknown
-              + dmg["daño"][0] - dmg["reparacion"][0])
-    if total0 != total1:
-        raise AssertionError(f"conservación rota: {total0} ≠ {total1}")
-    if dis0_total + dmg["daño"][0] - dmg["reparacion"][0] - dmg["taller_retiro"][0] != int(dis.sum()):
-        raise AssertionError("conservación de dañadas rota")
-
-    # --- métricas -------------------------------------------------------------
-    minutes = pd.date_range(start, periods=n_min, freq="min")
-    hours = minutes.hour.to_numpy()
-    hours = np.where(hours < 5, hours + 24, hours)   # 00:00–00:30 → 24 (STATION_HOURS)
-    rows = []
-    for h in np.unique(hours):
-        sel = hours == h
-        rows.append(pd.DataFrame({
-            "short_name": names, "hour": int(h),
-            "E": empty_min[sel].sum(axis=0).astype("int64"),
-            "F": full_min[sel].sum(axis=0).astype("int64"),
-        }))
-    station_hour = pd.concat(rows, ignore_index=True)[K.STATION_HOUR_COLUMNS]
-
-    det = pd.DataFrame(detours, columns=["t_ns", "kind", "orig", "to", "dist_m"])
-    det["t"] = pd.Timestamp(start) + pd.to_timedelta(det.pop("t_ns"), unit="ns")
-    det = det[["t", "kind", "orig", "to", "dist_m"]]
-    dep_d, arr_d = det[det["kind"] == "dep"], det[det["kind"] == "arr"]
-
-    dl = pd.DataFrame(damage_log, columns=["t_ns", "short_name", "kind", "n", "applied"])
-    dl.insert(0, "t", pd.Timestamp(start) + pd.to_timedelta(dl.pop("t_ns"), unit="ns"))
-
-    metrics = {
-        "E": int(empty_min.sum()),
-        "F": int(full_min.sum()),
-        "trips_served": int(trips_served),
-        "detours_dep": int(len(dep_d)),
-        "detours_arr": int(len(arr_d)),
-        "walk_m_dep": float(dep_d["dist_m"].sum()),
-        "walk_m_arr": float(arr_d["dist_m"].sum()),
-        "moves": int(moves),
-        "stations_touched": int(len(touched)),
-        "A": int(A),
-        "R": int(R),
-        "rebalanced": int(min(A, R)),
-        "warehouse": int(A - R),
-        "clipped": int(clipped),
-        "arrivals_unknown": int(arrivals_unknown),
-        "recorte_bodega": int(cut_wh_total),
-        "recorte_por_movimiento": int(cut_move_total),
-        "danos_aplicados": int(dmg["daño"][0]),
-        "danos_no_aplicables": int(dmg["daño"][1]),
-        "taller_aplicado": int(dmg["taller_retiro"][0]),
-        "taller_no_aplicable": int(dmg["taller_retiro"][1]),
-    }
-    extra = {
-        "detours": det,
-        "orders_applied": pd.DataFrame(applied_log, columns=[
-            "issued_at", "effective_at", "short_name", "delta", "applied",
-            "recorte_por_movimiento", "recorte_fuera_de_servicio", "recorte_fisico", "recorte_bodega"]),
-        "damage_applied": dl,                   # (t, short_name, kind, n, applied)
-        "stations": names,
-        "minutes": minutes,
-        "bikes_minute": bikes_min,              # (minuto, estación) bicis disponibles
-        "disabled_minute": dis_min,             # (minuto, estación) dañadas
-        "record_times": rec_times,
-        "bikes_record": rec,                    # (record_at, estación) disponibles
-        "disabled_record": rec_dis,             # (record_at, estación) dañadas
-        "decision_times": decide_times,
-        "n_departures_unknown": int(n_dep_unknown),
-        "inflow_unknown": int(inflow_unknown),
-        "n_arrivals": int(n_arr),
-        "n_arrivals_after_end": int(n_arr_after_end),
-        "dep_failed": int(dep_failed),
-        "arr_failed": int(arr_failed),
-        "detours_dep_far": int((dep_d["dist_m"] > C.DETOUR_RADIUS_M).sum()),
-        "detours_no_coords": int(n_no_coords),   # desvíos desde estación sin coordenadas (dist NaN)
-        "orders_outside_window": int(n_orders_outside),
-        "damage_outside_window": int(n_damage_outside),
-        "reparaciones_aplicadas": int(dmg["reparacion"][0]),
-        "reparaciones_no_aplicables": int(dmg["reparacion"][1]),
-        "recorte_fuera_de_servicio": int(cut_oos_total),
-        "tope_bodega": tope_bodega,
-        "max_bikes_per_move": max_move,
-        "bodega_min": int(wh_min),              # A − R mínimo al cerrar un lote
-        "bodega_max": int(wh_max),              # A − R máximo al cerrar un lote
-        "transit_start": int(transit0),
-        "transit_end": int(in_transit),
-        "E_out_of_service": int(empty_min[:, oos].sum()),
-        "F_out_of_service": int(full_min[:, oos].sum()),
-    }
-    res = K.DayResult(day=str(day) if day is not None else str(start.date()), arm=arm,
-                      metrics=metrics, station_hour=station_hour, extra=extra)
+    if truck or batches:
+        raise AssertionError("camionetas no vacías al cierre")
+    empty = bikes_min == 0
+    full = bikes_min + dis_min + docks_dis == cap
+    hours = np.where(minutes.hour < 5, minutes.hour + 24, minutes.hour)
+    station_hour = pd.concat([pd.DataFrame({"short_name": names, "hour": int(h),
+                        "E": empty[hours == h].sum(axis=0).astype(int),
+                        "F": full[hours == h].sum(axis=0).astype(int)}) for h in sorted(set(hours))], ignore_index=True)
+    det = pd.DataFrame(detours, columns=["t", "kind", "orig", "to", "dist_m"])
+    distance = det.dist_m.dropna()
+    # Pares exactos de visitas sucesivas en la misma estación y a un paso
+    # de decisión: se quitan solo del esfuerzo, nunca del estado físico.
+    paired = set()
+    if is_policy:
+        by_station = {}
+        for j, (issued, pick, deliver, s, requested, applied_n) in enumerate(order_log):
+            if applied_n:
+                at = pick if applied_n < 0 else deliver
+                by_station.setdefault(s, []).append((pd.Timestamp(at), j, applied_n))
+        for visits in by_station.values():
+            visits.sort(key=lambda x: (x[0], x[1]))
+            for a, b in zip(visits, visits[1:]):
+                if a[1] not in paired and b[1] not in paired and b[0] - a[0] == pd.Timedelta(minutes=C.STEP_MIN) and a[2] == -b[2]:
+                    paired.update((a[1], b[1]))
+    paired_picks = sum(order_log[j][-1] < 0 for j in paired)
+    paired_gives = len(paired) - paired_picks
+    metrics = dict(E=int(empty.sum()), F=int(full.sum()), visitas=moves_pick + moves_give - len(paired),
+                   visitas_recoger=moves_pick - paired_picks, visitas_entregar=moves_give - paired_gives,
+                   bicis_movidas=int(bikes_moved), en_transito_max=int(truck_max),
+                   recortes=cut, desvios_salida=int((det.kind == "dep").sum()),
+                   desvios_llegada=int((det.kind == "arr").sum()),
+                   km_desvio_medio=float(distance.mean() / 1000) if len(distance) else 0.,
+                   danadas_no_aplicables=int(no_damage))
+    res = K.DayResult(day=str(day or C.window_day(start)), arm=arm or ("policy" if is_policy else "ecobici" if orders is not None else "baseline"),
+                      EF=metrics["E"] + metrics["F"], station_hour=station_hour,
+                      tiempos_decision=times_decision, **metrics)
+    res.extra = {"stations": names, "minutes": minutes, "bikes_minute": bikes_min,
+                 "disabled_minute": dis_min, "record_times": rec_times,
+                 "bikes_record": record, "disabled_record": record_dis,
+                 "detours": det, "desvios_gt500": int((det.dist_m > 500).sum()),
+                 "desvios_gt500_fraccion": float((det.dist_m > 500).sum() / len(det)) if len(det) else 0.,
+                 "orders_applied": pd.DataFrame(order_log, columns=K.ORDER_COLUMNS[:3] + ["short_name", "delta", "applied"]),
+                 "damage_applied": pd.DataFrame(damage_log, columns=["t", "short_name", "kind", "n", "applied"]),
+                 "returns": return_log, "truck_end": truck, "transit_start": transit_initial,
+                 "transit_end": transit, "unknown_in": unknown_in, "unknown_out": unknown_out,
+                 "replay_external": replay_external, "damage_external": damage_external,
+                 "replay_neto": replay_external, "neto_externo": replay_external + damage_external,
+                 "neutralization": diagnostic_returns, "trips_served": trip_served,
+                 "departures_unknown": dep_unknown, "arrivals_after_end": after_end,
+                 "initial_total": initial_total + transit_initial,
+                 "visitas_sin_regla": moves_pick + moves_give, "pares_visitas": len(paired)}
     return K.validate_day_result(res)
 
 
-def run_day(day, orders=None, policy=None, lead_min: int = C.LEAD_MIN, forecast=None,
-            params: K.PolicyParams | None = None, record_at=None, arm: str | None = None,
-            damage_events="auto") -> K.DayResult:
-    """Simula un día real 05:30–00:30 con los viajes de `data.trips(day)`.
-
-    Sin `orders` ni `policy` es el baseline sin rebalanceo. `damage_events`:
-    `"auto"` (por defecto) lee `data/derived/ecosim/damage_events.parquet` si
-    existe; `"fixed"` reproduce las dañadas fijas del run 1; o un DataFrame
-    `DamageEvents`. La fuente queda en `extra["damage_source"]`.
-    """
+def run_day(day, orders=None, policy=None, forecast=None, params=None, record_at=None,
+            arm=None, damage_events="auto", damage_variant="onsite", neutralize_replay=False):
     from ecosim import data
-    d = C.as_date(day)
-    start, end = C.day_bounds(d)
-    ev, source = load_damage_events(d, damage_events)
-    res = simulate(
-        data.initial_state(d), data.trips(d), data.neighbors(d), start, end,
-        orders=orders, policy=policy, lead_min=lead_min, forecast=forecast,
-        params=params, record_at=record_at, day=d.isoformat(), arm=arm, damage_events=ev,
-    )
+    start, end = C.day_bounds(day)
+    ev, source = load_damage_events(day, damage_events)
+    mv = None
+    if damage_variant == "feed":
+        mv = pd.read_parquet(MOVES_FILE)
+        mv = mv[(mv.t1 >= start) & (mv.t1 < end)]
+    res = simulate(data.initial_state(day), data.trips(day), data.neighbors(day), start, end,
+                   orders=orders, policy=policy, forecast=forecast, params=params,
+                   record_at=record_at, day=str(C.as_date(day)), arm=arm,
+                   damage_events=ev, damage_variant=damage_variant, feed_moves=mv,
+                   neutralize_replay=neutralize_replay)
     res.extra["damage_source"] = source
     return res
 
 
-# ======================================================================
-# CLI
-# ======================================================================
-
-ARMS = {   # brazo → (when, variant, undo) del replay
-    "ecobici": ("t0", "rebal", False),
-    "ecobici_t1": ("t1", "rebal", False),
-    "ecobici_undo": ("t0", "rebal", True),
-    "ecobici_stock": ("t0", "stock", None),
-    "ecobici_avail": ("t0", "avail", None),
-}
-
-
-def resolve_damage(arm: str, damage: str | None) -> str:
-    """Modo de dañadas de un brazo de la CLI. `None` = el de su variante
-    (`REPLAY_DAMAGE`; `"auto"` para el baseline). Pedir dañadas dinámicas
-    con `ecobici_stock` o `ecobici_avail` es un error (doble conteo)."""
-    variant = ARMS[arm][1] if arm in ARMS else None
-    default = REPLAY_DAMAGE[variant] if variant else "auto"
-    if damage is None:
-        return default
-    if damage == "auto" and default == "fixed":
-        raise ValueError(f"--arm {arm} va con dañadas fijas: con dañadas dinámicas contaría dos veces "
-                         f"{'el taller' if variant == 'stock' else 'daños y reparaciones'}")
-    return damage
-
-
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Simula un día (05:30–00:30) e imprime sus métricas.")
+    ap = argparse.ArgumentParser(description="Simula 05:00–00:30 con viajes observados")
     ap.add_argument("--day", required=True)
-    ap.add_argument("--arm", default="baseline", choices=["baseline", *ARMS])
-    ap.add_argument("--damage", default=None, choices=["auto", "fixed"],
-                    help="dañadas dinámicas (damage_events.parquet si existe) o fijas (run 1); "
-                         "por defecto auto, salvo ecobici_stock y ecobici_avail, que van siempre fijas")
+    ap.add_argument("--arm", choices=["baseline", "ecobici"], default="baseline")
+    ap.add_argument("--delivery-min", type=int, choices=C.DELIVERY_SENS_MIN, default=C.DELIVERY_MIN)
+    ap.add_argument("--damage-variant", choices=["onsite", "feed"], default="onsite")
     a = ap.parse_args(argv)
-    try:
-        damage = resolve_damage(a.arm, a.damage)
-    except ValueError as e:
-        ap.error(str(e))
-    t = _time.perf_counter()
-    if a.arm == "baseline":
-        r = run_day(a.day, arm="baseline", damage_events=damage)
-    else:
-        when, variant, undo = ARMS[a.arm]
-        r = run_day(a.day, orders=ecobici_orders(a.day, when=when, variant=variant, undo=undo),
-                    arm=a.arm, damage_events=damage)
-    secs = _time.perf_counter() - t
-    x = r.extra
-    out = {"day": r.day, "arm": r.arm, "damage_source": x["damage_source"], **r.metrics,
-           "n_orders": int(len(x["orders_applied"])),
-           "reparaciones_aplicadas": x["reparaciones_aplicadas"],
-           "reparaciones_no_aplicables": x["reparaciones_no_aplicables"],
-           "detours_dep_far": x["detours_dep_far"],
-           "detours_no_coords": x["detours_no_coords"],
-           "dep_failed": x["dep_failed"], "arr_failed": x["arr_failed"],
-           "n_arrivals_after_end": x["n_arrivals_after_end"],
-           "E_out_of_service": x["E_out_of_service"],
-           "F_out_of_service": x["F_out_of_service"],
-           "seconds": round(secs, 2)}
-    print(json.dumps(out, indent=2, ensure_ascii=False))
+    tic = time.perf_counter()
+    orders = ecobici_orders(a.day) if a.arm == "ecobici" else None
+    r = run_day(a.day, orders=orders, arm=a.arm, damage_variant=a.damage_variant,
+                params=K.PolicyParams(delivery_min=a.delivery_min))
+    out = {"day": r.day, "arm": r.arm, **r.metrics,
+           "bicis": int(r.extra["initial_total"]),
+           "desvios_gt500_fraccion": r.extra["desvios_gt500_fraccion"],
+           "camionetas_cierre": r.extra["truck_end"], "flujo_externo_replay": r.extra["replay_external"],
+           "flujo_externo_danadas": r.extra["damage_external"], "neto_externo": r.extra["neto_externo"],
+           "seconds": round(time.perf_counter() - tic, 2)}
+    print(json.dumps(out, ensure_ascii=False, indent=2))
     return out
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main()

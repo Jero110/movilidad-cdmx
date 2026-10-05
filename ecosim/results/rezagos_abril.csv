@@ -1,0 +1,9 @@
+day,rezago_7_cero,rezago_14_cero,bloques_estacion_afectados
+2026-04-01,True,False,52806
+2026-04-02,True,False,52806
+2026-04-06,True,True,105612
+2026-04-08,False,True,52806
+2026-04-09,False,True,52806
+2026-04-10,False,True,52806
+2026-04-13,False,True,52806
+2026-04-15,False,False,0

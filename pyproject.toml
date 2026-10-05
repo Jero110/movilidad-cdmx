@@ -5,8 +5,10 @@ requires-python = ">=3.12"
 dependencies = [
     "duckdb>=1.5.5",
     "fastapi>=0.141.1",
+    "geopandas>=1.2.0",
     "highspy>=1.15.1",
     "holidays>=0.105",
+    "joblib",
     "kneed>=0.8.6",
     "lightgbm>=4.7.0",
     "matplotlib>=3.11.2",
@@ -15,6 +17,7 @@ dependencies = [
     "pyarrow>=25.0.1",
     "scikit-learn>=1.9.1",
     "scipy",
+    "shapely",
     "uvicorn>=0.53.0",
 ]
 

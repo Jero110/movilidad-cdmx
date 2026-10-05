@@ -18,15 +18,17 @@ __pycache__/
 .python-version
 .pytest_cache/
 
+# Node
+node_modules/
+
 # macOS
 .DS_Store
 
-# Intermedios de LaTeX/Quarto. reporte-final.pdf SÍ se versiona.
-report/*.tex
-!report/numeros.tex
+# Intermedios de LaTeX. reporte-final.pdf SÍ se versiona.
 report/*.aux
 report/*.log
 report/*.out
-report/*_files/
+report/*.bbl
+report/*.blg
 
 logs/

@@ -1,125 +1,108 @@
-# ecosim run 2 — conclusiones (día completo 05:30–00:30, 15 días de evaluación)
+# Conclusiones — ecosim run 3
 
-Plan: `docs/planner/plans/2026-09-28-ecosim2.md`. Reproducir: `uv run python -m ecosim.run --all` (~85 min, 8
-procesos de 1 thread). Cada una de las 1,440 corridas de `resultados.csv` se calculó dos veces con el mismo
-resultado: una corrida por pasos, `--all` desde cero y 48 filas recalculadas aparte. Esa verificación no cubre
-`v1/*`. Todo lo elegible se eligió en 15 días de **selección**; los números son de los 15 días de
-**evaluación** del run 1. E y F son minutos-estación vacíos o llenos por día, sin las estaciones fuera de
-servicio. Detalle en `tablas.md` y `CONCLUSIONES-apendice.md`.
+Resultados dentro del simulador, no promesa operacional ni rutas verificadas.
 
-## Panorama
+El mejor brazo real elegido en agosto fue **ma_diaria**. En la prueba, Ecobici obtuvo 100,641 minutos-estación vacíos o llenos por día; el brazo real, 56,542 (43.8% menos).
 
-1. **Con un pronóstico emitido una sola vez a las 05:30 (`daily`), el asignador baja E+F 55% contra
-   Ecobici en el día completo.** Gana los 15 días, con casi los mismos movimientos (2,502 contra 2,416) y
-   12% más bicis movidas. Hay sesgos en los dos sentidos:
-   - **a favor de Ecobici:** su replay en t0 le baja 9% el E+F (contra t1), y bodega y topes solo se
-     aplican a las políticas;
-   - **en su contra:** quitar los pares ±1 le sube 4%, y la política ve el estado exacto.
-2. **Re-pronosticar durante el día no ayuda.** `ma` y `model` re-emitidos (mejor: cada 15 min, h = 3)
-   quedan 14% peor que `daily`, en selección y en evaluación. Coincide con la exactitud de `pronostico2`.
-   Parte de la brecha es de bodega: `ma`/`model` la saturan y recortan ~600 bicis por día (`daily`, 203).
-   El reviewer lo midió en 4 días con bodega ilimitada: `ma` baja 7.9% y `daily` 5.1%, y `ma` sigue ~7%
-   peor. La bodega explica ~1/3 de la brecha.
-3. **El pronóstico perfecto (oracle) baja E+F 74% contra Ecobici.** Entre `daily` y el oracle quedan ~20k
-   minutos-estación por día: es el margen del siguiente paso.
-4. **V1: el simulador sigue a GBFS en la mañana, pero subestima las vacías en la noche.** El sesgo de
-   horario del replay favorece a Ecobici. El resto (−5% en E con t1) es del simulador y afecta a todos los
-   brazos, sin dirección probada sobre la brecha.
+## Brazos con esfuerzo equiparado en selección (no en prueba)
 
-Todo es *dentro del simulador*, con información asimétrica. Es evidencia de que el enfoque funciona, no
-una cifra de ahorro en la calle.
+| brazo | E+F_menos_pct | IC95_pct_inf | IC95_pct_sup | gana | empata | visitas_pct |
+|---|---|---|---|---|---|---|
+| oraculo_diario | 63.07 | 60.65 | 65.50 | 152 | 0 | -12.45 |
+| ma_diaria | 43.82 | 41.65 | 45.98 | 152 | 0 | -10.58 |
+| lgbm_diario | 43.34 | 41.16 | 45.51 | 152 | 0 | -10.56 |
+| oraculo_directo | 71.29 | 68.29 | 74.28 | 152 | 0 | -11.99 |
+| lgbm_directo | 43.77 | 41.74 | 45.81 | 152 | 0 | -10.91 |
 
-## V1 — simulador contra GBFS: **mañana sí; día completo no en E** (no grave, ≤ 25%)
+El esfuerzo se ajustó en los 15 días de selección, no en los meses de prueba. En prueba ma_diaria hizo 10.6% menos visitas que Ecobici, así que estos resultados no son estrictamente a igual esfuerzo fuera de muestra. Cuando λ=60 aún movía más que Ecobici se extrapoló por encima de la rejilla y se confirmó con otra corrida; `frozen.json` conserva intentos y error residual. La tabla muestra las visitas fuera de muestra.
+El replay de Ecobici tiene neto aplicado medio +66.2 bicis/día. Si es positivo, incorpora bicicletas externas dentro de la ventana y favorece a Ecobici frente a las políticas cerradas.
 
-| replay (dif. media absoluta por día) | E día | F día | mañana E / F | tarde E / F | noche E / F |
-|---|---|---|---|---|---|
-| **principal** (`rebal`, t0, sin ±1, dañadas dinámicas) | **14.1%** (15/15 abajo) | **5.0%** | **6.6 / 2.8%** ✔ | 12.0 / 10.0% | 23.4 / 12.2% |
-| t1 | 5.3% | 6.0% | 1.7 / 4.7% | 4.6 / 14.2% | 10.0 / 13.8% |
-| con ±1 | 18.1% | 6.8% | 8.5 / 4.2% | 17.2 / 15.2% | 28.4 / 14.6% |
-| dañadas fijas (`stock`, método del run 1) | 22.5% | 7.8% | 18.5 / 4.1% | 23.9 / 12.4% | 24.2 / 15.0% |
+## Pronóstico y actualización
 
-- **Las dañadas dinámicas arreglan la falla del run 1:** en la mañana, E pasa de 18.5% a 6.6%. El MAE de
-  dañadas es 0.04 por estación-snapshot, contra 0.80 con dañadas fijas.
-- **Noche:** el 42% del faltante de E cae en los bloques de 17:30 a 21:30. Desde las 18:00 el recolector
-  deja huecos de 20–45 min entre snapshots (15 min el resto del día), y el replay en t0 aplica cada
-  movimiento al inicio del hueco. Con t1, E queda en −5.3%. Estaciones: 086, 474, 261, 463 y 019
-  (`v1/v1_diag_*.csv`).
+ma_diaria menos oraculo_diario: costo del error 19,379 min/día (IC95 [18,660, 20,098]); 0 días favorecen al modelo, 0 empatan.
+lgbm_diario menos oraculo_diario: costo del error 19,863 min/día (IC95 [19,044, 20,683]); 0 días favorecen al modelo, 0 empatan.
+lgbm_directo menos oraculo_directo: costo del error 27,692 min/día (IC95 [26,104, 29,279]); 0 días favorecen al modelo, 0 empatan.
+Actualización en el oráculo (directo − diario): -8,266 min/día, IC95 [-9,060, -7,472].
 
-## Lo que se eligió (solo selección) — `frozen.json`
+## Diciembre y enero
 
-| elección | valor | evidencia en selección |
-|---|---|---|
-| topes (de `medicion2`) | 246 por hora, bodega 632, 22 por movimiento; μ = 1, L = 60 | p95 sin ±1; ⌈\|A − R\| medio⌉ |
-| cota de retiro | ⌊p − σ⌋ | gana en 84 de 105 pares (λ, día), empata en 15; 69.3k contra 72.2k |
-| λ | 60 (Kneedle sobre el oracle, f60, H = 2) | el codo cae en la parte cara: λ = 5 da 13.1k contra 33.9k |
-| h_max | 6 | oracle mejora hasta h = 5 (h = 6: +0.5%); `ma` hasta h = 3 (h = 4: +1.8%) |
-| mejor (f, h) | oracle h 5; `daily` h 5; `model` f 15 h 3; `ma` f 15 h 3 | 21.5k; 39.5k; 45.3k; 45.4k |
-| mejor brazo real | `daily` | |
+2025-12: 39.1% menos E+F que Ecobici; IC95 de diferencia [-39,676, -29,331] min/día, gana 31/31 días, empata 0.
+2026-01: 39.7% menos E+F que Ecobici; IC95 de diferencia [-42,295, -32,892] min/día, gana 31/31 días, empata 0.
 
-## Brazos en evaluación (media por día, L = 60, todo congelado)
+## Topes: referencia y enero–agosto
 
-| brazo | E+F | mañana | tarde | noche | movimientos | bicis movidas | gana a Ecobici | recorte bodega |
-|---|---|---|---|---|---|---|---|---|
-| no hacer nada | 250,827 | 74,580 | 74,558 | 101,689 | 0 | 0 | 0/15 | — |
-| **Ecobici** (replay principal) | **102,214** | 38,611 | 28,456 | 35,148 | 2,416 | 11,067 | — | — |
-| oracle (h 5) | **26,561** (−74%) | 12,015 | 7,769 | 6,777 | 1,970 | 10,624 | 15/15 | 83 |
-| **daily (h 5)** | **46,268** (−55%) | 16,376 | 15,119 | 14,773 | 2,502 | 12,375 | 15/15 | 203 |
-| ma (f 15, h 3) | 52,952 (−48%) | 18,993 | 17,467 | 16,492 | 2,947 | 16,740 | 15/15 | 639 |
-| model (f 15, h 3) | 53,126 (−48%) | 18,690 | 17,016 | 17,420 | 2,948 | 16,707 | 15/15 | 596 |
+Caso base 67 visitas/decisión y 14 bicis/visita (referencia sep–nov); hacia adelante 47 y 19 (p95 ene–ago). Sensibilidades p99 83/24 y 62/33, respectivamente.
 
-- Por día, `daily` gana entre 47% y 62%. Con L = 30: oracle 22,056, `model` 39,253, `ma` 39,509.
-- En las 1,380 corridas de política: 0 fallbacks, 0 decisiones no óptimas, recorte por movimiento 0, y la
-  bodega nunca sale de ±632.
-- Tiempo por decisión en los brazos principales: máximo 3.9 s (el plan pide ≤ 5 s). Todas las decisiones de
-  más de 60 s son de λ = 5; la peor tarda 333 s.
+| mes | visitas_p95 | bicis_p95 | visitas_p99 | bicis_p99 |
+|---|---|---|---|---|
+| 2025-01 | 40 | 20 | 48 | 40 |
+| 2025-02 | 45 | 20 | 66 | 38 |
+| 2025-03 | 41 | 20 | 51 | 37 |
+| 2025-04 | 42 | 20 | 49 | 36 |
+| 2025-05 | 45 | 19 | 55 | 33 |
+| 2025-06 | 50 | 17 | 59 | 28 |
+| 2025-07 | 55 | 19 | 68 | 36 |
+| 2025-08 | 58 | 14 | 77 | 25 |
+| 2025-09 | 62 | 14 | 79 | 24 |
+| 2025-10 | 66 | 14 | 81 | 24 |
+| 2025-11 | 68 | 13 | 81 | 23 |
 
-## V2 — el oracle no llega a ~0
+## Por mes y limitaciones
 
-−89% contra no hacer nada y −74% contra Ecobici, con 82% de sus movimientos y 96% de sus bicis. Los
-26.6k que quedan se explican así:
-- **primera hora intocable** (L = 60): 3,157, el 12%;
-- **λ** (con λ = 5): 19.8k, −25%;
-- **lead time** (L = 30): 22.1k, −17%;
-- **bodega ilimitada**: 23.0k, −13%;
-- **dañadas fijas**: 21.7k (irreal);
-- **tope por movimiento** (sin tope): 25.0k, −6%.
+| mes | brazo | E+F | visitas | replay_neto |
+|---|---|---|---|---|
+| 2025-09 | ecobici | 105,247.62 | 2,147.86 | 28.62 |
+| 2025-09 | ma_diaria | 54,284.86 | 2,067.83 | 0.00 |
+| 2025-10 | ecobici | 107,651.35 | 2,445.81 | 87.03 |
+| 2025-10 | ma_diaria | 58,328.65 | 2,228.77 | 0.00 |
+| 2025-11 | ecobici | 107,668.47 | 2,428.87 | 28.53 |
+| 2025-11 | ma_diaria | 58,962.40 | 2,104.37 | 0.00 |
+| 2025-12 | ecobici | 88,350.16 | 2,028.23 | 58.74 |
+| 2025-12 | ma_diaria | 53,846.68 | 1,697.55 | 0.00 |
+| 2026-01 | ecobici | 94,810.97 | 2,131.10 | 124.29 |
+| 2026-01 | ma_diaria | 57,217.42 | 1,908.10 | 0.00 |
+| TOTAL | ecobici | 100,640.93 | 2,236.27 | 66.17 |
+| TOTAL | ma_diaria | 56,541.50 | 1,999.77 | 0.00 |
 
-El resto son hubs donde una o dos visitas por hora no alcanzan.
+La variante de dañadas que sigue el feed aplica flujos externos distintos entre brazos tras recortes físicos: `damage_external` se publica junto a E+F; no aisla causalmente el efecto de dañadas.
+Marzo de 2026: 23–31 excluidos como verdad. De los ocho días de abril de `prod_2026`, siete tienen por lo menos un rezago 7/14 días artificialmente a cero; el 6 de abril tiene ambos. `rezagos_abril.csv` cuenta los bloques-estación afectados; no imputa viajes ni cuantifica un contrafactual inexistente.
 
-## Sensibilidades (evaluación; E+F oracle / `daily`; todas ganan a Ecobici 15/15)
+## Comparación con runs anteriores
 
-| cambio | oracle | daily |
-|---|---|---|
-| principal | 26,561 | 46,268 |
-| tope por movimiento 14 / 42 / sin tope | 29,939 / 25,291 / 24,996 | 48,018 / 45,919 / 45,546 |
-| tope por hora con ±1 (474) | 26,464 | 45,631 |
-| dañadas fijas | 21,701 | 41,473 |
-| bodega ilimitada / con taller (74) | 23,035 / 33,050 | 40,680 / 55,286 |
-| μ = 0 / cota ⌊p⌋ | 26,190 / 29,073 | 46,936 / 48,752 |
-| λ = 5 (menor E+F en selección) | 19,816 | 45,465 |
+Run 1 fijaba dañadas y run 2 permitía bodega neta y entrega simultánea; aquí dañadas cambian en sitio, cada decisión equilibra bicis y entrega a +60 min. Por ello los porcentajes de runs 1 y 2 no son directamente comparables; no se reemplazan sus cifras históricas.
 
-- El tope por hora no aprieta (< 1.5%). Lo que más mueve a las políticas es la **bodega**: con el taller
-  dentro, `daily` sube 19%.
-- **λ = 5 cuesta cómputo:** hasta 66 s por decisión en evaluación y 333 s en selección, contra ≤ 5 s del
-  plan.
 
-## Dónde falla, run 1 y siguientes pasos (detalle en `CONCLUSIONES-apendice.md`)
+## Sensibilidades en los 32 días de curva
 
-- **Dónde falla:** los 20 peores estación × hora son solo 1.6% del E+F de `daily`. Destacan:
-  - los hubs de 07:30–08:30 del run 1 (273-274, 271-272, 268-269), donde el oracle falla casi igual y
-    Ecobici no (zonas valet);
-  - los vaciados de 17:30–18:30 (261, 014, 022).
-- **Contra el run 1 (misma mañana):** con su método se reproducen exactos 72,477 y 34,325. En el run 2:
-  - Ecobici justo: 38,611 (+12%);
-  - oracle: 12,015 (−13%);
-  - `daily`: 16,376 (−17%), pasa de último a mejor brazo real;
-  - `ma`/`model`: ≈ igual.
+oraculo_directo, p99: 27,274 E+F/día; Δ vs 67/14 y entrega +60 = -1,717 (IC95 [-2,265, -1,169]); flujo externo de dañadas +0.0 bicis/día.
+oraculo_directo, hacia_adelante: 30,112 E+F/día; Δ vs 67/14 y entrega +60 = +1,122 (IC95 [579, 1,664]); flujo externo de dañadas +0.0 bicis/día.
+oraculo_directo, entrega_45: 25,552 E+F/día; Δ vs 67/14 y entrega +60 = -3,438 (IC95 [-4,104, -2,773]); flujo externo de dañadas +0.0 bicis/día.
+oraculo_directo, entrega_75: 32,525 E+F/día; Δ vs 67/14 y entrega +60 = +3,534 (IC95 [2,802, 4,266]); flujo externo de dañadas +0.0 bicis/día.
+oraculo_directo, danadas_feed: 29,011 E+F/día; Δ vs 67/14 y entrega +60 = +20 (IC95 [-287, 327]); flujo externo de dañadas -76.8 bicis/día.
+ma_diaria, p99: 55,265 E+F/día; Δ vs 67/14 y entrega +60 = -2,275 (IC95 [-3,078, -1,472]); flujo externo de dañadas +0.0 bicis/día.
+ma_diaria, hacia_adelante: 58,274 E+F/día; Δ vs 67/14 y entrega +60 = +735 (IC95 [188, 1,281]); flujo externo de dañadas +0.0 bicis/día.
+ma_diaria, entrega_45: 50,070 E+F/día; Δ vs 67/14 y entrega +60 = -7,470 (IC95 [-8,514, -6,425]); flujo externo de dañadas +0.0 bicis/día.
+ma_diaria, entrega_75: 65,034 E+F/día; Δ vs 67/14 y entrega +60 = +7,494 (IC95 [6,294, 8,694]); flujo externo de dañadas +0.0 bicis/día.
+ma_diaria, danadas_feed: 58,375 E+F/día; Δ vs 67/14 y entrega +60 = +835 (IC95 [166, 1,504]); flujo externo de dañadas -75.2 bicis/día.
 
-  La E subestimada 18.5% del run 1 era por las dañadas fijas.
-- **Siguientes pasos:**
-  1. factor intradía global de pronóstico;
-  2. regla fuera de muestra para λ que respete ≤ 5 s por decisión;
-  3. replay con la hora dentro del hueco de 18:00–21:30;
-  4. separar el regreso de reparadas para calibrar la bodega;
-  5. recargas múltiples en zonas valet;
-  6. rutas y camiones.
+## 2026: solo contra oráculos y sin rebalanceo
+
+El feed de 2026 no permite medir el esfuerzo/E+F de Ecobici; aquí no se simula ese brazo.
+2026-02, ma_diaria − oraculo_diario: 19,277 min/día (IC95 [15,935, 22,620]); referencia 2025 en tablas.md.
+2026-02, lgbm_diario − oraculo_diario: 19,182 min/día (IC95 [16,092, 22,273]); referencia 2025 en tablas.md.
+2026-02, lgbm_directo − oraculo_directo: 21,970 min/día (IC95 [17,269, 26,670]); referencia 2025 en tablas.md.
+2026-03, ma_diaria − oraculo_diario: 19,506 min/día (IC95 [15,560, 23,452]); referencia 2025 en tablas.md.
+2026-03, lgbm_diario − oraculo_diario: 19,972 min/día (IC95 [15,814, 24,129]); referencia 2025 en tablas.md.
+2026-03, lgbm_directo − oraculo_directo: 21,701 min/día (IC95 [13,795, 29,607]); referencia 2025 en tablas.md.
+2026-04, ma_diaria − oraculo_diario: 25,663 min/día (IC95 [22,374, 28,953]); referencia 2025 en tablas.md.
+2026-04, lgbm_diario − oraculo_diario: 27,148 min/día (IC95 [24,812, 29,484]); referencia 2025 en tablas.md.
+2026-04, lgbm_directo − oraculo_directo: 39,919 min/día (IC95 [34,324, 45,515]); referencia 2025 en tablas.md.
+2026-05, ma_diaria − oraculo_diario: 21,012 min/día (IC95 [15,766, 26,258]); referencia 2025 en tablas.md.
+2026-05, lgbm_diario − oraculo_diario: 20,688 min/día (IC95 [16,220, 25,156]); referencia 2025 en tablas.md.
+2026-05, lgbm_directo − oraculo_directo: 23,977 min/día (IC95 [17,956, 29,998]); referencia 2025 en tablas.md.
+2026-06, ma_diaria − oraculo_diario: 20,292 min/día (IC95 [-3,132, 43,715]); referencia 2025 en tablas.md.
+2026-06, lgbm_diario − oraculo_diario: 19,452 min/día (IC95 [16,586, 22,317]); referencia 2025 en tablas.md.
+2026-06, lgbm_directo − oraculo_directo: 21,480 min/día (IC95 [1,372, 41,587]); referencia 2025 en tablas.md.
+2026-08, ma_diaria − oraculo_diario: 19,274 min/día (IC95 [11,621, 26,927]); referencia 2025 en tablas.md.
+2026-08, lgbm_diario − oraculo_diario: 19,989 min/día (IC95 [13,576, 26,402]); referencia 2025 en tablas.md.
+2026-08, lgbm_directo − oraculo_directo: 27,649 min/día (IC95 [16,695, 38,603]); referencia 2025 en tablas.md.

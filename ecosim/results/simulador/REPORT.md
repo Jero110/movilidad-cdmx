@@ -1,92 +1,99 @@
-# ecosim / simulador: reporte (run 2)
+# Simulador run 3 — retry de revisión y V1
 
-Código: `ecosim/sim.py`. Tests: `tests/ecosim/test_sim.py` (32 tests). Reglas: plan `docs/planner/plans/2026-09-28-ecosim.md`, sección 1.4, con los cambios del plan `docs/planner/plans/2026-09-28-ecosim2.md` (subtask `simulador2`). El reporte del run 1 está en la historia de git (tag `ecosim-run1`). `baseline_15dias.csv` y `replay_15dias.csv` son del run 1 (05:30–12:30) y no se tocaron. Lo del run 2 está en `run2_15dias.csv`.
+## Motor y conservación
 
-## Qué cambió respecto al run 1
-
-Es el mismo motor por eventos y viaje por viaje (`sim.simulate`), con una sola función de métricas para todos los brazos. Los cambios:
-
-1. **Ventana 05:30–00:30** (`config.day_bounds`): son 1140 minutos por estación.
-   - Los viajes que cruzan medianoche son viajes normales, porque se usan timestamps completos.
-   - Un viaje que sale en la ventana y llega a las 00:30 o después cuenta su salida y no su llegada (`extra["n_arrivals_after_end"]`).
-   - En `station_hour`, `hour` va de 5 a 24. La 24 es 00:00–00:30 del día siguiente (`contracts.STATION_HOURS`).
-2. **La política se llama cada 15 min desde las 05:30 mientras t + L < 00:30.** Con L = 60 son 72 llamadas (la última a las 23:15); con L = 45, 73 (la última a las 23:30). Las horas quedan en `extra["decision_times"]`.
-3. **Dañadas dinámicas** (`damage_events`, contrato `DamageEvents`). Se aplican en su `t`, en todos los brazos, antes que cualquier otro evento de ese instante:
-   - `daño`: n disponibles pasan a dañadas. Siguen ocupando su anclaje, así que los anclajes libres no cambian;
-   - `reparacion`: n dañadas vuelven a estar disponibles;
-   - `taller_retiro`: n dañadas salen del sistema y liberan anclaje.
-
-   Se aplica lo posible y el resto se cuenta: `danos_no_aplicables`, `taller_no_aplicable` y, en `extra`, `reparaciones_no_aplicables`. Un evento en una estación desconocida no es aplicable. El log completo está en `extra["damage_applied"]`, y las dañadas por minuto en `extra["disabled_minute"]`.
-   - `run_day(..., damage_events="auto")` es el valor por defecto: lee `data/derived/ecosim/damage_events.parquet` y filtra a la ventana. Si el archivo no existe, avisa (`UserWarning`) y simula con dañadas fijas.
-   - `damage_events="fixed"` (o `None`) reproduce las dañadas fijas del run 1. También se le puede pasar un DataFrame.
-   - La fuente usada queda en `extra["damage_source"]`.
-4. **Órdenes por lote.** Todas las órdenes con el mismo `effective_at` forman un lote. A cada orden **de política** se le aplica, en este orden:
-   1. **tope por movimiento**: si |delta| > `params.max_bikes_per_move`, se recorta a ese valor (`recorte_por_movimiento`);
-   2. **fuera de servicio**: una orden a una estación con `out_of_service` (de `initial_state`) se recorta completa (`extra["recorte_fuera_de_servicio"]`). Es una red de seguridad: el asignador no debería mandarlas;
-   3. **recorte físico**: se quita lo que hay y se pone lo que cabe (`clipped`, igual que en el run 1);
-   4. **bodega finita sobre lo aplicado**: al cerrar el lote, A − R debe quedar en [−`params.tope_bodega`, +`params.tope_bodega`]. Si queda arriba, se recortan puestas; si queda abajo, retiros. El recorte se reparte entre las estaciones del lado que sobra, en proporción a lo que se les aplicó (`recorte_bodega`), así que no depende de la posición de la orden en el lote (ver supuesto 2). Como la cuenta se hace después del recorte físico, el caso que rompió el run 1 (pedir quitar 5 donde solo hay 2) ya no rompe el tope.
-
-   El **replay de Ecobici** es un dato: solo lleva el recorte físico (3). En `extra["orders_applied"]` cada orden trae su pedido, lo aplicado y los cuatro recortes, que cumplen |pedido| − |aplicado| = suma de recortes (probado).
-5. **Replay: `ecobici_orders(day, when="t0"|"t1", variant="rebal"|"stock"|"avail", undo=None|False|True)`.**
-   - `rebal` (principal) lee `ecobici_moves.parquet`, columna `delta_rebal`, sin los pares ±1 (`undo=False`). El taller entra como evento `taller_retiro`, no como orden.
-   - `stock` lee el mismo archivo con la columna `delta` (el taller va dentro), como el run 1.
-   - `avail` lee `ecobici_moves_avail.parquet`, columna `delta`, como el run 1. `medicion2` confirmó que sigue escribiendo ese archivo, porque el principal no trae los intervalos con delta = 0 y delta_avail ≠ 0.
-   - `undo=None` (por defecto) quiere decir sin ±1 para `rebal` y con ±1 para `stock`/`avail`, como el run 1. `undo=True` o `undo=False` lo fuerza.
-   - **`stock` y `avail` van siempre con dañadas fijas** (`sim.REPLAY_DAMAGE`). Con dañadas dinámicas contarían dos veces lo mismo:
-     - `stock` ya trae el taller dentro de su `delta`;
-     - `avail` es el delta de *disponibles*, que ya incluye los daños (una disponible que se daña baja las disponibles) y las reparaciones. El 09-03, 2,413 movimientos de `ecobici_moves_avail` caen en la misma estación e intervalo que un evento `daño` (dato de la review).
-
-     La CLI los corre con dañadas fijas y falla con un error explícito si se le pide `--arm ecobici_stock|ecobici_avail --damage auto` (`resolve_damage`). Quien arme esos brazos a mano (`run.py`) debe usar `REPLAY_DAMAGE[variant]` como `damage_events`.
-6. **Estado para la política** (`SimState`): `stations` = `STATE_COLUMNS` (`disabled` = dañadas en t, que cambian durante el día; `docks` = cap − disponibles − dañadas − anclajes deshabilitados) **más una columna extra `out_of_service`** (bool). `warehouse` = A − R aplicado hasta t. El contrato no cambió: las columnas extra están permitidas. Se le avisó al asignador.
-7. **Conservación** (se verifica al final de cada día):
-   - disponibles en estaciones + en tránsito − (A − R) + llegadas a desconocidas − entradas desde desconocidas + (daños − reparaciones) = constante;
-   - dañadas: inicial + daños − reparaciones − taller = final.
-
-   El test (a) lo comprueba minuto a minuto, calculado por fuera del motor y con eventos de dañadas.
-8. **CLI:** `uv run python -m ecosim.sim --day D --arm baseline|ecobici|ecobici_t1|ecobici_undo|ecobici_stock|ecobici_avail [--damage auto|fixed]`. Sin `--damage`, cada brazo usa el suyo: `auto` para baseline y `rebal`, `fixed` para `stock` y `avail`.
-
-## Supuestos (decididos aquí; revisar)
-
-1. **Orden en un mismo instante:** dañadas → órdenes → decisión de la política → llegadas → salidas → muestra. Entre dañadas del mismo instante: `daño` → `taller_retiro` → `reparacion`, y por estación. Según la descomposición de `medicion`, `daño` no coincide con los otros dos en la misma estación e intervalo; el orden solo decide cuál se queda corto si no alcanzan las dañadas.
-2. **La bodega se evalúa al cerrar cada lote**, no orden por orden, porque dentro de un instante no hay viajes. Así, un retiro y una puesta del mismo lote se compensan aunque vengan en cualquier orden. Si hay que recortar lo que sobra (s bicis), se reparte entre las estaciones del lado que se pasa: puestas si se pasa arriba, retiros si se pasa abajo.
-   - A cada estación le toca una parte proporcional a lo que se le aplicó en el lote, redondeada por resto mayor (`sim._spread`). Si dos restos empatan, gana la de `short_name` menor; ese desempate mueve a lo más una bici por estación.
-   - Así el recorte no depende del orden en que la política emite sus órdenes. Antes caía siempre al final del lote, y el asignador emite por `short_name`, así que lo pagaban las estaciones de `short_name` alto. Hay un test que permuta el lote.
-   - Por estación se recorta a lo más lo que se puede deshacer: una puesta recortada no deja bicis negativas y un retiro recortado no se pasa de la capacidad. Con esas guardas siempre alcanza, porque la capacidad de recorte de cada estación es al menos su neto aplicado en el lote. Hay un `assert` que lo comprueba.
-   - Si una estación tiene varias órdenes en el lote, su parte se reparte entre ellas con la misma regla. Eso solo cambia la bitácora `orders_applied`, no el estado.
-3. **`clipped` sigue siendo solo el recorte físico**, como en el run 1. `recorte_bodega`, `recorte_por_movimiento` y el de fuera de servicio van aparte.
-4. **Bodega ilimitada** (sensibilidad del run 1): se pasa un `params.tope_bodega` muy grande. El simulador siempre usa `params.tope_bodega` para las políticas.
-5. **Estaciones fuera de servicio** (`out_of_service` de `initial_state`: en blanco a las 05:30 o cap 0):
-   - Se simulan como estaciones normales y **`metrics["E"]` y `metrics["F"]` las incluyen** (cifra inclusiva). `extra["E_out_of_service"]` y `extra["F_out_of_service"]` son la parte de E y F que aportan esas estaciones. **El titular es E − `E_out_of_service`** (y lo mismo con F), como en el run 1; lo calcula `run.py:182`.
-   - No aceptan órdenes de política, pero sí reciben dañadas y replay.
-   - La 698 el 2025-10-25 queda con cap 15 y 0 bicis todo el día: está vacía y aporta 1140 minutos a E.
-   - **Pueden tener viajes reales.** El flag sale del snapshot de las 05:30, y una estación en blanco a esa hora puede volver después. El 09-03, la 091 y la 168 están marcadas y tienen de 39 a 60 viajes reales ese día (dato de la review). La política no las puede atender en todo el día y el replay de Ecobici sí (1 orden, 13 bicis). No sesgan el titular, porque salen de él, pero pesan a través de los desvíos hacia las vecinas. `integracion2` debería mencionarlo en CONCLUSIONES.
-6. **La hora de los eventos de dañadas** es la que trae el archivo (`t` = t1 corregido, commit − 30 s, según `medicion2`). `damage_events_raw.parquet` (hora cruda) se puede pasar como DataFrame para la sensibilidad.
-7. Sin cambios del run 1: desvíos (500 m / la más cercana), estaciones desconocidas, guardas de estación sin coordenadas y de viajes de duración 0, `record_at` (ahora también guarda `disabled_record`).
-
-## Tiempo por día
-
-Todas las corridas de los 15 días de evaluación, cargando datos, tardan de **0.77 a 1.01 s** (media ~0.9 s) en cualquier brazo, con las dañadas dinámicas incluidas. El comando de validación:
+`sim.simulate` valida después de **cada evento** la identidad:
 
 ```
-$ uv run python -m ecosim.sim --day 2025-09-03 --arm baseline   # "seconds": 0.95 (el reloj total depende de la espera en el semáforo)
+Σ(disponibles + dañadas en estaciones) + viajes en tránsito + camionetas
++ llegadas a estaciones desconocidas − entradas desde estaciones desconocidas
+− flujo_externo_replay − flujo_externo_danadas = flota inicial + viajes ya en tránsito al abrir
 ```
 
-## Pasada de humo en los 15 días de evaluación (`run2_15dias.csv`)
+Las órdenes de política equilibran cada decisión: pickup a `t+15`, delivery a `t+60` (sensibilidad 45/75). Si no se recoge todo, las entregas se reducen proporcionalmente al pedido mediante resto mayor; el desempate es `short_name` y posición original. Un sobrante al entregar vuelve al origen o a la estación con anclaje más cercana. No queda stock en camioneta al cierre. Ecobici se aplica en t1 como dato, sin topes ni demora; **`replay_external` es la suma firmada de sus movimientos disponibles efectivamente aplicados**, no carga de camioneta. En el brazo oficial `onsite`, `damage_external=0` y `replay_neto=replay_external`. Las políticas no reciben `replay_external`.
 
-Usa los archivos que `medicion2` escribió el 28-sep a las 21:41. **Son provisionales**: `medicion2` los reescribió a las 21:47, mientras cerraba este reporte (el baseline del 09-03 pasó de 941 a 518 retiros de taller), todavía no tienen review, y la V1 contra GBFS es de `integracion2`. Las cifras de abajo sirven para ver que el motor corre de punta a punta, no como resultado. Medias por día:
+La sensibilidad `damage_variant="feed"` usa los deltas del feed **independientemente del brazo**: una subida de dañadas coincidente con delta de stock positivo mete hasta `min(n, delta)` bicis dañadas desde fuera; una bajada coincidente con delta negativo saca hasta `min(n, abs(delta))` dañadas. El resto cambia de etiqueta en sitio. Aplicación física recorta por anclajes/dañadas existentes y cuenta unidades no aplicables. Esos flujos exógenos se guardan en `damage_external` y entran en la conservación para baseline, políticas y replay. En el replay se resta la parte ya incorporada como dañada del movimiento disponible para no contarla dos veces. Para `simulate` con fixtures hay que pasar `feed_moves` (`EcobiciMoves`); `run_day` los carga automáticamente desde `data/derived/ecosim/ecobici_moves.parquet`.
 
-| brazo | E | F | E+F | órdenes | A | R | A − R | recorte físico | daños aplic. / no aplic. | taller aplic. / no aplic. |
-|---|---|---|---|---|---|---|---|---|---|---|
-| baseline (dañadas dinámicas) | 222,948 | 43,923 | 266,871 | 0 | 0 | 0 | 0 | 0 | 2,001 / 718 | 1,141 / 144 |
-| baseline, dañadas fijas | 197,935 | 53,903 | 251,837 | 0 | 0 | 0 | 0 | 0 | — | — |
-| ecobici (rebal, t0, sin ±1) | 106,308 | 13,690 | 119,998 | 2,426 | 5,950 | 5,068 | +882 | 326 | 2,546 / 173 | 1,260 / 24 |
-| ecobici con ±1 | 85,026 | 17,250 | 102,277 | 4,309 | 7,168 | 5,753 | +1,416 | 351 | 2,686 / 34 | 1,282 / 3 |
-| ecobici t1 | 113,805 | 14,061 | 127,865 | 2,426 | 5,971 | 5,149 | +822 | 224 | 2,430 / 289 | 1,238 / 46 |
-| ecobici stock, dañadas fijas (≈ run 1) | 79,850 | 17,724 | 97,574 | 5,095 | 6,935 | 6,717 | +217 | 387 | — | — |
+El neto disponible para integración está en `DayResult.extra["replay_neto"]`; el neto completo de sensibilidad es `extra["neto_externo"]`. Para los 15 días también está en `ecosim/results/v1/run3_replay_neto.csv`.
 
-En las 90 corridas: 0 salidas fallidas, 0 llegadas fallidas y 56,300 viajes servidos por día en todos los brazos. Hay 134 llegadas por día después de las 00:30.
+## Neto del replay: 15 días de selección de agosto 2025
 
-Observaciones (no se arreglan aquí; son para `medicion2` e `integracion2`):
-- **Las dañadas dinámicas cambian mucho las cuentas.** En el replay principal hay 2,546 daños, 1,342 reparaciones y 1,260 retiros de taller por día. En el baseline, el 26% de los daños no se puede aplicar (718/día), porque sin rebalanceo las estaciones se vacían antes que en la realidad. En el replay baja a 6.4%.
-- ~~**Quitar los pares ±1 no es neutral para la bodega.**~~ **Superada.** Esta observación salía de los archivos de las 21:41: el 09-03, los renglones `undo` sumaban −6 en `delta` y +489 en `delta_rebal`. Con los archivos actuales de `medicion2` (21:47–21:50) suman **−6 en los dos** (verificado). La review mide para el replay del 09-03 A − R = +973 sin ±1 contra +1,017 con ±1. Las filas "con ±1" de la tabla de arriba son de los archivos viejos.
-- **El replay `rebal` con dañadas dinámicas da E+F 23% más alto que el `stock` con dañadas fijas del run 1** (120 k contra 98 k). Parte viene del día completo, pero la comparación justa es la V1 de `integracion2`.
+Neto **aplicado** entre 05:00 y 00:30, después de recortes físicos; flota = disponibles + dañadas + viajes iniciales. `run3_replay_neto.csv` contiene además el contrafactual por día.
+
+| Día | Neto Ecobici (bicis) | Flota inicial | % flota |
+|---|---:|---:|---:|
+| 08-01 | +105 | 7,242 | +1.45% |
+| 08-04 | +219 | 7,250 | +3.02% |
+| 08-06 | +137 | 7,293 | +1.88% |
+| 08-08 | +34 | 7,238 | +0.47% |
+| 08-09 | +2 | 7,057 | +0.03% |
+| 08-11 | −9 | 7,254 | −0.12% |
+| 08-12 | +311 | 7,202 | +4.32% |
+| 08-13 | +83 | 7,221 | +1.15% |
+| 08-16 | +74 | 6,897 | +1.07% |
+| 08-18 | +49 | 7,003 | +0.70% |
+| 08-23 | −53 | 7,140 | −0.74% |
+| 08-26 | +188 | 7,105 | +2.65% |
+| 08-27 | +130 | 7,096 | +1.83% |
+| 08-28 | +52 | 7,119 | +0.73% |
+| 08-31 | −291 | 7,297 | −3.99% |
+
+Total neto +1,031; media +68.7 bicis/día (**+0.96%** de la flota media del día), mínimo −291, máximo +311, 12/15 días positivos. El replay inferido no tiene garantía de balance en esta ventana: Ecobici puede meter o sacar bicis desde fuera de las estaciones; **los brazos de política no pueden hacerlo**. Donde el neto es positivo, Ecobici tiene más bicis y la comparación de vacías/EF queda sesgada *a favor de Ecobici*; es conservadora para la afirmación de mejora de las políticas. Más flota puede también agravar llenas, así que el signo de la diferencia en F no está garantizado.
+
+### Tamaño de la sensibilidad (solo diagnóstico; NO sustituye el replay oficial)
+
+Se contrastan dos reglas deterministas, reproducibles con `validar.py`:
+
+| 15 días, min-estación | Replay oficial | Neto diario reducido | Neto cero tras cada foto |
+|---|---:|---:|---:|
+| E | 1,237,431 | 1,257,407 | 1,400,043 |
+| F | 289,246 | 277,838 | 389,213 |
+| E+F | 1,526,677 | **1,535,245** (+8,568; +0.56%) | **1,789,256** (+262,579; +17.2%) |
+
+**Neto diario reducido:** se distribuye el recorte de `abs(replay_neto)` entre las órdenes originales del mismo signo proporcionalmente al tamaño, con desempate por orden del archivo. No se alteran otros movimientos. Es la lectura más localizada del efecto; no garantiza neto aplicado cero porque cambian los recortes físicos y desvíos (residuo agregado +179 bicis, por día detallado en CSV). **Neto cero tras cada foto:** después de aplicar las órdenes de t1 se revierte su neto aplicado en ese instante, primero en estaciones con movimiento del mismo signo, luego por ID de estación; se mantiene la capacidad y el neto externo vuelve a cero. Requiere **36,199 bicis de correcciones brutas** en 15 días, por lo que su +17.2% de E+F mezcla neutralización y un rebalanceo nuevo: no se puede atribuir al neto diario +1,031. En ningún caso se fuerza el brazo oficial a cuadrar ni se interpreta el contrafactual como estimación causal.
+
+## V1: replay contra observados oficiales de `medicion3`
+
+Ejecutar (semáforo compartido):
+
+```sh
+uv run python -m ecosim.results.v1.validar
+```
+
+El total observado se **lee** de `ecosim/results/medicion/ecobici_observado.csv` de `medicion3`: integra duraciones exactas entre commits y reporta blancos/sin-observación por separado. `validar.py` reconstruye una malla de un minuto **solo** para etiquetar contextos estación/franja y extraer ejemplos; su diferencia con el total oficial se muestra como fila independiente, sin atribuirla falsamente a una franja. Los CSV de salida son `run3_v1_por_dia.csv`, `run3_v1_causas.csv`, `run3_v1_estaciones.csv`, `run3_v1_hora_movimiento.csv` y `run3_replay_neto.csv`.
+
+| 15 días, min-estación | Replay | Observado medición3 | Replay − observado | Relativo |
+|---|---:|---:|---:|---:|
+| E | 1,237,431 | 1,261,291.9 | −23,860.9 | −1.89% |
+| F | 289,246 | 283,232.2 | +6,013.8 | +2.12% |
+
+Los días 08-28 y 08-31 tienen ΔE de −5,609.3 y −6,194.1 respectivamente; el agregado no oculta estos errores locales. Clasificación **contextual, no causal** de minutos firmados replay − malla por minuto, prioridad: foto vieja (>30 min)/blanca, desvío dentro de 30 min en origen/destino, par eliminado, dañada no aplicable, residual del escalón:
+
+| Franja | Contexto | ΔE | ΔF |
+|---|---|---:|---:|
+| 05–12 | hueco/blanco | −11 | −11 |
+| 05–12 | desvío | +13,002 | +5,979 |
+| 05–12 | par | −579 | −115 |
+| 05–12 | dañada no aplicable | −1,766 | +1 |
+| 05–12 | resto/escalón | −10,000 | −3,624 |
+| 12–18 | hueco/blanco | −20 | −20 |
+| 12–18 | desvío | +13,880 | +3,112 |
+| 12–18 | par | −1,775 | −817 |
+| 12–18 | dañada no aplicable | −1,840 | +15 |
+| 12–18 | resto/escalón | −28,591 | −7,483 |
+| 18–00:30 | hueco/blanco | +11,939 | +5,029 |
+| 18–00:30 | desvío | +30,172 | +13,937 |
+| 18–00:30 | par | −865 | +165 |
+| 18–00:30 | dañada no aplicable | −1,972 | −25 |
+| 18–00:30 | resto/escalón | −47,753 | −11,490 |
+| Sin franja: definición oficial vs malla minuto | ajuste contable | +2,318.1 | +1,360.8 |
+
+La tabla incluyendo el ajuste contable suma −23,860.9 E y +6,013.8 F. Hay 24,015 desvíos de salida y 10,994 de llegada; 2,896 unidades de dañadas no aplicables y 578,835 celdas estación-minuto con foto de antigüedad >30 min. Ejemplos de E nocturna: estación 659 (08-28, −301 min), estación 674 (08-28, +224) y estación 026 (08-31, −197), en `run3_v1_estaciones.csv`. El contrafactual de aplicar cada movimiento al inicio del intervalo (t0) en vez del final (t1) cambia E en −155,247 y F en −1,725 min-estación: **no** se suma a la tabla, es otra corrida.
+
+**Explicación para el reporte:** el replay da 1.89% menos E y 2.12% más F que el observado oficial. El feed sostiene el último estado observado en escalones de duración variable (con huecos y desfase de ~30 s), mientras el simulador ejecuta viajes a su segundo y deltas al final del intervalo. Redirigir viajes, excluir pares exactos y recortar conversiones de dañadas también altera la trayectoria. Los desajustes se prolongan especialmente de tarde/noche cuando envejece la foto. No se ajustó el motor para hacer coincidir E/F.
+
+## Advertencias
+
+- Si ninguna estación tiene bicicleta o anclaje, no hay solución física para el próximo viaje sin crear bicis: el motor falla explícitamente.
+- El promedio de km por desvío omite distancias `NaN` de estaciones sin coordenadas. Capacidad fija desde 05:00 en simulador vs cambios de capacidad del feed pueden producir diferencias adicionales.
+- Pruebas: `uv run pytest tests/ecosim/test_sim.py -q`; CLI real: `uv run python -m ecosim.sim --day 2025-08-13 --arm baseline` y `--arm ecobici`.

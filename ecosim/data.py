@@ -5,8 +5,9 @@ Todos los tiempos que devuelve este módulo son hora local CDMX *naive*.
 
 Construcción de cachés (idempotente, solo hace falta una vez):
 
-    uv run python -m ecosim.data build-trips      # CSV ene–nov → parquet
+    uv run python -m ecosim.data build-trips      # CSV 2024-01..2026-08 → parquet
     uv run python -m ecosim.data build-snapshots  # bucket GBFS → por día (05:00 → 01:00 del d+1)
+    uv run python -m ecosim.data build-coverage   # cobertura cruda por mes
     uv run python -m ecosim.data audit-night      # auditoría del feed de noche → night_audit.json
 """
 
@@ -31,31 +32,15 @@ def _con() -> duckdb.DuckDBPyConnection:
     return con
 
 
-def _check_not_sealed(*days) -> None:
-    """Error si alguna fecha (date o datetime) cae en diciembre 2025 o después."""
-    for d in days:
-        if isinstance(d, datetime):
-            d = d.date()
-        if d >= C.SEALED_FROM:
-            raise ValueError(f"{d}: diciembre 2025 en adelante está sellado")
-
-
-def _check_day(d: date) -> None:
-    """Sello para las funciones por día: revisa la fecha y el FIN de sus
-    ventanas (simulada hasta d+1 00:30, snapshots hasta d+1 01:00). Así la
-    ventana del 2025-11-30, que llega al 1-dic, también queda sellada."""
-    _check_not_sealed(d, C.day_bounds(d)[1], C.snapshot_bounds(d)[1])
-
-
 # ======================================================================
 # Viajes
 # ======================================================================
 
 def build_trips() -> dict:
-    """CSV crudos 2025-01..2025-11 → `TRIPS_PARQUET` + auditoría JSON.
+    """CSV crudos 2024-01..2026-08 → `TRIPS_PARQUET` + auditoría JSON.
 
     Los CSV están particionados por mes de *llegada* (cada viaje aparece una
-    sola vez) y en hora local. `2025-12.csv` no se lee (sellado).
+    sola vez) y en hora local. Algunos CSV de 2024 usan `Fecha Arribo`.
     """
     files = [C.RAW_TRIPS_DIR / f for f in C.RAW_TRIP_FILES]
     missing = [str(f) for f in files if not f.exists()]
@@ -70,9 +55,10 @@ def build_trips() -> dict:
                trim(replace(Ciclo_Estacion_Retiro, '"', '')) as o,
                trim(replace(Ciclo_EstacionArribo, '"', '')) as d,
                try_strptime(Fecha_Retiro || ' ' || Hora_Retiro, '%d/%m/%Y %H:%M:%S') as t_dep,
-               try_strptime(Fecha_Arribo || ' ' || Hora_Arribo, '%d/%m/%Y %H:%M:%S') as t_arr,
+               try_strptime(coalesce(Fecha_Arribo, "Fecha Arribo") || ' ' || Hora_Arribo, '%d/%m/%Y %H:%M:%S') as t_arr,
                regexp_extract(filename, '[^/]+$') as src
-        from read_csv([{flist}], all_varchar=true, header=true, filename=true)
+        from read_csv([{flist}], all_varchar=true, header=true, filename=true,
+                      union_by_name=true, null_padding=true)
     """)
     q = lambda s: con.execute(s).fetchone()[0]  # noqa: E731
     a = {"files": C.RAW_TRIP_FILES}
@@ -92,9 +78,10 @@ def build_trips() -> dict:
     """).fetchall()
     a["file_month_ne_arrival_month"] = q("""
         select count(*) from raw
-        where regexp_extract(src, '2025-(\\d\\d)', 1) <> strftime(t_arr, '%m')
+        where regexp_extract(src, '(20[0-9][0-9]-[0-9][0-9])', 1) <> strftime(t_arr, '%Y-%m')
     """)
     C.DERIVED.mkdir(parents=True, exist_ok=True)
+    tmp = C.TRIPS_PARQUET.with_suffix(".tmp")
     con.execute(f"""
         copy (
           select bike, o, d, t_dep, t_arr,
@@ -104,8 +91,9 @@ def build_trips() -> dict:
             and coalesce(bike,'')<>'' and coalesce(o,'')<>'' and coalesce(d,'')<>''
           qualify row_number() over (partition by bike, o, d, t_dep, t_arr) = 1
           order by t_dep
-        ) to '{C.TRIPS_PARQUET}' (format parquet)
+        ) to '{tmp}' (format parquet)
     """)
+    tmp.replace(C.TRIPS_PARQUET)
     a["kept"] = q(f"select count(*) from '{C.TRIPS_PARQUET}'")
     C.TRIPS_AUDIT.write_text(json.dumps(a, indent=2, default=str))
     return a
@@ -132,7 +120,7 @@ def _add_known(df: pd.DataFrame, known: set[str]) -> pd.DataFrame:
 
 
 def trips(day) -> pd.DataFrame:
-    """Viajes relevantes para la ventana [d 05:30, d+1 00:30) del día.
+    """Viajes relevantes para la ventana [d 05:00, d+1 00:30) del día.
 
     Incluye todo viaje que sale dentro de la ventana, o que salió antes y llega
     dentro (entrega su bici). Los que cruzan medianoche entran solos (se usan
@@ -145,7 +133,6 @@ def trips(day) -> pd.DataFrame:
     Columnas: `contracts.TRIP_COLUMNS` + long, o_known, d_known.
     """
     d = C.as_date(day)
-    _check_day(d)
     start, end = C.day_bounds(d)
     df = _query_trips(
         f"(t_dep >= '{start}' and t_dep < '{end}') or (t_dep < '{start}' and t_arr >= '{start}' and t_arr < '{end}')"
@@ -158,10 +145,18 @@ def trips_range(start, end) -> pd.DataFrame:
     entrenar modelos. `o_known/d_known` no se calculan aquí (dependen del día).
     """
     s, e = C.as_date(start), C.as_date(end)
-    _check_not_sealed(s, e)
     lo = datetime.combine(s, datetime.min.time())
     hi = datetime.combine(e + timedelta(days=1), datetime.min.time())
     return _query_trips(f"t_dep >= '{lo}' and t_dep < '{hi}'")
+
+
+def trip_days(start, end) -> set[date]:
+    """Fechas de calendario con al menos una salida en el parquet de viajes."""
+    _ensure_trips()
+    s, e = C.as_date(start), C.as_date(end)
+    rows = _con().execute(f"""select distinct cast(t_dep as date) as day
+        from '{C.TRIPS_PARQUET}' where t_dep >= date '{s}' and t_dep < date '{e + timedelta(days=1)}'""").fetchall()
+    return {r[0] for r in rows}
 
 
 # ======================================================================
@@ -178,16 +173,9 @@ def _gbfs_url(i: int) -> str:
 
 
 def build_snapshots() -> dict:
-    """Descarga del bucket público y guarda un parquet por día (ventana) con
-    los snapshots de [d 05:00, d+1 01:00) local, para d en
-    [SNAPSHOT_START, SNAPSHOT_END] = 2025-08-01..2025-11-29.
-
-    La conversión UTC → local se hace con la zona IANA (`timezone(TZ, ts)` con
-    la sesión de duckdb en UTC), no con la fecha UTC. La ventana del día d cae
-    en el archivo mensual (UTC) de d y, si d es fin de mes, también en el
-    siguiente; solo se leen `GBFS_MONTHS` (ago–nov), nunca Dec.parquet, y se
-    filtra además por `committed_at_utc` < 2025-11-30 07:00 UTC.
-    Sobrescribe el caché del run 1 (05:00–13:00) y borra el del 2025-11-30.
+    """Cachea 2025 y enero de 2026 completos; febrero–agosto de 2026
+    conserva la primera foto y los cambios de dañadas por estación.
+    Los archivos existentes no se vuelven a descargar.
     """
     con = _con()
     con.execute("INSTALL httpfs; LOAD httpfs;")
@@ -197,12 +185,19 @@ def build_snapshots() -> dict:
     out = {}
     for i, (year, mon) in enumerate(C.GBFS_MONTHS):
         first = date(year, datetime.strptime(mon, "%b").month, 1)
+        if first > C.SNAPSHOT_END:
+            break
         last = min((first + timedelta(days=32)).replace(day=1) - timedelta(days=1), C.SNAPSHOT_END)
         first = max(first, C.SNAPSHOT_START)
+        if all(_snapshot_path(first + timedelta(days=k)).exists()
+               for k in range((last - first).days + 1)):
+            continue
         lo = C.snapshot_bounds(first)[0] + off          # UTC naive
         hi = C.snapshot_bounds(last)[1] + off
-        _check_not_sealed(hi - timedelta(microseconds=1))
-        urls = [_gbfs_url(i)] + ([_gbfs_url(i + 1)] if i + 1 < len(C.GBFS_MONTHS) else [])
+        month_end_utc = datetime.combine(
+            (first.replace(day=1) + timedelta(days=32)).replace(day=1), datetime.min.time())
+        needs_next = hi > month_end_utc
+        urls = [_gbfs_url(i)] + ([_gbfs_url(i + 1)] if needs_next else [])
         flist = ", ".join(f"'{u}'" for u in urls)
         df = con.execute(f"""
             with s as (
@@ -225,19 +220,26 @@ def build_snapshots() -> dict:
             if not (first <= d <= last):
                 continue
             p = _snapshot_path(d)
+            if p.exists():
+                continue
+            if d >= date(2026, 2, 1):
+                g = g.sort_values(["short_name", "t"])
+                changed = g.groupby("short_name")["disabled"].diff().ne(0)
+                renting = g.groupby("t")["is_renting"].mean()
+                open_times = renting[renting >= 0.95].index
+                if len(open_times):
+                    g = g[changed | g["t"].eq(open_times[0])]
+                else:
+                    g = g[changed | g["t"].eq(g["t"].min())]
             tmp = p.with_suffix(".tmp")
             g.sort_values(["t", "short_name"]).to_parquet(tmp, index=False)
             tmp.replace(p)
             out[str(d)] = len(g)
-    stale = _snapshot_path(C.SNAPSHOT_END + timedelta(days=1))   # 2025-11-30 del run 1
-    if stale.exists():
-        stale.unlink()
     return out
 
 
 @lru_cache(maxsize=32)
 def _raw_snapshots(d: date) -> pd.DataFrame:
-    _check_day(d)
     p = _snapshot_path(d)
     if not p.exists():
         raise FileNotFoundError(f"{p} no existe: corre `uv run python -m ecosim.data build-snapshots`")
@@ -245,7 +247,10 @@ def _raw_snapshots(d: date) -> pd.DataFrame:
 
 
 def snapshots(day) -> pd.DataFrame:
-    """Snapshots GBFS crudos de la ventana del día, [d 05:00, d+1 01:00) local.
+    """Fotos GBFS de [d 05:00, d+1 01:00) local.
+
+    En 2025 y enero de 2026 son todas las fotos; desde febrero de 2026
+    el caché conserva la foto inicial y los cambios de dañadas.
 
     `t` = `committed_at_utc` convertido a hora local (el feed no trae
     `last_reported` por estación; el estado del feed es ~30 s anterior a `t`,
@@ -256,7 +261,6 @@ def snapshots(day) -> pd.DataFrame:
     docks = docks_disabled = 0, la estación no reportó nada útil).
     """
     d = C.as_date(day)
-    _check_day(d)
     df = _raw_snapshots(d)
     lo, hi = (pd.Timestamp(x) for x in C.snapshot_bounds(d))
     df = df[df["short_name"].str.fullmatch(C.SHORT_NAME_RE) & (df["t"] >= lo) & (df["t"] < hi)]
@@ -272,13 +276,77 @@ def snapshot_times(day) -> pd.Series:
 
 
 def coverage(day, block_min: int = C.COVERAGE_BLOCK_MIN) -> float:
-    """Fracción de bloques de `block_min` (60 por defecto) en [d 05:30,
-    d+1 00:30) con ≥1 snapshot (19 bloques de 60 min; ≥ 0.90 exige 18)."""
-    start, _ = C.day_bounds(day)
-    t = snapshot_times(day)
+    """Fracción de bloques de `block_min` (60 por defecto) en [d 05:00,
+    d+1 00:30) con ≥1 snapshot (19 bloques completos y uno de 30 min)."""
+    d = C.as_date(day)
+    if d >= date(2026, 2, 1):
+        if block_min != C.COVERAGE_BLOCK_MIN:
+            raise ValueError("desde febrero de 2026 solo hay auditoría de cobertura de 60 min")
+        if not C.COVERAGE_AUDIT.exists():
+            raise FileNotFoundError(f"falta {C.COVERAGE_AUDIT}: corre build-coverage")
+        entry = json.loads(C.COVERAGE_AUDIT.read_text())["days"].get(str(d))
+        return float(entry["coverage"]) if entry and entry["complete"] else 0.0
+    try:
+        t = snapshot_times(d)
+    except FileNotFoundError:
+        return 0.0
+    return _coverage_from_times(t, d, block_min)
+
+
+def _coverage_from_times(t: pd.Series, d: date, block_min: int) -> float:
+    start, _ = C.day_bounds(d)
     k = ((t - pd.Timestamp(start)) / pd.Timedelta(minutes=block_min)).apply(np.floor)
-    n = C.WINDOW_MIN // block_min
+    n = int(np.ceil(C.WINDOW_MIN / block_min))
     return float(k[(k >= 0) & (k < n)].nunique() / n)
+
+
+def build_coverage_audit() -> dict:
+    """Cobertura de commits crudos, incluidos los días cuyo caché es reducido.
+
+    Febrero–agosto de 2026 se consulta directamente en el archivo mensual
+    remoto. Agosto 31 se marca incompleto porque falta 2026/Sep.parquet.
+    """
+    records = {}
+    d = date(2025, 1, 1)
+    while d <= date(2026, 1, 31):
+        available = _snapshot_path(d).exists()
+        try:
+            t = snapshot_times(d)
+        except FileNotFoundError:
+            t = pd.Series(dtype="datetime64[ns]")
+        records[str(d)] = {"coverage": round(_coverage_from_times(t, d, 60), 4),
+                           "commits": int(t.nunique()), "complete": available}
+        d += timedelta(days=1)
+
+    con = _con()
+    con.execute("INSTALL httpfs; LOAD httpfs;")
+    con.execute(f"SET s3_endpoint='{C.GBFS_S3_ENDPOINT}'; SET s3_region='auto'; SET TimeZone='UTC';")
+    chunks = []
+    for year, mon in C.GBFS_MONTHS:
+        if year != 2026 or mon not in ("Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"):
+            continue
+        url = f"{C.GBFS_BUCKET}/{year}/{mon}.parquet"
+        chunks.append(con.execute(f"select distinct timezone('{C.TZ}', committed_at_utc) as t "
+                                  f"from read_parquet('{url}')").df()["t"])
+    t_all = pd.concat(chunks, ignore_index=True).drop_duplicates().sort_values()
+    d = date(2026, 2, 1)
+    while d <= date(2026, 8, 31):
+        start, end = C.day_bounds(d)
+        t = t_all[(t_all >= pd.Timestamp(start)) & (t_all < pd.Timestamp(end))]
+        complete = d <= C.SNAPSHOT_END and not t.empty
+        records[str(d)] = {"coverage": round(_coverage_from_times(t, d, 60), 4) if complete else 0.0,
+                           "commits": int(t.nunique()), "complete": complete}
+        d += timedelta(days=1)
+    summary = {}
+    for month in sorted({key[:7] for key in records}):
+        rows = [v for key, v in records.items() if key.startswith(month)]
+        summary[month] = {"days": len(rows), "complete": sum(r["complete"] for r in rows),
+                          "coverage_mean": round(float(np.mean([r["coverage"] for r in rows])), 4),
+                          "eligible_90": sum(r["complete"] and r["coverage"] >= C.COVERAGE_MIN for r in rows)}
+    out = {"definition": "20 bloques (19x60 + 1x30 min) entre 05:00 y 00:30; al menos un commit en cada bloque",
+           "days": records, "months": summary}
+    C.COVERAGE_AUDIT.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n")
+    return out
 
 
 def _stock_match(sn: pd.DataFrame, tr: pd.DataFrame, lag_s: float) -> pd.DataFrame:
@@ -392,33 +460,43 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2 * C.EARTH_RADIUS_M * np.arcsin(np.sqrt(a))
 
 
-def _nearest_0530(d: date) -> pd.DataFrame:
-    """Una fila por estación: el snapshot más cercano a las 05:30 (antes o
-    después). Regla única de capacidad, compartida por `stations` e
-    `initial_state`: la `cap` de ese snapshot; si es un reporte en blanco,
-    la capacidad máxima reportada ese día (puede ser 0 si nunca reportó).
-    `out_of_service` = en blanco a las 05:30 o capacidad 0.
+def _first_open(d: date) -> pd.DataFrame:
+    """Primera foto con al menos 95% de estaciones marcadas como rentables.
+
+    El cierre nocturno convierte temporalmente disponibles en dañadas; las
+    primeras fotos de algunos días aún conservan parte de esa etiqueta.
     """
     raw = _raw_snapshots(d)
     raw = raw[raw["short_name"].str.fullmatch(C.SHORT_NAME_RE)].drop_duplicates(["short_name", "t"])
+    opening = raw[raw["t"].dt.hour == 5].groupby("t")["is_renting"].agg(["mean", "size"])
+    renting = opening["mean"].where(opening["size"] >= 0.95 * opening["size"].max())
+    open_times = renting[renting >= C.INITIAL_OPEN_RENTING_MIN].index
+    if not len(open_times):
+        first = raw["t"].min()
+        best = renting.max() if not renting.empty else float("nan")
+        raise ValueError(f"{d}: sin foto abierta utilizable antes de {C.INITIAL_OPEN_MAX}; "
+                         f"máxima fracción de estaciones rentando={best:.3f}; "
+                         f"primera foto={first}")
+    open_at = open_times[0]
+    raw = raw[raw["t"] >= open_at]
     start, _ = C.day_bounds(d)
     off = (raw["t"] - pd.Timestamp(start)) / pd.Timedelta(minutes=1)
     raw = raw.assign(
         offset_min=off, _abs=off.abs(),
         blank=(raw["bikes"] + raw["disabled"] + raw["docks"] + raw["docks_disabled"]) == 0,
     )
-    s = (raw.sort_values(["short_name", "_abs", "t"])
+    s = (raw.sort_values(["short_name", "t"])
             .drop_duplicates("short_name")
             .set_index("short_name"))
     cap_day = raw.groupby("short_name")["cap"].max()
     s.loc[s["blank"], "cap"] = cap_day.loc[s.index[s["blank"]]]
-    s["out_of_service"] = s["blank"] | (s["cap"] == 0)
+    s["out_of_service"] = s["blank"] | (s["cap"] == 0) | ~s["is_renting"]
     return s.reset_index()
 
 
 def stations(day) -> pd.DataFrame:
     """Estaciones presentes en los snapshots del día, con coordenadas y
-    capacidad del snapshot más cercano a las 05:30 (regla de `_nearest_0530`,
+    capacidad de la primera foto abierta (regla de `_first_open`,
     la misma de `initial_state`).
 
     Columnas: short_name, station_id, name, lat, lon, cap, out_of_service,
@@ -426,8 +504,7 @@ def stations(day) -> pd.DataFrame:
     coord_dup (otra estación válida en exactamente las mismas coordenadas).
     """
     d = C.as_date(day)
-    _check_day(d)
-    s = _nearest_0530(d)[["short_name", "station_id", "name", "lat", "lon", "cap", "out_of_service"]]
+    s = _first_open(d)[["short_name", "station_id", "name", "lat", "lon", "cap", "out_of_service"]]
     s["km_from_center"] = haversine_m(s["lat"], s["lon"], *C.CDMX_CENTER) / 1000
     s["coord_invalid"] = (
         s["lat"].isna() | s["lon"].isna() | (s["km_from_center"] > C.MAX_KM_FROM_CENTER)
@@ -466,12 +543,12 @@ def neighbors(day) -> pd.DataFrame:
 # ======================================================================
 
 def _roll_to_start(n: pd.DataFrame, d: date) -> pd.Series:
-    """Ajuste de bicis disponibles para llevar cada snapshot a las 05:30
-    exactas con los viajes reales (el simulador arranca a las 05:30 y vuelve
-    a entregar los viajes de [05:30, t_estado], así que el snapshot no debe
+    """Ajuste de bicis disponibles para llevar cada snapshot a las 05:00
+    exactas con los viajes reales (el simulador arranca a las 05:00 y vuelve
+    a entregar los viajes de [05:00, t_estado], así que el snapshot no debe
     traerlos ya incluidos):
-      * t_estado ≥ 05:30: + salidas − llegadas con tiempo en [05:30, t_estado];
-      * t_estado < 05:30: − salidas + llegadas con tiempo en (t_estado, 05:30).
+      * t_estado ≥ 05:00: + salidas − llegadas con tiempo en [05:00, t_estado];
+      * t_estado < 05:00: − salidas + llegadas con tiempo en (t_estado, 05:00).
     t_estado = t_snap (commit) − `GBFS_COMMIT_LAG_S`, la misma hora que usa
     `medicion` (el snapshot se sigue ELIGIENDO por el commit crudo).
     """
@@ -493,13 +570,13 @@ def _roll_to_start(n: pd.DataFrame, d: date) -> pd.Series:
 
 
 def initial_state(day) -> pd.DataFrame:
-    """Estado de cada estación a las 05:30 exactas.
+    """Estado de cada estación a las 05:00 exactas.
 
-    Parte del snapshot más cercano a las 05:30 (antes o después;
-    `offset_min` = t_snap − 05:30 en minutos, `stale` = |offset_min| > 10;
+    Parte de la primera foto abierta;
+    `offset_min` = t_snap − 05:00 en minutos, `stale` = |offset_min| > 10;
     t_snap y la elección usan el commit crudo) y lleva las bicis disponibles
-    a las 05:30 con los viajes reales entre la hora del estado del feed
-    (t_snap − `GBFS_COMMIT_LAG_S`) y las 05:30 (`_roll_to_start`). Las
+    a las 05:00 con los viajes reales entre la hora del estado del feed
+    (t_snap − `GBFS_COMMIT_LAG_S`) y las 05:00 (`_roll_to_start`). Las
     dañadas y `docks_disabled` se quedan como en el snapshot; `docks` = cap − bikes − disabled − docks_disabled. Si el
     ajuste deja las bicis fuera de [0, cap − disabled − docks_disabled] se
     recorta y `roll_clipped` = True; `df.attrs["n_roll_clipped"]` las cuenta.
@@ -509,14 +586,13 @@ def initial_state(day) -> pd.DataFrame:
     `blank` = el snapshot elegido es un reporte en blanco (estación fuera de
     línea: no hay viajes desde ella mientras está en blanco y suele
     reaparecer ya surtida). No se salta a un snapshot posterior, porque eso
-    metería a las 05:30 bicis que Ecobici puso después. Se imputa como
+    metería a las 05:00 bicis que Ecobici puso después. Se imputa como
     estación vacía (bikes = disabled = docks_disabled = 0, docks = cap, con
-    la cap de `_nearest_0530`) y no se ajusta. `out_of_service` = blank o
+    la cap de `_first_open`) y no se ajusta. `out_of_service` = blank o
     cap 0.
     """
     d = C.as_date(day)
-    _check_day(d)
-    n = _nearest_0530(d)
+    n = _first_open(d)
     n["stale"] = n["_abs"] > C.INITIAL_STALE_MIN
     n["bikes_snap"] = n["bikes"]
     n["docks_snap"] = n["docks"]
@@ -541,6 +617,9 @@ if __name__ == "__main__":
     elif cmd == "build-snapshots":
         out = build_snapshots()
         print(f"{len(out)} días, {sum(out.values())} renglones")
+    elif cmd == "build-coverage":
+        out = build_coverage_audit()
+        print(pd.DataFrame(out["months"]).T.to_string())
     elif cmd == "audit-night":
         out = night_audit()
         path = C.DERIVED / "night_audit.json"

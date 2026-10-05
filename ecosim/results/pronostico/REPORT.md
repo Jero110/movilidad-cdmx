@@ -1,51 +1,1299 @@
-# Pronósticos run 2: ¿sirve re-pronosticar?
+# Pronósticos ecosim run 3
 
-30 días (15 evaluación + 15 selección), bloques de 60 min, ventana 05:30–00:30.
-Corrección intradía: se re-escala solo lo que falta (bins de 15 min ≥ s; lo ya
-transcurrido vale lo observado) con factor = clip((obs+K)/(pred+K), 0.5, 2) por
-estación y por separado salidas/llegadas, **K = 5 fijado antes de ver
-resultados**, sin tunear. El bloque en curso vale `observado_en_el_bloque +
-factor · resto_esperado`.
+## Método
 
-Comparación justa (`accuracy_by_lead.csv`): para cada decisión t de la rejilla de
-15 min (`C.decision_times`, t + L < 00:30, L = 60) y cada k = 0..5, el objetivo es
-el bloque que contiene t + L + 60·k min; cada serie usa su emisión más reciente
-con `issued_at ≤ t`. Todas las series se evalúan sobre los mismos
-(día, estación, t, k).
+Dos Poisson LightGBM por forma y corte, parámetros fijos del run 2. Entrenamiento desde el día 29 de cada ventana (28 días previos completos). Directo toma uno de cada 12 ticks de decisión (cada 3 h): la fase (día − 2024-01-01) módulo 12 rota por día, de modo que todos los instantes de 15 min aparecen en entrenamiento. No hay azar ni ajuste de hiperparámetros. La evaluación usa todos los ticks de 15 min. MA diaria: 28 días anteriores del mismo tipo. El oráculo conoce la verdad futura: es cota ideal, no pronóstico desplegable. En evaluación cada k mide la hora móvil, con cuartos repartidos según el reloj (diaria) o según t (directa). Se rellenan con cero los cuartos posteriores a 00:30. Se excluyen del entrenamiento y la evaluación 23–31 de marzo de 2026 por CSV incompleto. El universo ordenado de 677 estaciones está en `forecasts/universe_run3.json`.
 
-MAE por estación-bloque (promedio k = 0..5):
+## Auditoría del submuestreo directo
 
-| split / objetivo | daily | ma f15 / f60 / f180 | model f15 / f60 / f180 |
-|---|---|---|---|
-| eval, salidas | 2.053 | 2.102 / 2.103 / 2.099 | 2.081 / 2.081 / 2.076 |
-| eval, llegadas | 1.983 | 2.024 / 2.027 / 2.026 | 2.005 / 2.005 / 2.003 |
-| eval, neto | 2.161 | 2.296 / 2.291 / 2.270 | 2.278 / 2.271 / 2.250 |
-| selección, salidas | 1.946 | 2.024 / 2.025 / 2.019 | 1.995 / 1.994 / 1.988 |
-| selección, neto | 2.121 | 2.253 / 2.247 / 2.227 | 2.227 / 2.220 / 2.201 |
+`direct_sampling.csv` detalla, para cada corte y cada uno de los 78 ticks, los días de entrenamiento y las filas por target (días × estaciones × horizontes k válidos). Resumen por corte:
 
-WAPE de salidas: daily 0.453 / 0.444 (eval / sel); ma 0.462–0.464; model 0.454–0.459.
+| Corte | Filas/target total | Días/tick mín–máx | Filas/target por tick mín–máx |
+|---|---:|---:|---:|
+| elegir | 4,235,312 | 15–16 | 10,155–64,992 |
+| prueba_1 | 4,949,547 | 17–18 | 12,186–73,116 |
+| prueba_2 | 4,924,498 | 17–18 | 11,509–73,116 |
+| prueba_3 | 4,994,229 | 18–19 | 12,186–77,178 |
+| prueba_4 | 4,971,888 | 18–18 | 12,186–73,116 |
+| prueba_5 | 4,992,875 | 18–19 | 12,186–77,178 |
+| prod_2026_02 | 4,995,583 | 18–19 | 12,186–77,178 |
+| prod_2026_03 | 4,950,901 | 17–18 | 12,186–73,116 |
+| prod_2026_04 | 4,740,354 | 17–18 | 11,509–73,116 |
+| prod_2026_05 | 4,718,013 | 16–18 | 11,509–73,116 |
+| prod_2026_06 | 4,741,708 | 17–18 | 11,509–73,116 |
+| prod_2026_07 | 4,713,951 | 16–18 | 11,509–73,116 |
+| prod_2026_08 | 4,741,708 | 17–18 | 11,509–73,116 |
 
-**Resultado: re-pronosticar NO mejora contra `daily`, en ninguna frecuencia.** La
-corrección por estación empeora el MAE ~1–4 % (`ma`) y ~1–3 % (`model`) en ambos
-splits, y el neto ~4–6 %. Con la rejilla de 15 min ya se puede comparar f15 con
-f60: son prácticamente iguales (diferencia < 0.3 %; f15 es incluso un poco peor
-en `ma`) y f180 es el menos malo. Es decir, ninguna frecuencia "empieza a mejorar":
-más frecuente = igual o peor. `model` supera a `ma` con o sin corrección, pero
-`daily` queda por delante de ambos.
+## Exactitud por mes y k
 
-Lectura: los conteos por estación-hora son pequeños (WAPE ≈ 0.45, ruido de
-Poisson) y el factor por estación, aun con K = 5, agrega más varianza que señal.
-El reviewer diagnosticó que la corrección sí reduce ~15 % el error del total del
-sistema; un factor global (fuera de alcance, no probado aquí) sería el candidato,
-y debería elegirse en los días de selección.
+MAE, WAPE y sesgo (predicción menos verdad). El baseline `ma_diaria` del mismo mes figura junto a cada variante; el WAPE neto divide por |llegadas−salidas|.
 
-Notas: (1) `accuracy.csv` (por distancia a la emisión) no es comparable entre
-`daily` y las series re-emitidas: cubren bloques distintos (`daily` incluye la
-noche, de bajo volumen); comparar con `accuracy_by_lead.csv`. (2) En `accuracy.csv`
-el bloque en curso va en la cubeta 0 h. (3) Bloques `censurado` (algún snapshot con
-0 bicis): MAE de salidas más alto que en los no censurados (ver `accuracy.csv`).
-(4) Filtro `o_known`: en los 30 días la salida desde estación desconocida se
-ignora (regla del simulador) y las llegadas de esos viajes sí cuentan; en la
-corrida ignoró 0 de 1,662,776 salidas, porque el universo es la unión de las
-estaciones de los 30 días. La historia previa (sin lista de estaciones por día
-antes de agosto) usa "origen en el universo": no hay diferencia práctica.
+### 2025-08
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.503 | 0.383 | -0.080 | 1.503 | 0.383 | -0.080 |
+| ma_diaria | 0 | llegadas | 1.429 | 0.365 | -0.080 | 1.429 | 0.365 | -0.080 |
+| ma_diaria | 0 | neto | 1.594 | 0.811 | 0.001 | 1.594 | 0.811 | 0.001 |
+| ma_diaria | 1 | salidas | 1.551 | 0.381 | -0.086 | 1.551 | 0.381 | -0.086 |
+| ma_diaria | 1 | llegadas | 1.479 | 0.362 | -0.085 | 1.479 | 0.362 | -0.085 |
+| ma_diaria | 1 | neto | 1.640 | 0.814 | 0.001 | 1.640 | 0.814 | 0.001 |
+| ma_diaria | 2 | salidas | 1.577 | 0.381 | -0.093 | 1.577 | 0.381 | -0.093 |
+| ma_diaria | 2 | llegadas | 1.509 | 0.361 | -0.093 | 1.509 | 0.361 | -0.093 |
+| ma_diaria | 2 | neto | 1.661 | 0.828 | 0.001 | 1.661 | 0.828 | 0.001 |
+| ma_diaria | 3 | salidas | 1.572 | 0.383 | -0.101 | 1.572 | 0.383 | -0.101 |
+| ma_diaria | 3 | llegadas | 1.516 | 0.363 | -0.101 | 1.516 | 0.363 | -0.101 |
+| ma_diaria | 3 | neto | 1.652 | 0.852 | -0.000 | 1.652 | 0.852 | -0.000 |
+| ma_diaria | 4 | salidas | 1.550 | 0.385 | -0.107 | 1.550 | 0.385 | -0.107 |
+| ma_diaria | 4 | llegadas | 1.506 | 0.368 | -0.107 | 1.506 | 0.368 | -0.107 |
+| ma_diaria | 4 | neto | 1.626 | 0.875 | -0.001 | 1.626 | 0.875 | -0.001 |
+| ma_diaria | 5 | salidas | 1.540 | 0.386 | -0.111 | 1.540 | 0.386 | -0.111 |
+| ma_diaria | 5 | llegadas | 1.496 | 0.370 | -0.111 | 1.496 | 0.370 | -0.111 |
+| ma_diaria | 5 | neto | 1.612 | 0.883 | 0.001 | 1.612 | 0.883 | 0.001 |
+| lgbm_diario | 0 | salidas | 1.469 | 0.374 | -0.090 | 1.503 | 0.383 | -0.080 |
+| lgbm_diario | 0 | llegadas | 1.395 | 0.356 | -0.094 | 1.429 | 0.365 | -0.080 |
+| lgbm_diario | 0 | neto | 1.573 | 0.800 | -0.004 | 1.594 | 0.811 | 0.001 |
+| lgbm_diario | 1 | salidas | 1.515 | 0.372 | -0.099 | 1.551 | 0.381 | -0.086 |
+| lgbm_diario | 1 | llegadas | 1.442 | 0.353 | -0.103 | 1.479 | 0.362 | -0.085 |
+| lgbm_diario | 1 | neto | 1.619 | 0.804 | -0.004 | 1.640 | 0.814 | 0.001 |
+| lgbm_diario | 2 | salidas | 1.540 | 0.372 | -0.109 | 1.577 | 0.381 | -0.093 |
+| lgbm_diario | 2 | llegadas | 1.471 | 0.352 | -0.114 | 1.509 | 0.361 | -0.093 |
+| lgbm_diario | 2 | neto | 1.640 | 0.817 | -0.005 | 1.661 | 0.828 | 0.001 |
+| lgbm_diario | 3 | salidas | 1.536 | 0.374 | -0.115 | 1.572 | 0.383 | -0.101 |
+| lgbm_diario | 3 | llegadas | 1.479 | 0.355 | -0.122 | 1.516 | 0.363 | -0.101 |
+| lgbm_diario | 3 | neto | 1.633 | 0.842 | -0.007 | 1.652 | 0.852 | -0.000 |
+| lgbm_diario | 4 | salidas | 1.516 | 0.377 | -0.116 | 1.550 | 0.385 | -0.107 |
+| lgbm_diario | 4 | llegadas | 1.470 | 0.359 | -0.124 | 1.506 | 0.368 | -0.107 |
+| lgbm_diario | 4 | neto | 1.608 | 0.865 | -0.008 | 1.626 | 0.875 | -0.001 |
+| lgbm_diario | 5 | salidas | 1.508 | 0.378 | -0.122 | 1.540 | 0.386 | -0.111 |
+| lgbm_diario | 5 | llegadas | 1.463 | 0.361 | -0.128 | 1.496 | 0.370 | -0.111 |
+| lgbm_diario | 5 | neto | 1.593 | 0.873 | -0.006 | 1.612 | 0.883 | 0.001 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.503 | 0.383 | -0.080 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.429 | 0.365 | -0.080 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.594 | 0.811 | 0.001 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.551 | 0.381 | -0.086 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.479 | 0.362 | -0.085 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.640 | 0.814 | 0.001 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.577 | 0.381 | -0.093 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.509 | 0.361 | -0.093 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.661 | 0.828 | 0.001 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.572 | 0.383 | -0.101 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.516 | 0.363 | -0.101 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.652 | 0.852 | -0.000 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.550 | 0.385 | -0.107 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.506 | 0.368 | -0.107 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.626 | 0.875 | -0.001 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.540 | 0.386 | -0.111 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.496 | 0.370 | -0.111 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.612 | 0.883 | 0.001 |
+| lgbm_directo | 0 | salidas | 1.726 | 0.439 | -0.082 | 1.503 | 0.383 | -0.080 |
+| lgbm_directo | 0 | llegadas | 1.633 | 0.416 | -0.081 | 1.429 | 0.365 | -0.080 |
+| lgbm_directo | 0 | neto | 1.966 | 0.872 | 0.001 | 1.594 | 0.811 | 0.001 |
+| lgbm_directo | 1 | salidas | 1.790 | 0.438 | -0.096 | 1.551 | 0.381 | -0.086 |
+| lgbm_directo | 1 | llegadas | 1.699 | 0.415 | -0.098 | 1.479 | 0.362 | -0.085 |
+| lgbm_directo | 1 | neto | 2.018 | 0.872 | -0.002 | 1.640 | 0.814 | 0.001 |
+| lgbm_directo | 2 | salidas | 1.823 | 0.439 | -0.104 | 1.577 | 0.381 | -0.093 |
+| lgbm_directo | 2 | llegadas | 1.737 | 0.415 | -0.105 | 1.509 | 0.361 | -0.093 |
+| lgbm_directo | 2 | neto | 2.041 | 0.882 | -0.001 | 1.661 | 0.828 | 0.001 |
+| lgbm_directo | 3 | salidas | 1.816 | 0.442 | -0.110 | 1.572 | 0.383 | -0.101 |
+| lgbm_directo | 3 | llegadas | 1.748 | 0.418 | -0.117 | 1.516 | 0.363 | -0.101 |
+| lgbm_directo | 3 | neto | 2.028 | 0.904 | -0.007 | 1.652 | 0.852 | -0.000 |
+| lgbm_directo | 4 | salidas | 1.790 | 0.445 | -0.112 | 1.550 | 0.385 | -0.107 |
+| lgbm_directo | 4 | llegadas | 1.734 | 0.424 | -0.120 | 1.506 | 0.368 | -0.107 |
+| lgbm_directo | 4 | neto | 1.993 | 0.925 | -0.008 | 1.626 | 0.875 | -0.001 |
+| lgbm_directo | 5 | salidas | 1.781 | 0.447 | -0.120 | 1.540 | 0.386 | -0.111 |
+| lgbm_directo | 5 | llegadas | 1.728 | 0.427 | -0.128 | 1.496 | 0.370 | -0.111 |
+| lgbm_directo | 5 | neto | 1.978 | 0.931 | -0.008 | 1.612 | 0.883 | 0.001 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.503 | 0.383 | -0.080 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.429 | 0.365 | -0.080 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.594 | 0.811 | 0.001 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.551 | 0.381 | -0.086 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.479 | 0.362 | -0.085 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.640 | 0.814 | 0.001 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.577 | 0.381 | -0.093 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.509 | 0.361 | -0.093 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.661 | 0.828 | 0.001 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.572 | 0.383 | -0.101 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.516 | 0.363 | -0.101 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.652 | 0.852 | -0.000 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.550 | 0.385 | -0.107 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.506 | 0.368 | -0.107 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.626 | 0.875 | -0.001 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.540 | 0.386 | -0.111 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.496 | 0.370 | -0.111 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.612 | 0.883 | 0.001 |
+
+### 2025-09
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.595 | 0.399 | -0.012 | 1.595 | 0.399 | -0.012 |
+| ma_diaria | 0 | llegadas | 1.517 | 0.380 | -0.012 | 1.517 | 0.380 | -0.012 |
+| ma_diaria | 0 | neto | 1.618 | 0.813 | -0.000 | 1.618 | 0.813 | -0.000 |
+| ma_diaria | 1 | salidas | 1.646 | 0.398 | -0.010 | 1.646 | 0.398 | -0.010 |
+| ma_diaria | 1 | llegadas | 1.571 | 0.378 | -0.011 | 1.571 | 0.378 | -0.011 |
+| ma_diaria | 1 | neto | 1.664 | 0.817 | -0.001 | 1.664 | 0.817 | -0.001 |
+| ma_diaria | 2 | salidas | 1.669 | 0.398 | -0.002 | 1.669 | 0.398 | -0.002 |
+| ma_diaria | 2 | llegadas | 1.600 | 0.377 | -0.005 | 1.600 | 0.377 | -0.005 |
+| ma_diaria | 2 | neto | 1.682 | 0.831 | -0.003 | 1.682 | 0.831 | -0.003 |
+| ma_diaria | 3 | salidas | 1.661 | 0.401 | 0.003 | 1.661 | 0.401 | 0.003 |
+| ma_diaria | 3 | llegadas | 1.604 | 0.380 | 0.001 | 1.604 | 0.380 | 0.001 |
+| ma_diaria | 3 | neto | 1.671 | 0.856 | -0.002 | 1.671 | 0.856 | -0.002 |
+| ma_diaria | 4 | salidas | 1.640 | 0.404 | -0.001 | 1.640 | 0.404 | -0.001 |
+| ma_diaria | 4 | llegadas | 1.595 | 0.386 | 0.000 | 1.595 | 0.386 | 0.000 |
+| ma_diaria | 4 | neto | 1.646 | 0.881 | 0.001 | 1.646 | 0.881 | 0.001 |
+| ma_diaria | 5 | salidas | 1.634 | 0.406 | -0.007 | 1.634 | 0.406 | -0.007 |
+| ma_diaria | 5 | llegadas | 1.588 | 0.388 | -0.006 | 1.588 | 0.388 | -0.006 |
+| ma_diaria | 5 | neto | 1.633 | 0.889 | 0.001 | 1.633 | 0.889 | 0.001 |
+| lgbm_diario | 0 | salidas | 1.577 | 0.395 | -0.016 | 1.595 | 0.399 | -0.012 |
+| lgbm_diario | 0 | llegadas | 1.501 | 0.376 | -0.021 | 1.517 | 0.380 | -0.012 |
+| lgbm_diario | 0 | neto | 1.606 | 0.807 | -0.005 | 1.618 | 0.813 | -0.000 |
+| lgbm_diario | 1 | salidas | 1.627 | 0.393 | -0.018 | 1.646 | 0.398 | -0.010 |
+| lgbm_diario | 1 | llegadas | 1.552 | 0.374 | -0.024 | 1.571 | 0.378 | -0.011 |
+| lgbm_diario | 1 | neto | 1.652 | 0.811 | -0.007 | 1.664 | 0.817 | -0.001 |
+| lgbm_diario | 2 | salidas | 1.649 | 0.393 | -0.014 | 1.669 | 0.398 | -0.002 |
+| lgbm_diario | 2 | llegadas | 1.581 | 0.373 | -0.022 | 1.600 | 0.377 | -0.005 |
+| lgbm_diario | 2 | neto | 1.669 | 0.825 | -0.009 | 1.682 | 0.831 | -0.003 |
+| lgbm_diario | 3 | salidas | 1.640 | 0.396 | -0.007 | 1.661 | 0.401 | 0.003 |
+| lgbm_diario | 3 | llegadas | 1.584 | 0.376 | -0.015 | 1.604 | 0.380 | 0.001 |
+| lgbm_diario | 3 | neto | 1.657 | 0.849 | -0.009 | 1.671 | 0.856 | -0.002 |
+| lgbm_diario | 4 | salidas | 1.620 | 0.399 | -0.007 | 1.640 | 0.404 | -0.001 |
+| lgbm_diario | 4 | llegadas | 1.576 | 0.381 | -0.013 | 1.595 | 0.386 | 0.000 |
+| lgbm_diario | 4 | neto | 1.633 | 0.873 | -0.006 | 1.646 | 0.881 | 0.001 |
+| lgbm_diario | 5 | salidas | 1.616 | 0.401 | -0.014 | 1.634 | 0.406 | -0.007 |
+| lgbm_diario | 5 | llegadas | 1.572 | 0.385 | -0.018 | 1.588 | 0.388 | -0.006 |
+| lgbm_diario | 5 | neto | 1.620 | 0.882 | -0.005 | 1.633 | 0.889 | 0.001 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.595 | 0.399 | -0.012 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.517 | 0.380 | -0.012 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.618 | 0.813 | -0.000 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.646 | 0.398 | -0.010 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.571 | 0.378 | -0.011 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.664 | 0.817 | -0.001 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.669 | 0.398 | -0.002 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.600 | 0.377 | -0.005 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.682 | 0.831 | -0.003 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.661 | 0.401 | 0.003 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.604 | 0.380 | 0.001 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.671 | 0.856 | -0.002 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.640 | 0.404 | -0.001 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.595 | 0.386 | 0.000 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.646 | 0.881 | 0.001 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.634 | 0.406 | -0.007 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.588 | 0.388 | -0.006 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.633 | 0.889 | 0.001 |
+| lgbm_directo | 0 | salidas | 1.807 | 0.452 | -0.026 | 1.595 | 0.399 | -0.012 |
+| lgbm_directo | 0 | llegadas | 1.707 | 0.428 | -0.019 | 1.517 | 0.380 | -0.012 |
+| lgbm_directo | 0 | neto | 1.994 | 0.875 | 0.007 | 1.618 | 0.813 | -0.000 |
+| lgbm_directo | 1 | salidas | 1.881 | 0.453 | -0.026 | 1.646 | 0.398 | -0.010 |
+| lgbm_directo | 1 | llegadas | 1.784 | 0.429 | -0.029 | 1.571 | 0.378 | -0.011 |
+| lgbm_directo | 1 | neto | 2.048 | 0.876 | -0.003 | 1.664 | 0.817 | -0.001 |
+| lgbm_directo | 2 | salidas | 1.914 | 0.454 | -0.015 | 1.669 | 0.398 | -0.002 |
+| lgbm_directo | 2 | llegadas | 1.826 | 0.430 | -0.019 | 1.600 | 0.377 | -0.005 |
+| lgbm_directo | 2 | neto | 2.067 | 0.887 | -0.004 | 1.682 | 0.831 | -0.003 |
+| lgbm_directo | 3 | salidas | 1.903 | 0.459 | -0.007 | 1.661 | 0.401 | 0.003 |
+| lgbm_directo | 3 | llegadas | 1.833 | 0.434 | -0.014 | 1.604 | 0.380 | 0.001 |
+| lgbm_directo | 3 | neto | 2.048 | 0.910 | -0.006 | 1.671 | 0.856 | -0.002 |
+| lgbm_directo | 4 | salidas | 1.878 | 0.463 | -0.008 | 1.640 | 0.404 | -0.001 |
+| lgbm_directo | 4 | llegadas | 1.821 | 0.442 | -0.013 | 1.595 | 0.386 | 0.000 |
+| lgbm_directo | 4 | neto | 2.014 | 0.931 | -0.005 | 1.646 | 0.881 | 0.001 |
+| lgbm_directo | 5 | salidas | 1.874 | 0.465 | -0.017 | 1.634 | 0.406 | -0.007 |
+| lgbm_directo | 5 | llegadas | 1.818 | 0.445 | -0.021 | 1.588 | 0.388 | -0.006 |
+| lgbm_directo | 5 | neto | 2.000 | 0.937 | -0.004 | 1.633 | 0.889 | 0.001 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.595 | 0.399 | -0.012 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.517 | 0.380 | -0.012 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.618 | 0.813 | -0.000 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.646 | 0.398 | -0.010 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.571 | 0.378 | -0.011 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.664 | 0.817 | -0.001 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.669 | 0.398 | -0.002 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.600 | 0.377 | -0.005 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.682 | 0.831 | -0.003 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.661 | 0.401 | 0.003 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.604 | 0.380 | 0.001 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.671 | 0.856 | -0.002 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.640 | 0.404 | -0.001 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.595 | 0.386 | 0.000 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.646 | 0.881 | 0.001 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.634 | 0.406 | -0.007 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.588 | 0.388 | -0.006 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.633 | 0.889 | 0.001 |
+
+### 2025-10
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.630 | 0.381 | -0.132 | 1.630 | 0.381 | -0.132 |
+| ma_diaria | 0 | llegadas | 1.550 | 0.363 | -0.130 | 1.550 | 0.363 | -0.130 |
+| ma_diaria | 0 | neto | 1.643 | 0.792 | 0.001 | 1.643 | 0.792 | 0.001 |
+| ma_diaria | 1 | salidas | 1.685 | 0.380 | -0.138 | 1.685 | 0.380 | -0.138 |
+| ma_diaria | 1 | llegadas | 1.606 | 0.362 | -0.137 | 1.606 | 0.362 | -0.137 |
+| ma_diaria | 1 | neto | 1.690 | 0.797 | 0.001 | 1.690 | 0.797 | 0.001 |
+| ma_diaria | 2 | salidas | 1.715 | 0.382 | -0.146 | 1.715 | 0.382 | -0.146 |
+| ma_diaria | 2 | llegadas | 1.643 | 0.363 | -0.144 | 1.643 | 0.363 | -0.144 |
+| ma_diaria | 2 | neto | 1.710 | 0.814 | 0.002 | 1.710 | 0.814 | 0.002 |
+| ma_diaria | 3 | salidas | 1.714 | 0.387 | -0.154 | 1.714 | 0.387 | -0.154 |
+| ma_diaria | 3 | llegadas | 1.656 | 0.368 | -0.152 | 1.656 | 0.368 | -0.152 |
+| ma_diaria | 3 | neto | 1.701 | 0.841 | 0.002 | 1.701 | 0.841 | 0.002 |
+| ma_diaria | 4 | salidas | 1.698 | 0.390 | -0.164 | 1.698 | 0.390 | -0.164 |
+| ma_diaria | 4 | llegadas | 1.652 | 0.373 | -0.162 | 1.652 | 0.373 | -0.162 |
+| ma_diaria | 4 | neto | 1.677 | 0.864 | 0.002 | 1.677 | 0.864 | 0.002 |
+| ma_diaria | 5 | salidas | 1.697 | 0.391 | -0.175 | 1.697 | 0.391 | -0.175 |
+| ma_diaria | 5 | llegadas | 1.651 | 0.376 | -0.174 | 1.651 | 0.376 | -0.174 |
+| ma_diaria | 5 | neto | 1.669 | 0.872 | 0.001 | 1.669 | 0.872 | 0.001 |
+| lgbm_diario | 0 | salidas | 1.606 | 0.376 | -0.145 | 1.630 | 0.381 | -0.132 |
+| lgbm_diario | 0 | llegadas | 1.527 | 0.358 | -0.143 | 1.550 | 0.363 | -0.130 |
+| lgbm_diario | 0 | neto | 1.626 | 0.783 | 0.002 | 1.643 | 0.792 | 0.001 |
+| lgbm_diario | 1 | salidas | 1.659 | 0.375 | -0.155 | 1.685 | 0.380 | -0.138 |
+| lgbm_diario | 1 | llegadas | 1.581 | 0.356 | -0.153 | 1.606 | 0.362 | -0.137 |
+| lgbm_diario | 1 | neto | 1.672 | 0.789 | 0.002 | 1.690 | 0.797 | 0.001 |
+| lgbm_diario | 2 | salidas | 1.689 | 0.377 | -0.165 | 1.715 | 0.382 | -0.146 |
+| lgbm_diario | 2 | llegadas | 1.617 | 0.357 | -0.164 | 1.643 | 0.363 | -0.144 |
+| lgbm_diario | 2 | neto | 1.693 | 0.805 | 0.001 | 1.710 | 0.814 | 0.002 |
+| lgbm_diario | 3 | salidas | 1.689 | 0.381 | -0.170 | 1.714 | 0.387 | -0.154 |
+| lgbm_diario | 3 | llegadas | 1.630 | 0.362 | -0.171 | 1.656 | 0.368 | -0.152 |
+| lgbm_diario | 3 | neto | 1.683 | 0.832 | -0.000 | 1.701 | 0.841 | 0.002 |
+| lgbm_diario | 4 | salidas | 1.674 | 0.385 | -0.176 | 1.698 | 0.390 | -0.164 |
+| lgbm_diario | 4 | llegadas | 1.627 | 0.368 | -0.177 | 1.652 | 0.373 | -0.162 |
+| lgbm_diario | 4 | neto | 1.659 | 0.855 | -0.001 | 1.677 | 0.864 | 0.002 |
+| lgbm_diario | 5 | salidas | 1.675 | 0.386 | -0.189 | 1.697 | 0.391 | -0.175 |
+| lgbm_diario | 5 | llegadas | 1.628 | 0.370 | -0.189 | 1.651 | 0.376 | -0.174 |
+| lgbm_diario | 5 | neto | 1.651 | 0.863 | 0.000 | 1.669 | 0.872 | 0.001 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.630 | 0.381 | -0.132 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.550 | 0.363 | -0.130 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.643 | 0.792 | 0.001 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.685 | 0.380 | -0.138 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.606 | 0.362 | -0.137 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.690 | 0.797 | 0.001 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.715 | 0.382 | -0.146 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.643 | 0.363 | -0.144 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.710 | 0.814 | 0.002 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.714 | 0.387 | -0.154 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.656 | 0.368 | -0.152 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.701 | 0.841 | 0.002 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.698 | 0.390 | -0.164 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.652 | 0.373 | -0.162 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.677 | 0.864 | 0.002 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.697 | 0.391 | -0.175 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.651 | 0.376 | -0.174 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.669 | 0.872 | 0.001 |
+| lgbm_directo | 0 | salidas | 1.845 | 0.431 | -0.138 | 1.630 | 0.381 | -0.132 |
+| lgbm_directo | 0 | llegadas | 1.737 | 0.406 | -0.130 | 1.550 | 0.363 | -0.130 |
+| lgbm_directo | 0 | neto | 2.035 | 0.857 | 0.008 | 1.643 | 0.792 | 0.001 |
+| lgbm_directo | 1 | salidas | 1.921 | 0.432 | -0.144 | 1.685 | 0.380 | -0.138 |
+| lgbm_directo | 1 | llegadas | 1.814 | 0.407 | -0.139 | 1.606 | 0.362 | -0.137 |
+| lgbm_directo | 1 | neto | 2.086 | 0.857 | 0.005 | 1.690 | 0.797 | 0.001 |
+| lgbm_directo | 2 | salidas | 1.961 | 0.436 | -0.158 | 1.715 | 0.382 | -0.146 |
+| lgbm_directo | 2 | llegadas | 1.864 | 0.410 | -0.154 | 1.643 | 0.363 | -0.144 |
+| lgbm_directo | 2 | neto | 2.107 | 0.871 | 0.004 | 1.710 | 0.814 | 0.002 |
+| lgbm_directo | 3 | salidas | 1.958 | 0.442 | -0.165 | 1.714 | 0.387 | -0.154 |
+| lgbm_directo | 3 | llegadas | 1.882 | 0.417 | -0.166 | 1.656 | 0.368 | -0.152 |
+| lgbm_directo | 3 | neto | 2.089 | 0.896 | -0.001 | 1.701 | 0.841 | 0.002 |
+| lgbm_directo | 4 | salidas | 1.940 | 0.447 | -0.173 | 1.698 | 0.390 | -0.164 |
+| lgbm_directo | 4 | llegadas | 1.877 | 0.425 | -0.176 | 1.652 | 0.373 | -0.162 |
+| lgbm_directo | 4 | neto | 2.057 | 0.916 | -0.002 | 1.677 | 0.864 | 0.002 |
+| lgbm_directo | 5 | salidas | 1.942 | 0.448 | -0.190 | 1.697 | 0.391 | -0.175 |
+| lgbm_directo | 5 | llegadas | 1.881 | 0.428 | -0.193 | 1.651 | 0.376 | -0.174 |
+| lgbm_directo | 5 | neto | 2.048 | 0.921 | -0.003 | 1.669 | 0.872 | 0.001 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.630 | 0.381 | -0.132 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.550 | 0.363 | -0.130 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.643 | 0.792 | 0.001 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.685 | 0.380 | -0.138 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.606 | 0.362 | -0.137 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.690 | 0.797 | 0.001 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.715 | 0.382 | -0.146 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.643 | 0.363 | -0.144 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.710 | 0.814 | 0.002 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.714 | 0.387 | -0.154 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.656 | 0.368 | -0.152 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.701 | 0.841 | 0.002 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.698 | 0.390 | -0.164 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.652 | 0.373 | -0.162 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.677 | 0.864 | 0.002 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.697 | 0.391 | -0.175 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.651 | 0.376 | -0.174 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.669 | 0.872 | 0.001 |
+
+### 2025-11
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.532 | 0.380 | 0.105 | 1.532 | 0.380 | 0.105 |
+| ma_diaria | 0 | llegadas | 1.454 | 0.361 | 0.104 | 1.454 | 0.361 | 0.104 |
+| ma_diaria | 0 | neto | 1.598 | 0.811 | -0.001 | 1.598 | 0.811 | -0.001 |
+| ma_diaria | 1 | salidas | 1.584 | 0.378 | 0.106 | 1.584 | 0.378 | 0.106 |
+| ma_diaria | 1 | llegadas | 1.507 | 0.359 | 0.106 | 1.507 | 0.359 | 0.106 |
+| ma_diaria | 1 | neto | 1.647 | 0.815 | -0.000 | 1.647 | 0.815 | -0.000 |
+| ma_diaria | 2 | salidas | 1.614 | 0.379 | 0.104 | 1.614 | 0.379 | 0.104 |
+| ma_diaria | 2 | llegadas | 1.543 | 0.359 | 0.105 | 1.543 | 0.359 | 0.105 |
+| ma_diaria | 2 | neto | 1.672 | 0.829 | 0.001 | 1.672 | 0.829 | 0.001 |
+| ma_diaria | 3 | salidas | 1.613 | 0.381 | 0.103 | 1.613 | 0.381 | 0.103 |
+| ma_diaria | 3 | llegadas | 1.556 | 0.361 | 0.103 | 1.556 | 0.361 | 0.103 |
+| ma_diaria | 3 | neto | 1.667 | 0.852 | 0.000 | 1.667 | 0.852 | 0.000 |
+| ma_diaria | 4 | salidas | 1.598 | 0.382 | 0.106 | 1.598 | 0.382 | 0.106 |
+| ma_diaria | 4 | llegadas | 1.551 | 0.365 | 0.105 | 1.551 | 0.365 | 0.105 |
+| ma_diaria | 4 | neto | 1.649 | 0.872 | -0.000 | 1.649 | 0.872 | -0.000 |
+| ma_diaria | 5 | salidas | 1.592 | 0.381 | 0.109 | 1.592 | 0.381 | 0.109 |
+| ma_diaria | 5 | llegadas | 1.546 | 0.365 | 0.109 | 1.546 | 0.365 | 0.109 |
+| ma_diaria | 5 | neto | 1.642 | 0.879 | 0.000 | 1.642 | 0.879 | 0.000 |
+| lgbm_diario | 0 | salidas | 1.489 | 0.369 | 0.078 | 1.532 | 0.380 | 0.105 |
+| lgbm_diario | 0 | llegadas | 1.409 | 0.350 | 0.079 | 1.454 | 0.361 | 0.104 |
+| lgbm_diario | 0 | neto | 1.578 | 0.801 | 0.001 | 1.598 | 0.811 | -0.001 |
+| lgbm_diario | 1 | salidas | 1.538 | 0.367 | 0.075 | 1.584 | 0.378 | 0.106 |
+| lgbm_diario | 1 | llegadas | 1.459 | 0.348 | 0.077 | 1.507 | 0.359 | 0.106 |
+| lgbm_diario | 1 | neto | 1.626 | 0.805 | 0.001 | 1.647 | 0.815 | -0.000 |
+| lgbm_diario | 2 | salidas | 1.565 | 0.367 | 0.070 | 1.614 | 0.379 | 0.104 |
+| lgbm_diario | 2 | llegadas | 1.492 | 0.347 | 0.071 | 1.543 | 0.359 | 0.105 |
+| lgbm_diario | 2 | neto | 1.651 | 0.819 | 0.002 | 1.672 | 0.829 | 0.001 |
+| lgbm_diario | 3 | salidas | 1.563 | 0.369 | 0.068 | 1.613 | 0.381 | 0.103 |
+| lgbm_diario | 3 | llegadas | 1.504 | 0.349 | 0.068 | 1.556 | 0.361 | 0.103 |
+| lgbm_diario | 3 | neto | 1.647 | 0.842 | 0.000 | 1.667 | 0.852 | 0.000 |
+| lgbm_diario | 4 | salidas | 1.547 | 0.370 | 0.069 | 1.598 | 0.382 | 0.106 |
+| lgbm_diario | 4 | llegadas | 1.500 | 0.353 | 0.070 | 1.551 | 0.365 | 0.105 |
+| lgbm_diario | 4 | neto | 1.628 | 0.861 | 0.001 | 1.649 | 0.872 | -0.000 |
+| lgbm_diario | 5 | salidas | 1.542 | 0.369 | 0.068 | 1.592 | 0.381 | 0.109 |
+| lgbm_diario | 5 | llegadas | 1.495 | 0.353 | 0.071 | 1.546 | 0.365 | 0.109 |
+| lgbm_diario | 5 | neto | 1.622 | 0.868 | 0.003 | 1.642 | 0.879 | 0.000 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.532 | 0.380 | 0.105 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.454 | 0.361 | 0.104 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.598 | 0.811 | -0.001 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.584 | 0.378 | 0.106 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.507 | 0.359 | 0.106 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.647 | 0.815 | -0.000 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.614 | 0.379 | 0.104 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.543 | 0.359 | 0.105 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.672 | 0.829 | 0.001 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.613 | 0.381 | 0.103 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.556 | 0.361 | 0.103 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.667 | 0.852 | 0.000 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.598 | 0.382 | 0.106 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.551 | 0.365 | 0.105 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.649 | 0.872 | -0.000 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.592 | 0.381 | 0.109 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.546 | 0.365 | 0.109 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.642 | 0.879 | 0.000 |
+| lgbm_directo | 0 | salidas | 1.747 | 0.433 | 0.076 | 1.532 | 0.380 | 0.105 |
+| lgbm_directo | 0 | llegadas | 1.645 | 0.408 | 0.082 | 1.454 | 0.361 | 0.104 |
+| lgbm_directo | 0 | neto | 1.981 | 0.877 | 0.006 | 1.598 | 0.811 | -0.001 |
+| lgbm_directo | 1 | salidas | 1.818 | 0.433 | 0.076 | 1.584 | 0.378 | 0.106 |
+| lgbm_directo | 1 | llegadas | 1.717 | 0.409 | 0.081 | 1.507 | 0.359 | 0.106 |
+| lgbm_directo | 1 | neto | 2.034 | 0.874 | 0.005 | 1.647 | 0.815 | -0.000 |
+| lgbm_directo | 2 | salidas | 1.856 | 0.434 | 0.072 | 1.614 | 0.379 | 0.104 |
+| lgbm_directo | 2 | llegadas | 1.764 | 0.409 | 0.074 | 1.543 | 0.359 | 0.105 |
+| lgbm_directo | 2 | neto | 2.060 | 0.884 | 0.001 | 1.672 | 0.829 | 0.001 |
+| lgbm_directo | 3 | salidas | 1.854 | 0.437 | 0.070 | 1.613 | 0.381 | 0.103 |
+| lgbm_directo | 3 | llegadas | 1.781 | 0.413 | 0.067 | 1.556 | 0.361 | 0.103 |
+| lgbm_directo | 3 | neto | 2.051 | 0.906 | -0.003 | 1.667 | 0.852 | 0.000 |
+| lgbm_directo | 4 | salidas | 1.834 | 0.439 | 0.067 | 1.598 | 0.382 | 0.106 |
+| lgbm_directo | 4 | llegadas | 1.775 | 0.418 | 0.064 | 1.551 | 0.365 | 0.105 |
+| lgbm_directo | 4 | neto | 2.025 | 0.924 | -0.004 | 1.649 | 0.872 | -0.000 |
+| lgbm_directo | 5 | salidas | 1.829 | 0.438 | 0.063 | 1.592 | 0.381 | 0.109 |
+| lgbm_directo | 5 | llegadas | 1.773 | 0.419 | 0.058 | 1.546 | 0.365 | 0.109 |
+| lgbm_directo | 5 | neto | 2.019 | 0.929 | -0.004 | 1.642 | 0.879 | 0.000 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.532 | 0.380 | 0.105 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.454 | 0.361 | 0.104 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.598 | 0.811 | -0.001 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.584 | 0.378 | 0.106 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.507 | 0.359 | 0.106 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.647 | 0.815 | -0.000 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.614 | 0.379 | 0.104 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.543 | 0.359 | 0.105 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.672 | 0.829 | 0.001 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.613 | 0.381 | 0.103 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.556 | 0.361 | 0.103 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.667 | 0.852 | 0.000 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.598 | 0.382 | 0.106 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.551 | 0.365 | 0.105 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.649 | 0.872 | -0.000 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.592 | 0.381 | 0.109 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.546 | 0.365 | 0.109 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.642 | 0.879 | 0.000 |
+
+### 2025-12
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.618 | 0.459 | 0.538 | 1.618 | 0.459 | 0.538 |
+| ma_diaria | 0 | llegadas | 1.579 | 0.449 | 0.539 | 1.579 | 0.449 | 0.539 |
+| ma_diaria | 0 | neto | 1.614 | 0.879 | 0.000 | 1.614 | 0.879 | 0.000 |
+| ma_diaria | 1 | salidas | 1.672 | 0.457 | 0.556 | 1.672 | 0.457 | 0.556 |
+| ma_diaria | 1 | llegadas | 1.638 | 0.447 | 0.560 | 1.638 | 0.447 | 0.560 |
+| ma_diaria | 1 | neto | 1.664 | 0.881 | 0.004 | 1.664 | 0.881 | 0.004 |
+| ma_diaria | 2 | salidas | 1.699 | 0.454 | 0.555 | 1.699 | 0.454 | 0.555 |
+| ma_diaria | 2 | llegadas | 1.675 | 0.445 | 0.565 | 1.675 | 0.445 | 0.565 |
+| ma_diaria | 2 | neto | 1.687 | 0.891 | 0.010 | 1.687 | 0.891 | 0.010 |
+| ma_diaria | 3 | salidas | 1.687 | 0.452 | 0.534 | 1.687 | 0.452 | 0.534 |
+| ma_diaria | 3 | llegadas | 1.680 | 0.444 | 0.549 | 1.680 | 0.444 | 0.549 |
+| ma_diaria | 3 | neto | 1.680 | 0.912 | 0.015 | 1.680 | 0.912 | 0.015 |
+| ma_diaria | 4 | salidas | 1.660 | 0.451 | 0.514 | 1.660 | 0.451 | 0.514 |
+| ma_diaria | 4 | llegadas | 1.666 | 0.445 | 0.527 | 1.666 | 0.445 | 0.527 |
+| ma_diaria | 4 | neto | 1.657 | 0.934 | 0.014 | 1.657 | 0.934 | 0.014 |
+| ma_diaria | 5 | salidas | 1.652 | 0.449 | 0.509 | 1.652 | 0.449 | 0.509 |
+| ma_diaria | 5 | llegadas | 1.660 | 0.445 | 0.518 | 1.660 | 0.445 | 0.518 |
+| ma_diaria | 5 | neto | 1.648 | 0.943 | 0.009 | 1.648 | 0.943 | 0.009 |
+| lgbm_diario | 0 | salidas | 1.596 | 0.453 | 0.533 | 1.618 | 0.459 | 0.538 |
+| lgbm_diario | 0 | llegadas | 1.558 | 0.443 | 0.532 | 1.579 | 0.449 | 0.539 |
+| lgbm_diario | 0 | neto | 1.588 | 0.865 | -0.001 | 1.614 | 0.879 | 0.000 |
+| lgbm_diario | 1 | salidas | 1.649 | 0.450 | 0.548 | 1.672 | 0.457 | 0.556 |
+| lgbm_diario | 1 | llegadas | 1.614 | 0.440 | 0.550 | 1.638 | 0.447 | 0.560 |
+| lgbm_diario | 1 | neto | 1.637 | 0.867 | 0.002 | 1.664 | 0.881 | 0.004 |
+| lgbm_diario | 2 | salidas | 1.672 | 0.447 | 0.543 | 1.699 | 0.454 | 0.555 |
+| lgbm_diario | 2 | llegadas | 1.649 | 0.438 | 0.551 | 1.675 | 0.445 | 0.565 |
+| lgbm_diario | 2 | neto | 1.660 | 0.877 | 0.008 | 1.687 | 0.891 | 0.010 |
+| lgbm_diario | 3 | salidas | 1.660 | 0.445 | 0.522 | 1.687 | 0.452 | 0.534 |
+| lgbm_diario | 3 | llegadas | 1.653 | 0.437 | 0.534 | 1.680 | 0.444 | 0.549 |
+| lgbm_diario | 3 | neto | 1.654 | 0.899 | 0.012 | 1.680 | 0.912 | 0.015 |
+| lgbm_diario | 4 | salidas | 1.633 | 0.443 | 0.502 | 1.660 | 0.451 | 0.514 |
+| lgbm_diario | 4 | llegadas | 1.641 | 0.439 | 0.513 | 1.666 | 0.445 | 0.527 |
+| lgbm_diario | 4 | neto | 1.633 | 0.921 | 0.011 | 1.657 | 0.934 | 0.014 |
+| lgbm_diario | 5 | salidas | 1.625 | 0.441 | 0.493 | 1.652 | 0.449 | 0.509 |
+| lgbm_diario | 5 | llegadas | 1.635 | 0.439 | 0.501 | 1.660 | 0.445 | 0.518 |
+| lgbm_diario | 5 | neto | 1.625 | 0.929 | 0.008 | 1.648 | 0.943 | 0.009 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.618 | 0.459 | 0.538 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.579 | 0.449 | 0.539 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.614 | 0.879 | 0.000 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.672 | 0.457 | 0.556 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.638 | 0.447 | 0.560 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.664 | 0.881 | 0.004 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.699 | 0.454 | 0.555 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.675 | 0.445 | 0.565 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.687 | 0.891 | 0.010 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.687 | 0.452 | 0.534 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.680 | 0.444 | 0.549 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.680 | 0.912 | 0.015 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.660 | 0.451 | 0.514 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.666 | 0.445 | 0.527 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.657 | 0.934 | 0.014 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.652 | 0.449 | 0.509 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.660 | 0.445 | 0.518 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.648 | 0.943 | 0.009 |
+| lgbm_directo | 0 | salidas | 1.744 | 0.495 | 0.412 | 1.618 | 0.459 | 0.538 |
+| lgbm_directo | 0 | llegadas | 1.666 | 0.473 | 0.384 | 1.579 | 0.449 | 0.539 |
+| lgbm_directo | 0 | neto | 1.932 | 0.916 | -0.028 | 1.614 | 0.879 | 0.000 |
+| lgbm_directo | 1 | salidas | 1.825 | 0.497 | 0.449 | 1.672 | 0.457 | 0.556 |
+| lgbm_directo | 1 | llegadas | 1.751 | 0.477 | 0.423 | 1.638 | 0.447 | 0.560 |
+| lgbm_directo | 1 | neto | 1.990 | 0.916 | -0.026 | 1.664 | 0.881 | 0.004 |
+| lgbm_directo | 2 | salidas | 1.870 | 0.498 | 0.464 | 1.699 | 0.454 | 0.555 |
+| lgbm_directo | 2 | llegadas | 1.806 | 0.478 | 0.442 | 1.675 | 0.445 | 0.565 |
+| lgbm_directo | 2 | neto | 2.021 | 0.924 | -0.022 | 1.687 | 0.891 | 0.010 |
+| lgbm_directo | 3 | salidas | 1.860 | 0.498 | 0.444 | 1.687 | 0.452 | 0.534 |
+| lgbm_directo | 3 | llegadas | 1.817 | 0.480 | 0.426 | 1.680 | 0.444 | 0.549 |
+| lgbm_directo | 3 | neto | 2.013 | 0.944 | -0.018 | 1.680 | 0.912 | 0.015 |
+| lgbm_directo | 4 | salidas | 1.831 | 0.498 | 0.422 | 1.660 | 0.451 | 0.514 |
+| lgbm_directo | 4 | llegadas | 1.803 | 0.484 | 0.404 | 1.666 | 0.445 | 0.527 |
+| lgbm_directo | 4 | neto | 1.986 | 0.965 | -0.018 | 1.657 | 0.934 | 0.014 |
+| lgbm_directo | 5 | salidas | 1.824 | 0.496 | 0.413 | 1.652 | 0.449 | 0.509 |
+| lgbm_directo | 5 | llegadas | 1.803 | 0.484 | 0.393 | 1.660 | 0.445 | 0.518 |
+| lgbm_directo | 5 | neto | 1.979 | 0.971 | -0.020 | 1.648 | 0.943 | 0.009 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.618 | 0.459 | 0.538 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.579 | 0.449 | 0.539 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.614 | 0.879 | 0.000 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.672 | 0.457 | 0.556 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.638 | 0.447 | 0.560 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.664 | 0.881 | 0.004 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.699 | 0.454 | 0.555 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.675 | 0.445 | 0.565 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.687 | 0.891 | 0.010 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.687 | 0.452 | 0.534 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.680 | 0.444 | 0.549 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.680 | 0.912 | 0.015 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.660 | 0.451 | 0.514 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.666 | 0.445 | 0.527 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.657 | 0.934 | 0.014 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.652 | 0.449 | 0.509 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.660 | 0.445 | 0.518 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.648 | 0.943 | 0.009 |
+
+### 2026-01
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.523 | 0.410 | -0.464 | 1.523 | 0.410 | -0.464 |
+| ma_diaria | 0 | llegadas | 1.484 | 0.400 | -0.465 | 1.484 | 0.400 | -0.465 |
+| ma_diaria | 0 | neto | 1.603 | 0.826 | -0.001 | 1.603 | 0.826 | -0.001 |
+| ma_diaria | 1 | salidas | 1.575 | 0.408 | -0.480 | 1.575 | 0.408 | -0.480 |
+| ma_diaria | 1 | llegadas | 1.541 | 0.398 | -0.484 | 1.541 | 0.398 | -0.484 |
+| ma_diaria | 1 | neto | 1.653 | 0.829 | -0.003 | 1.653 | 0.829 | -0.003 |
+| ma_diaria | 2 | salidas | 1.601 | 0.406 | -0.480 | 1.601 | 0.406 | -0.480 |
+| ma_diaria | 2 | llegadas | 1.577 | 0.397 | -0.489 | 1.577 | 0.397 | -0.489 |
+| ma_diaria | 2 | neto | 1.677 | 0.840 | -0.009 | 1.677 | 0.840 | -0.009 |
+| ma_diaria | 3 | salidas | 1.592 | 0.406 | -0.460 | 1.592 | 0.406 | -0.460 |
+| ma_diaria | 3 | llegadas | 1.583 | 0.397 | -0.475 | 1.583 | 0.397 | -0.475 |
+| ma_diaria | 3 | neto | 1.672 | 0.861 | -0.015 | 1.672 | 0.861 | -0.015 |
+| ma_diaria | 4 | salidas | 1.567 | 0.405 | -0.439 | 1.567 | 0.405 | -0.439 |
+| ma_diaria | 4 | llegadas | 1.569 | 0.399 | -0.452 | 1.569 | 0.399 | -0.452 |
+| ma_diaria | 4 | neto | 1.651 | 0.882 | -0.013 | 1.651 | 0.882 | -0.013 |
+| ma_diaria | 5 | salidas | 1.557 | 0.403 | -0.433 | 1.557 | 0.403 | -0.433 |
+| ma_diaria | 5 | llegadas | 1.561 | 0.399 | -0.441 | 1.561 | 0.399 | -0.441 |
+| ma_diaria | 5 | neto | 1.643 | 0.890 | -0.009 | 1.643 | 0.890 | -0.009 |
+| lgbm_diario | 0 | salidas | 1.487 | 0.400 | -0.498 | 1.523 | 0.410 | -0.464 |
+| lgbm_diario | 0 | llegadas | 1.447 | 0.390 | -0.509 | 1.484 | 0.400 | -0.465 |
+| lgbm_diario | 0 | neto | 1.584 | 0.817 | -0.010 | 1.603 | 0.826 | -0.001 |
+| lgbm_diario | 1 | salidas | 1.537 | 0.398 | -0.518 | 1.575 | 0.408 | -0.480 |
+| lgbm_diario | 1 | llegadas | 1.500 | 0.387 | -0.531 | 1.541 | 0.398 | -0.484 |
+| lgbm_diario | 1 | neto | 1.634 | 0.819 | -0.014 | 1.653 | 0.829 | -0.003 |
+| lgbm_diario | 2 | salidas | 1.561 | 0.396 | -0.520 | 1.601 | 0.406 | -0.480 |
+| lgbm_diario | 2 | llegadas | 1.533 | 0.386 | -0.540 | 1.577 | 0.397 | -0.489 |
+| lgbm_diario | 2 | neto | 1.658 | 0.830 | -0.020 | 1.677 | 0.840 | -0.009 |
+| lgbm_diario | 3 | salidas | 1.550 | 0.395 | -0.501 | 1.592 | 0.406 | -0.460 |
+| lgbm_diario | 3 | llegadas | 1.537 | 0.386 | -0.527 | 1.583 | 0.397 | -0.475 |
+| lgbm_diario | 3 | neto | 1.651 | 0.850 | -0.026 | 1.672 | 0.861 | -0.015 |
+| lgbm_diario | 4 | salidas | 1.526 | 0.395 | -0.478 | 1.567 | 0.405 | -0.439 |
+| lgbm_diario | 4 | llegadas | 1.521 | 0.387 | -0.502 | 1.569 | 0.399 | -0.452 |
+| lgbm_diario | 4 | neto | 1.629 | 0.871 | -0.024 | 1.651 | 0.882 | -0.013 |
+| lgbm_diario | 5 | salidas | 1.519 | 0.393 | -0.475 | 1.557 | 0.403 | -0.433 |
+| lgbm_diario | 5 | llegadas | 1.514 | 0.387 | -0.492 | 1.561 | 0.399 | -0.441 |
+| lgbm_diario | 5 | neto | 1.621 | 0.879 | -0.018 | 1.643 | 0.890 | -0.009 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.523 | 0.410 | -0.464 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.484 | 0.400 | -0.465 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.603 | 0.826 | -0.001 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.575 | 0.408 | -0.480 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.541 | 0.398 | -0.484 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.653 | 0.829 | -0.003 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.601 | 0.406 | -0.480 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.577 | 0.397 | -0.489 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.677 | 0.840 | -0.009 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.592 | 0.406 | -0.460 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.583 | 0.397 | -0.475 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.672 | 0.861 | -0.015 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.567 | 0.405 | -0.439 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.569 | 0.399 | -0.452 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.651 | 0.882 | -0.013 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.557 | 0.403 | -0.433 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.561 | 0.399 | -0.441 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.643 | 0.890 | -0.009 |
+| lgbm_directo | 0 | salidas | 1.682 | 0.452 | -0.427 | 1.523 | 0.410 | -0.464 |
+| lgbm_directo | 0 | llegadas | 1.611 | 0.433 | -0.422 | 1.484 | 0.400 | -0.465 |
+| lgbm_directo | 0 | neto | 1.944 | 0.879 | 0.005 | 1.603 | 0.826 | -0.001 |
+| lgbm_directo | 1 | salidas | 1.753 | 0.453 | -0.453 | 1.575 | 0.408 | -0.480 |
+| lgbm_directo | 1 | llegadas | 1.686 | 0.435 | -0.456 | 1.541 | 0.398 | -0.484 |
+| lgbm_directo | 1 | neto | 2.004 | 0.879 | -0.003 | 1.653 | 0.829 | -0.003 |
+| lgbm_directo | 2 | salidas | 1.790 | 0.452 | -0.460 | 1.601 | 0.406 | -0.480 |
+| lgbm_directo | 2 | llegadas | 1.734 | 0.435 | -0.471 | 1.577 | 0.397 | -0.489 |
+| lgbm_directo | 2 | neto | 2.034 | 0.887 | -0.012 | 1.677 | 0.840 | -0.009 |
+| lgbm_directo | 3 | salidas | 1.781 | 0.453 | -0.445 | 1.592 | 0.406 | -0.460 |
+| lgbm_directo | 3 | llegadas | 1.745 | 0.437 | -0.466 | 1.583 | 0.397 | -0.475 |
+| lgbm_directo | 3 | neto | 2.024 | 0.906 | -0.021 | 1.672 | 0.861 | -0.015 |
+| lgbm_directo | 4 | salidas | 1.755 | 0.454 | -0.428 | 1.567 | 0.405 | -0.439 |
+| lgbm_directo | 4 | llegadas | 1.729 | 0.441 | -0.448 | 1.569 | 0.399 | -0.452 |
+| lgbm_directo | 4 | neto | 1.995 | 0.926 | -0.020 | 1.651 | 0.882 | -0.013 |
+| lgbm_directo | 5 | salidas | 1.750 | 0.454 | -0.433 | 1.557 | 0.403 | -0.433 |
+| lgbm_directo | 5 | llegadas | 1.728 | 0.442 | -0.451 | 1.561 | 0.399 | -0.441 |
+| lgbm_directo | 5 | neto | 1.990 | 0.932 | -0.018 | 1.643 | 0.890 | -0.009 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.523 | 0.410 | -0.464 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.484 | 0.400 | -0.465 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.603 | 0.826 | -0.001 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.575 | 0.408 | -0.480 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.541 | 0.398 | -0.484 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.653 | 0.829 | -0.003 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.601 | 0.406 | -0.480 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.577 | 0.397 | -0.489 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.677 | 0.840 | -0.009 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.592 | 0.406 | -0.460 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.583 | 0.397 | -0.475 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.672 | 0.861 | -0.015 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.567 | 0.405 | -0.439 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.569 | 0.399 | -0.452 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.651 | 0.882 | -0.013 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.557 | 0.403 | -0.433 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.561 | 0.399 | -0.441 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.643 | 0.890 | -0.009 |
+
+### 2026-02
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.476 | 0.358 | -0.089 | 1.476 | 0.358 | -0.089 |
+| ma_diaria | 0 | llegadas | 1.402 | 0.340 | -0.088 | 1.402 | 0.340 | -0.088 |
+| ma_diaria | 0 | neto | 1.613 | 0.786 | 0.000 | 1.613 | 0.786 | 0.000 |
+| ma_diaria | 1 | salidas | 1.527 | 0.356 | -0.092 | 1.527 | 0.356 | -0.092 |
+| ma_diaria | 1 | llegadas | 1.454 | 0.339 | -0.092 | 1.454 | 0.339 | -0.092 |
+| ma_diaria | 1 | neto | 1.664 | 0.790 | -0.000 | 1.664 | 0.790 | -0.000 |
+| ma_diaria | 2 | salidas | 1.557 | 0.357 | -0.093 | 1.557 | 0.357 | -0.093 |
+| ma_diaria | 2 | llegadas | 1.489 | 0.338 | -0.093 | 1.489 | 0.338 | -0.093 |
+| ma_diaria | 2 | neto | 1.690 | 0.804 | -0.000 | 1.690 | 0.804 | -0.000 |
+| ma_diaria | 3 | salidas | 1.559 | 0.359 | -0.095 | 1.559 | 0.359 | -0.095 |
+| ma_diaria | 3 | llegadas | 1.504 | 0.341 | -0.095 | 1.504 | 0.341 | -0.095 |
+| ma_diaria | 3 | neto | 1.689 | 0.830 | 0.000 | 1.689 | 0.830 | 0.000 |
+| ma_diaria | 4 | salidas | 1.545 | 0.361 | -0.097 | 1.545 | 0.361 | -0.097 |
+| ma_diaria | 4 | llegadas | 1.505 | 0.346 | -0.097 | 1.505 | 0.346 | -0.097 |
+| ma_diaria | 4 | neto | 1.673 | 0.854 | 0.000 | 1.673 | 0.854 | 0.000 |
+| ma_diaria | 5 | salidas | 1.539 | 0.361 | -0.099 | 1.539 | 0.361 | -0.099 |
+| ma_diaria | 5 | llegadas | 1.503 | 0.347 | -0.099 | 1.503 | 0.347 | -0.099 |
+| ma_diaria | 5 | neto | 1.665 | 0.864 | 0.000 | 1.665 | 0.864 | 0.000 |
+| lgbm_diario | 0 | salidas | 1.445 | 0.350 | -0.090 | 1.476 | 0.358 | -0.089 |
+| lgbm_diario | 0 | llegadas | 1.369 | 0.332 | -0.088 | 1.402 | 0.340 | -0.088 |
+| lgbm_diario | 0 | neto | 1.594 | 0.777 | 0.002 | 1.613 | 0.786 | 0.000 |
+| lgbm_diario | 1 | salidas | 1.493 | 0.348 | -0.095 | 1.527 | 0.356 | -0.092 |
+| lgbm_diario | 1 | llegadas | 1.418 | 0.330 | -0.094 | 1.454 | 0.339 | -0.092 |
+| lgbm_diario | 1 | neto | 1.644 | 0.781 | 0.001 | 1.664 | 0.790 | -0.000 |
+| lgbm_diario | 2 | salidas | 1.520 | 0.348 | -0.098 | 1.557 | 0.357 | -0.093 |
+| lgbm_diario | 2 | llegadas | 1.452 | 0.330 | -0.098 | 1.489 | 0.338 | -0.093 |
+| lgbm_diario | 2 | neto | 1.670 | 0.794 | -0.000 | 1.690 | 0.804 | -0.000 |
+| lgbm_diario | 3 | salidas | 1.521 | 0.351 | -0.098 | 1.559 | 0.359 | -0.095 |
+| lgbm_diario | 3 | llegadas | 1.466 | 0.333 | -0.099 | 1.504 | 0.341 | -0.095 |
+| lgbm_diario | 3 | neto | 1.669 | 0.820 | -0.001 | 1.689 | 0.830 | 0.000 |
+| lgbm_diario | 4 | salidas | 1.508 | 0.353 | -0.096 | 1.545 | 0.361 | -0.097 |
+| lgbm_diario | 4 | llegadas | 1.467 | 0.337 | -0.097 | 1.505 | 0.346 | -0.097 |
+| lgbm_diario | 4 | neto | 1.652 | 0.844 | -0.001 | 1.673 | 0.854 | 0.000 |
+| lgbm_diario | 5 | salidas | 1.505 | 0.352 | -0.099 | 1.539 | 0.361 | -0.099 |
+| lgbm_diario | 5 | llegadas | 1.468 | 0.339 | -0.099 | 1.503 | 0.347 | -0.099 |
+| lgbm_diario | 5 | neto | 1.645 | 0.853 | 0.000 | 1.665 | 0.864 | 0.000 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.476 | 0.358 | -0.089 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.402 | 0.340 | -0.088 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.613 | 0.786 | 0.000 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.527 | 0.356 | -0.092 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.454 | 0.339 | -0.092 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.664 | 0.790 | -0.000 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.557 | 0.357 | -0.093 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.489 | 0.338 | -0.093 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.690 | 0.804 | -0.000 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.559 | 0.359 | -0.095 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.504 | 0.341 | -0.095 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.689 | 0.830 | 0.000 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.545 | 0.361 | -0.097 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.505 | 0.346 | -0.097 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.673 | 0.854 | 0.000 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.539 | 0.361 | -0.099 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.503 | 0.347 | -0.099 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.665 | 0.864 | 0.000 |
+| lgbm_directo | 0 | salidas | 1.715 | 0.415 | -0.054 | 1.476 | 0.358 | -0.089 |
+| lgbm_directo | 0 | llegadas | 1.620 | 0.393 | -0.038 | 1.402 | 0.340 | -0.088 |
+| lgbm_directo | 0 | neto | 2.011 | 0.858 | 0.016 | 1.613 | 0.786 | 0.000 |
+| lgbm_directo | 1 | salidas | 1.781 | 0.415 | -0.057 | 1.527 | 0.356 | -0.092 |
+| lgbm_directo | 1 | llegadas | 1.686 | 0.392 | -0.050 | 1.454 | 0.339 | -0.092 |
+| lgbm_directo | 1 | neto | 2.064 | 0.855 | 0.008 | 1.664 | 0.790 | -0.000 |
+| lgbm_directo | 2 | salidas | 1.818 | 0.415 | -0.061 | 1.557 | 0.357 | -0.093 |
+| lgbm_directo | 2 | llegadas | 1.731 | 0.392 | -0.052 | 1.489 | 0.338 | -0.093 |
+| lgbm_directo | 2 | neto | 2.091 | 0.864 | 0.009 | 1.690 | 0.804 | -0.000 |
+| lgbm_directo | 3 | salidas | 1.815 | 0.418 | -0.067 | 1.559 | 0.359 | -0.095 |
+| lgbm_directo | 3 | llegadas | 1.749 | 0.396 | -0.063 | 1.504 | 0.341 | -0.095 |
+| lgbm_directo | 3 | neto | 2.082 | 0.887 | 0.005 | 1.689 | 0.830 | 0.000 |
+| lgbm_directo | 4 | salidas | 1.796 | 0.421 | -0.072 | 1.545 | 0.361 | -0.097 |
+| lgbm_directo | 4 | llegadas | 1.746 | 0.403 | -0.068 | 1.505 | 0.346 | -0.097 |
+| lgbm_directo | 4 | neto | 2.057 | 0.909 | 0.004 | 1.673 | 0.854 | 0.000 |
+| lgbm_directo | 5 | salidas | 1.792 | 0.420 | -0.082 | 1.539 | 0.361 | -0.099 |
+| lgbm_directo | 5 | llegadas | 1.746 | 0.404 | -0.080 | 1.503 | 0.347 | -0.099 |
+| lgbm_directo | 5 | neto | 2.049 | 0.915 | 0.003 | 1.665 | 0.864 | 0.000 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.476 | 0.358 | -0.089 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.402 | 0.340 | -0.088 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.613 | 0.786 | 0.000 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.527 | 0.356 | -0.092 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.454 | 0.339 | -0.092 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.664 | 0.790 | -0.000 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.557 | 0.357 | -0.093 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.489 | 0.338 | -0.093 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.690 | 0.804 | -0.000 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.559 | 0.359 | -0.095 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.504 | 0.341 | -0.095 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.689 | 0.830 | 0.000 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.545 | 0.361 | -0.097 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.505 | 0.346 | -0.097 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.673 | 0.854 | 0.000 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.539 | 0.361 | -0.099 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.503 | 0.347 | -0.099 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.665 | 0.864 | 0.000 |
+
+### 2026-03
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.501 | 0.376 | 0.034 | 1.501 | 0.376 | 0.034 |
+| ma_diaria | 0 | llegadas | 1.429 | 0.358 | 0.034 | 1.429 | 0.358 | 0.034 |
+| ma_diaria | 0 | neto | 1.596 | 0.796 | -0.000 | 1.596 | 0.796 | -0.000 |
+| ma_diaria | 1 | salidas | 1.553 | 0.375 | 0.039 | 1.553 | 0.375 | 0.039 |
+| ma_diaria | 1 | llegadas | 1.483 | 0.357 | 0.038 | 1.483 | 0.357 | 0.038 |
+| ma_diaria | 1 | neto | 1.645 | 0.800 | -0.001 | 1.645 | 0.800 | -0.001 |
+| ma_diaria | 2 | salidas | 1.584 | 0.376 | 0.048 | 1.584 | 0.376 | 0.048 |
+| ma_diaria | 2 | llegadas | 1.519 | 0.357 | 0.046 | 1.519 | 0.357 | 0.046 |
+| ma_diaria | 2 | neto | 1.671 | 0.816 | -0.002 | 1.671 | 0.816 | -0.002 |
+| ma_diaria | 3 | salidas | 1.589 | 0.380 | 0.058 | 1.589 | 0.380 | 0.058 |
+| ma_diaria | 3 | llegadas | 1.537 | 0.362 | 0.056 | 1.537 | 0.362 | 0.056 |
+| ma_diaria | 3 | neto | 1.670 | 0.843 | -0.003 | 1.670 | 0.843 | -0.003 |
+| ma_diaria | 4 | salidas | 1.577 | 0.384 | 0.068 | 1.577 | 0.384 | 0.068 |
+| ma_diaria | 4 | llegadas | 1.538 | 0.368 | 0.066 | 1.538 | 0.368 | 0.066 |
+| ma_diaria | 4 | neto | 1.652 | 0.868 | -0.002 | 1.652 | 0.868 | -0.002 |
+| ma_diaria | 5 | salidas | 1.570 | 0.384 | 0.076 | 1.570 | 0.384 | 0.076 |
+| ma_diaria | 5 | llegadas | 1.534 | 0.370 | 0.074 | 1.534 | 0.370 | 0.074 |
+| ma_diaria | 5 | neto | 1.643 | 0.877 | -0.002 | 1.643 | 0.877 | -0.002 |
+| lgbm_diario | 0 | salidas | 1.466 | 0.367 | 0.012 | 1.501 | 0.376 | 0.034 |
+| lgbm_diario | 0 | llegadas | 1.391 | 0.349 | 0.014 | 1.429 | 0.358 | 0.034 |
+| lgbm_diario | 0 | neto | 1.576 | 0.786 | 0.002 | 1.596 | 0.796 | -0.000 |
+| lgbm_diario | 1 | salidas | 1.515 | 0.366 | 0.014 | 1.553 | 0.375 | 0.039 |
+| lgbm_diario | 1 | llegadas | 1.441 | 0.347 | 0.014 | 1.483 | 0.357 | 0.038 |
+| lgbm_diario | 1 | neto | 1.625 | 0.790 | 0.001 | 1.645 | 0.800 | -0.001 |
+| lgbm_diario | 2 | salidas | 1.544 | 0.367 | 0.020 | 1.584 | 0.376 | 0.048 |
+| lgbm_diario | 2 | llegadas | 1.476 | 0.347 | 0.019 | 1.519 | 0.357 | 0.046 |
+| lgbm_diario | 2 | neto | 1.649 | 0.806 | -0.002 | 1.671 | 0.816 | -0.002 |
+| lgbm_diario | 3 | salidas | 1.548 | 0.370 | 0.032 | 1.589 | 0.380 | 0.058 |
+| lgbm_diario | 3 | llegadas | 1.493 | 0.351 | 0.028 | 1.537 | 0.362 | 0.056 |
+| lgbm_diario | 3 | neto | 1.648 | 0.832 | -0.005 | 1.670 | 0.843 | -0.003 |
+| lgbm_diario | 4 | salidas | 1.536 | 0.374 | 0.045 | 1.577 | 0.384 | 0.068 |
+| lgbm_diario | 4 | llegadas | 1.494 | 0.357 | 0.041 | 1.538 | 0.368 | 0.066 |
+| lgbm_diario | 4 | neto | 1.629 | 0.856 | -0.005 | 1.652 | 0.868 | -0.002 |
+| lgbm_diario | 5 | salidas | 1.531 | 0.375 | 0.052 | 1.570 | 0.384 | 0.076 |
+| lgbm_diario | 5 | llegadas | 1.491 | 0.359 | 0.049 | 1.534 | 0.370 | 0.074 |
+| lgbm_diario | 5 | neto | 1.620 | 0.865 | -0.003 | 1.643 | 0.877 | -0.002 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.501 | 0.376 | 0.034 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.429 | 0.358 | 0.034 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.596 | 0.796 | -0.000 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.553 | 0.375 | 0.039 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.483 | 0.357 | 0.038 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.645 | 0.800 | -0.001 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.584 | 0.376 | 0.048 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.519 | 0.357 | 0.046 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.671 | 0.816 | -0.002 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.589 | 0.380 | 0.058 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.537 | 0.362 | 0.056 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.670 | 0.843 | -0.003 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.577 | 0.384 | 0.068 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.538 | 0.368 | 0.066 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.652 | 0.868 | -0.002 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.570 | 0.384 | 0.076 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.534 | 0.370 | 0.074 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.643 | 0.877 | -0.002 |
+| lgbm_directo | 0 | salidas | 1.719 | 0.430 | 0.033 | 1.501 | 0.376 | 0.034 |
+| lgbm_directo | 0 | llegadas | 1.627 | 0.408 | 0.047 | 1.429 | 0.358 | 0.034 |
+| lgbm_directo | 0 | neto | 1.987 | 0.867 | 0.014 | 1.596 | 0.796 | -0.000 |
+| lgbm_directo | 1 | salidas | 1.788 | 0.430 | 0.043 | 1.553 | 0.375 | 0.039 |
+| lgbm_directo | 1 | llegadas | 1.697 | 0.408 | 0.046 | 1.483 | 0.357 | 0.038 |
+| lgbm_directo | 1 | neto | 2.037 | 0.865 | 0.003 | 1.645 | 0.800 | -0.001 |
+| lgbm_directo | 2 | salidas | 1.827 | 0.432 | 0.052 | 1.584 | 0.376 | 0.048 |
+| lgbm_directo | 2 | llegadas | 1.744 | 0.409 | 0.059 | 1.519 | 0.357 | 0.046 |
+| lgbm_directo | 2 | neto | 2.061 | 0.875 | 0.007 | 1.671 | 0.816 | -0.002 |
+| lgbm_directo | 3 | salidas | 1.830 | 0.437 | 0.062 | 1.589 | 0.380 | 0.058 |
+| lgbm_directo | 3 | llegadas | 1.764 | 0.415 | 0.063 | 1.537 | 0.362 | 0.056 |
+| lgbm_directo | 3 | neto | 2.052 | 0.899 | 0.001 | 1.670 | 0.843 | -0.003 |
+| lgbm_directo | 4 | salidas | 1.815 | 0.442 | 0.071 | 1.577 | 0.384 | 0.068 |
+| lgbm_directo | 4 | llegadas | 1.764 | 0.423 | 0.071 | 1.538 | 0.368 | 0.066 |
+| lgbm_directo | 4 | neto | 2.025 | 0.921 | -0.000 | 1.652 | 0.868 | -0.002 |
+| lgbm_directo | 5 | salidas | 1.811 | 0.443 | 0.073 | 1.570 | 0.384 | 0.076 |
+| lgbm_directo | 5 | llegadas | 1.765 | 0.425 | 0.070 | 1.534 | 0.370 | 0.074 |
+| lgbm_directo | 5 | neto | 2.015 | 0.927 | -0.002 | 1.643 | 0.877 | -0.002 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.501 | 0.376 | 0.034 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.429 | 0.358 | 0.034 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.596 | 0.796 | -0.000 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.553 | 0.375 | 0.039 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.483 | 0.357 | 0.038 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.645 | 0.800 | -0.001 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.584 | 0.376 | 0.048 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.519 | 0.357 | 0.046 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.671 | 0.816 | -0.002 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.589 | 0.380 | 0.058 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.537 | 0.362 | 0.056 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.670 | 0.843 | -0.003 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.577 | 0.384 | 0.068 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.538 | 0.368 | 0.066 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.652 | 0.868 | -0.002 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.570 | 0.384 | 0.076 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.534 | 0.370 | 0.074 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.643 | 0.877 | -0.002 |
+
+### 2026-04
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.605 | 0.400 | -0.127 | 1.605 | 0.400 | -0.127 |
+| ma_diaria | 0 | llegadas | 1.530 | 0.382 | -0.126 | 1.530 | 0.382 | -0.126 |
+| ma_diaria | 0 | neto | 1.646 | 0.832 | 0.000 | 1.646 | 0.832 | 0.000 |
+| ma_diaria | 1 | salidas | 1.657 | 0.398 | -0.129 | 1.657 | 0.398 | -0.129 |
+| ma_diaria | 1 | llegadas | 1.584 | 0.380 | -0.130 | 1.584 | 0.380 | -0.130 |
+| ma_diaria | 1 | neto | 1.694 | 0.836 | -0.001 | 1.694 | 0.836 | -0.001 |
+| ma_diaria | 2 | salidas | 1.678 | 0.397 | -0.125 | 1.678 | 0.397 | -0.125 |
+| ma_diaria | 2 | llegadas | 1.613 | 0.378 | -0.128 | 1.613 | 0.378 | -0.128 |
+| ma_diaria | 2 | neto | 1.712 | 0.850 | -0.003 | 1.712 | 0.850 | -0.003 |
+| ma_diaria | 3 | salidas | 1.664 | 0.397 | -0.116 | 1.664 | 0.397 | -0.116 |
+| ma_diaria | 3 | llegadas | 1.613 | 0.379 | -0.121 | 1.613 | 0.379 | -0.121 |
+| ma_diaria | 3 | neto | 1.700 | 0.874 | -0.005 | 1.700 | 0.874 | -0.005 |
+| ma_diaria | 4 | salidas | 1.637 | 0.398 | -0.111 | 1.637 | 0.398 | -0.111 |
+| ma_diaria | 4 | llegadas | 1.597 | 0.381 | -0.114 | 1.597 | 0.381 | -0.114 |
+| ma_diaria | 4 | neto | 1.674 | 0.894 | -0.004 | 1.674 | 0.894 | -0.004 |
+| ma_diaria | 5 | salidas | 1.628 | 0.397 | -0.109 | 1.628 | 0.397 | -0.109 |
+| ma_diaria | 5 | llegadas | 1.586 | 0.381 | -0.111 | 1.586 | 0.381 | -0.111 |
+| ma_diaria | 5 | neto | 1.663 | 0.901 | -0.003 | 1.663 | 0.901 | -0.003 |
+| lgbm_diario | 0 | salidas | 1.559 | 0.388 | -0.110 | 1.605 | 0.400 | -0.127 |
+| lgbm_diario | 0 | llegadas | 1.483 | 0.370 | -0.103 | 1.530 | 0.382 | -0.126 |
+| lgbm_diario | 0 | neto | 1.625 | 0.821 | 0.007 | 1.646 | 0.832 | 0.000 |
+| lgbm_diario | 1 | salidas | 1.608 | 0.386 | -0.113 | 1.657 | 0.398 | -0.129 |
+| lgbm_diario | 1 | llegadas | 1.534 | 0.368 | -0.107 | 1.584 | 0.380 | -0.130 |
+| lgbm_diario | 1 | neto | 1.672 | 0.825 | 0.006 | 1.694 | 0.836 | -0.001 |
+| lgbm_diario | 2 | salidas | 1.628 | 0.385 | -0.109 | 1.678 | 0.397 | -0.125 |
+| lgbm_diario | 2 | llegadas | 1.563 | 0.366 | -0.105 | 1.613 | 0.378 | -0.128 |
+| lgbm_diario | 2 | neto | 1.690 | 0.839 | 0.004 | 1.712 | 0.850 | -0.003 |
+| lgbm_diario | 3 | salidas | 1.615 | 0.385 | -0.097 | 1.664 | 0.397 | -0.116 |
+| lgbm_diario | 3 | llegadas | 1.564 | 0.367 | -0.096 | 1.613 | 0.379 | -0.121 |
+| lgbm_diario | 3 | neto | 1.679 | 0.863 | 0.000 | 1.700 | 0.874 | -0.005 |
+| lgbm_diario | 4 | salidas | 1.589 | 0.386 | -0.087 | 1.637 | 0.398 | -0.111 |
+| lgbm_diario | 4 | llegadas | 1.550 | 0.370 | -0.085 | 1.597 | 0.381 | -0.114 |
+| lgbm_diario | 4 | neto | 1.653 | 0.883 | 0.002 | 1.674 | 0.894 | -0.004 |
+| lgbm_diario | 5 | salidas | 1.582 | 0.386 | -0.086 | 1.628 | 0.397 | -0.109 |
+| lgbm_diario | 5 | llegadas | 1.542 | 0.371 | -0.081 | 1.586 | 0.381 | -0.111 |
+| lgbm_diario | 5 | neto | 1.643 | 0.890 | 0.004 | 1.663 | 0.901 | -0.003 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.605 | 0.400 | -0.127 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.530 | 0.382 | -0.126 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.646 | 0.832 | 0.000 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.657 | 0.398 | -0.129 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.584 | 0.380 | -0.130 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.694 | 0.836 | -0.001 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.678 | 0.397 | -0.125 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.613 | 0.378 | -0.128 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.712 | 0.850 | -0.003 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.664 | 0.397 | -0.116 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.613 | 0.379 | -0.121 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.700 | 0.874 | -0.005 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.637 | 0.398 | -0.111 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.597 | 0.381 | -0.114 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.674 | 0.894 | -0.004 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.628 | 0.397 | -0.109 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.586 | 0.381 | -0.111 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.663 | 0.901 | -0.003 |
+| lgbm_directo | 0 | salidas | 1.788 | 0.445 | -0.109 | 1.605 | 0.400 | -0.127 |
+| lgbm_directo | 0 | llegadas | 1.694 | 0.422 | -0.078 | 1.530 | 0.382 | -0.126 |
+| lgbm_directo | 0 | neto | 2.038 | 0.899 | 0.031 | 1.646 | 0.832 | 0.000 |
+| lgbm_directo | 1 | salidas | 1.861 | 0.446 | -0.113 | 1.657 | 0.398 | -0.129 |
+| lgbm_directo | 1 | llegadas | 1.769 | 0.423 | -0.097 | 1.584 | 0.380 | -0.130 |
+| lgbm_directo | 1 | neto | 2.090 | 0.898 | 0.016 | 1.694 | 0.836 | -0.001 |
+| lgbm_directo | 2 | salidas | 1.894 | 0.446 | -0.117 | 1.678 | 0.397 | -0.125 |
+| lgbm_directo | 2 | llegadas | 1.810 | 0.423 | -0.102 | 1.613 | 0.378 | -0.128 |
+| lgbm_directo | 2 | neto | 2.107 | 0.907 | 0.015 | 1.712 | 0.850 | -0.003 |
+| lgbm_directo | 3 | salidas | 1.878 | 0.448 | -0.109 | 1.664 | 0.397 | -0.116 |
+| lgbm_directo | 3 | llegadas | 1.816 | 0.426 | -0.102 | 1.613 | 0.379 | -0.121 |
+| lgbm_directo | 3 | neto | 2.089 | 0.929 | 0.007 | 1.700 | 0.874 | -0.005 |
+| lgbm_directo | 4 | salidas | 1.848 | 0.449 | -0.103 | 1.637 | 0.398 | -0.111 |
+| lgbm_directo | 4 | llegadas | 1.798 | 0.430 | -0.097 | 1.597 | 0.381 | -0.114 |
+| lgbm_directo | 4 | neto | 2.054 | 0.947 | 0.006 | 1.674 | 0.894 | -0.004 |
+| lgbm_directo | 5 | salidas | 1.840 | 0.449 | -0.108 | 1.628 | 0.397 | -0.109 |
+| lgbm_directo | 5 | llegadas | 1.791 | 0.431 | -0.105 | 1.586 | 0.381 | -0.111 |
+| lgbm_directo | 5 | neto | 2.044 | 0.952 | 0.003 | 1.663 | 0.901 | -0.003 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.605 | 0.400 | -0.127 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.530 | 0.382 | -0.126 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.646 | 0.832 | 0.000 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.657 | 0.398 | -0.129 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.584 | 0.380 | -0.130 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.694 | 0.836 | -0.001 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.678 | 0.397 | -0.125 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.613 | 0.378 | -0.128 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.712 | 0.850 | -0.003 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.664 | 0.397 | -0.116 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.613 | 0.379 | -0.121 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.700 | 0.874 | -0.005 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.637 | 0.398 | -0.111 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.597 | 0.381 | -0.114 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.674 | 0.894 | -0.004 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.628 | 0.397 | -0.109 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.586 | 0.381 | -0.111 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.663 | 0.901 | -0.003 |
+
+### 2026-05
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.553 | 0.395 | 0.056 | 1.553 | 0.395 | 0.056 |
+| ma_diaria | 0 | llegadas | 1.475 | 0.376 | 0.056 | 1.475 | 0.376 | 0.056 |
+| ma_diaria | 0 | neto | 1.590 | 0.834 | -0.000 | 1.590 | 0.834 | -0.000 |
+| ma_diaria | 1 | salidas | 1.603 | 0.393 | 0.060 | 1.603 | 0.393 | 0.060 |
+| ma_diaria | 1 | llegadas | 1.528 | 0.374 | 0.060 | 1.528 | 0.374 | 0.060 |
+| ma_diaria | 1 | neto | 1.635 | 0.839 | -0.000 | 1.635 | 0.839 | -0.000 |
+| ma_diaria | 2 | salidas | 1.629 | 0.394 | 0.064 | 1.629 | 0.394 | 0.064 |
+| ma_diaria | 2 | llegadas | 1.563 | 0.375 | 0.064 | 1.563 | 0.375 | 0.064 |
+| ma_diaria | 2 | neto | 1.654 | 0.857 | -0.000 | 1.654 | 0.857 | -0.000 |
+| ma_diaria | 3 | salidas | 1.626 | 0.399 | 0.070 | 1.626 | 0.399 | 0.070 |
+| ma_diaria | 3 | llegadas | 1.578 | 0.380 | 0.070 | 1.578 | 0.380 | 0.070 |
+| ma_diaria | 3 | neto | 1.644 | 0.884 | 0.000 | 1.644 | 0.884 | 0.000 |
+| ma_diaria | 4 | salidas | 1.608 | 0.403 | 0.077 | 1.608 | 0.403 | 0.077 |
+| ma_diaria | 4 | llegadas | 1.576 | 0.388 | 0.077 | 1.576 | 0.388 | 0.077 |
+| ma_diaria | 4 | neto | 1.619 | 0.907 | -0.000 | 1.619 | 0.907 | -0.000 |
+| ma_diaria | 5 | salidas | 1.599 | 0.404 | 0.082 | 1.599 | 0.404 | 0.082 |
+| ma_diaria | 5 | llegadas | 1.571 | 0.390 | 0.083 | 1.571 | 0.390 | 0.083 |
+| ma_diaria | 5 | neto | 1.608 | 0.916 | 0.001 | 1.608 | 0.916 | 0.001 |
+| lgbm_diario | 0 | salidas | 1.534 | 0.390 | 0.050 | 1.553 | 0.395 | 0.056 |
+| lgbm_diario | 0 | llegadas | 1.457 | 0.371 | 0.048 | 1.475 | 0.376 | 0.056 |
+| lgbm_diario | 0 | neto | 1.573 | 0.825 | -0.001 | 1.590 | 0.834 | -0.000 |
+| lgbm_diario | 1 | salidas | 1.583 | 0.388 | 0.051 | 1.603 | 0.393 | 0.060 |
+| lgbm_diario | 1 | llegadas | 1.508 | 0.369 | 0.048 | 1.528 | 0.374 | 0.060 |
+| lgbm_diario | 1 | neto | 1.618 | 0.830 | -0.002 | 1.635 | 0.839 | -0.000 |
+| lgbm_diario | 2 | salidas | 1.608 | 0.389 | 0.054 | 1.629 | 0.394 | 0.064 |
+| lgbm_diario | 2 | llegadas | 1.542 | 0.370 | 0.050 | 1.563 | 0.375 | 0.064 |
+| lgbm_diario | 2 | neto | 1.636 | 0.848 | -0.004 | 1.654 | 0.857 | -0.000 |
+| lgbm_diario | 3 | salidas | 1.604 | 0.393 | 0.065 | 1.626 | 0.399 | 0.070 |
+| lgbm_diario | 3 | llegadas | 1.557 | 0.375 | 0.057 | 1.578 | 0.380 | 0.070 |
+| lgbm_diario | 3 | neto | 1.625 | 0.874 | -0.008 | 1.644 | 0.884 | 0.000 |
+| lgbm_diario | 4 | salidas | 1.587 | 0.397 | 0.077 | 1.608 | 0.403 | 0.077 |
+| lgbm_diario | 4 | llegadas | 1.557 | 0.383 | 0.069 | 1.576 | 0.388 | 0.077 |
+| lgbm_diario | 4 | neto | 1.601 | 0.897 | -0.008 | 1.619 | 0.907 | -0.000 |
+| lgbm_diario | 5 | salidas | 1.581 | 0.399 | 0.083 | 1.599 | 0.404 | 0.082 |
+| lgbm_diario | 5 | llegadas | 1.553 | 0.386 | 0.077 | 1.571 | 0.390 | 0.083 |
+| lgbm_diario | 5 | neto | 1.590 | 0.905 | -0.007 | 1.608 | 0.916 | 0.001 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.553 | 0.395 | 0.056 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.475 | 0.376 | 0.056 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.590 | 0.834 | -0.000 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.603 | 0.393 | 0.060 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.528 | 0.374 | 0.060 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.635 | 0.839 | -0.000 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.629 | 0.394 | 0.064 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.563 | 0.375 | 0.064 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.654 | 0.857 | -0.000 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.626 | 0.399 | 0.070 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.578 | 0.380 | 0.070 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.644 | 0.884 | 0.000 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.608 | 0.403 | 0.077 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.576 | 0.388 | 0.077 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.619 | 0.907 | -0.000 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.599 | 0.404 | 0.082 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.571 | 0.390 | 0.083 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.608 | 0.916 | 0.001 |
+| lgbm_directo | 0 | salidas | 1.767 | 0.449 | 0.052 | 1.553 | 0.395 | 0.056 |
+| lgbm_directo | 0 | llegadas | 1.671 | 0.425 | 0.062 | 1.475 | 0.376 | 0.056 |
+| lgbm_directo | 0 | neto | 1.968 | 0.898 | 0.011 | 1.590 | 0.834 | -0.000 |
+| lgbm_directo | 1 | salidas | 1.840 | 0.450 | 0.062 | 1.603 | 0.393 | 0.060 |
+| lgbm_directo | 1 | llegadas | 1.744 | 0.426 | 0.062 | 1.528 | 0.374 | 0.060 |
+| lgbm_directo | 1 | neto | 2.015 | 0.896 | -0.001 | 1.635 | 0.839 | -0.000 |
+| lgbm_directo | 2 | salidas | 1.876 | 0.453 | 0.068 | 1.629 | 0.394 | 0.064 |
+| lgbm_directo | 2 | llegadas | 1.792 | 0.428 | 0.073 | 1.563 | 0.375 | 0.064 |
+| lgbm_directo | 2 | neto | 2.035 | 0.910 | 0.005 | 1.654 | 0.857 | -0.000 |
+| lgbm_directo | 3 | salidas | 1.871 | 0.458 | 0.078 | 1.626 | 0.399 | 0.070 |
+| lgbm_directo | 3 | llegadas | 1.811 | 0.436 | 0.078 | 1.578 | 0.380 | 0.070 |
+| lgbm_directo | 3 | neto | 2.017 | 0.935 | 0.000 | 1.644 | 0.884 | 0.000 |
+| lgbm_directo | 4 | salidas | 1.851 | 0.464 | 0.089 | 1.608 | 0.403 | 0.077 |
+| lgbm_directo | 4 | llegadas | 1.807 | 0.445 | 0.087 | 1.576 | 0.388 | 0.077 |
+| lgbm_directo | 4 | neto | 1.983 | 0.955 | -0.003 | 1.619 | 0.907 | -0.000 |
+| lgbm_directo | 5 | salidas | 1.845 | 0.466 | 0.094 | 1.599 | 0.404 | 0.082 |
+| lgbm_directo | 5 | llegadas | 1.805 | 0.449 | 0.089 | 1.571 | 0.390 | 0.083 |
+| lgbm_directo | 5 | neto | 1.969 | 0.960 | -0.005 | 1.608 | 0.916 | 0.001 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.553 | 0.395 | 0.056 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.475 | 0.376 | 0.056 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.590 | 0.834 | -0.000 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.603 | 0.393 | 0.060 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.528 | 0.374 | 0.060 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.635 | 0.839 | -0.000 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.629 | 0.394 | 0.064 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.563 | 0.375 | 0.064 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.654 | 0.857 | -0.000 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.626 | 0.399 | 0.070 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.578 | 0.380 | 0.070 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.644 | 0.884 | 0.000 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.608 | 0.403 | 0.077 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.576 | 0.388 | 0.077 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.619 | 0.907 | -0.000 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.599 | 0.404 | 0.082 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.571 | 0.390 | 0.083 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.608 | 0.916 | 0.001 |
+
+### 2026-06
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.664 | 0.442 | 0.262 | 1.664 | 0.442 | 0.262 |
+| ma_diaria | 0 | llegadas | 1.572 | 0.419 | 0.264 | 1.572 | 0.419 | 0.264 |
+| ma_diaria | 0 | neto | 1.577 | 0.877 | 0.002 | 1.577 | 0.877 | 0.002 |
+| ma_diaria | 1 | salidas | 1.718 | 0.441 | 0.270 | 1.718 | 0.441 | 0.270 |
+| ma_diaria | 1 | llegadas | 1.629 | 0.417 | 0.274 | 1.629 | 0.417 | 0.274 |
+| ma_diaria | 1 | neto | 1.621 | 0.882 | 0.004 | 1.621 | 0.882 | 0.004 |
+| ma_diaria | 2 | salidas | 1.746 | 0.442 | 0.269 | 1.746 | 0.442 | 0.269 |
+| ma_diaria | 2 | llegadas | 1.665 | 0.417 | 0.277 | 1.665 | 0.417 | 0.277 |
+| ma_diaria | 2 | neto | 1.637 | 0.899 | 0.008 | 1.637 | 0.899 | 0.008 |
+| ma_diaria | 3 | salidas | 1.738 | 0.444 | 0.256 | 1.738 | 0.444 | 0.256 |
+| ma_diaria | 3 | llegadas | 1.674 | 0.421 | 0.266 | 1.674 | 0.421 | 0.266 |
+| ma_diaria | 3 | neto | 1.621 | 0.924 | 0.011 | 1.621 | 0.924 | 0.011 |
+| ma_diaria | 4 | salidas | 1.714 | 0.447 | 0.241 | 1.714 | 0.447 | 0.241 |
+| ma_diaria | 4 | llegadas | 1.665 | 0.426 | 0.251 | 1.665 | 0.426 | 0.251 |
+| ma_diaria | 4 | neto | 1.592 | 0.943 | 0.010 | 1.592 | 0.943 | 0.010 |
+| ma_diaria | 5 | salidas | 1.709 | 0.448 | 0.237 | 1.709 | 0.448 | 0.237 |
+| ma_diaria | 5 | llegadas | 1.660 | 0.429 | 0.244 | 1.660 | 0.429 | 0.244 |
+| ma_diaria | 5 | neto | 1.580 | 0.950 | 0.007 | 1.580 | 0.950 | 0.007 |
+| lgbm_diario | 0 | salidas | 1.648 | 0.438 | 0.285 | 1.664 | 0.442 | 0.262 |
+| lgbm_diario | 0 | llegadas | 1.556 | 0.414 | 0.286 | 1.572 | 0.419 | 0.264 |
+| lgbm_diario | 0 | neto | 1.558 | 0.866 | 0.001 | 1.577 | 0.877 | 0.002 |
+| lgbm_diario | 1 | salidas | 1.701 | 0.436 | 0.293 | 1.718 | 0.441 | 0.270 |
+| lgbm_diario | 1 | llegadas | 1.611 | 0.412 | 0.295 | 1.629 | 0.417 | 0.274 |
+| lgbm_diario | 1 | neto | 1.602 | 0.872 | 0.002 | 1.621 | 0.882 | 0.004 |
+| lgbm_diario | 2 | salidas | 1.728 | 0.437 | 0.291 | 1.746 | 0.442 | 0.269 |
+| lgbm_diario | 2 | llegadas | 1.646 | 0.413 | 0.295 | 1.665 | 0.417 | 0.277 |
+| lgbm_diario | 2 | neto | 1.618 | 0.889 | 0.004 | 1.637 | 0.899 | 0.008 |
+| lgbm_diario | 3 | salidas | 1.720 | 0.440 | 0.281 | 1.738 | 0.444 | 0.256 |
+| lgbm_diario | 3 | llegadas | 1.655 | 0.416 | 0.286 | 1.674 | 0.421 | 0.266 |
+| lgbm_diario | 3 | neto | 1.603 | 0.913 | 0.005 | 1.621 | 0.924 | 0.011 |
+| lgbm_diario | 4 | salidas | 1.698 | 0.442 | 0.270 | 1.714 | 0.447 | 0.241 |
+| lgbm_diario | 4 | llegadas | 1.646 | 0.422 | 0.274 | 1.665 | 0.426 | 0.251 |
+| lgbm_diario | 4 | neto | 1.575 | 0.932 | 0.004 | 1.592 | 0.943 | 0.010 |
+| lgbm_diario | 5 | salidas | 1.693 | 0.444 | 0.264 | 1.709 | 0.448 | 0.237 |
+| lgbm_diario | 5 | llegadas | 1.643 | 0.425 | 0.267 | 1.660 | 0.429 | 0.244 |
+| lgbm_diario | 5 | neto | 1.563 | 0.939 | 0.003 | 1.580 | 0.950 | 0.007 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.664 | 0.442 | 0.262 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.572 | 0.419 | 0.264 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.577 | 0.877 | 0.002 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.718 | 0.441 | 0.270 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.629 | 0.417 | 0.274 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.621 | 0.882 | 0.004 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.746 | 0.442 | 0.269 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.665 | 0.417 | 0.277 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.637 | 0.899 | 0.008 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.738 | 0.444 | 0.256 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.674 | 0.421 | 0.266 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.621 | 0.924 | 0.011 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.714 | 0.447 | 0.241 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.665 | 0.426 | 0.251 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.592 | 0.943 | 0.010 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.709 | 0.448 | 0.237 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.660 | 0.429 | 0.244 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.580 | 0.950 | 0.007 |
+| lgbm_directo | 0 | salidas | 1.848 | 0.491 | 0.198 | 1.664 | 0.442 | 0.262 |
+| lgbm_directo | 0 | llegadas | 1.732 | 0.461 | 0.197 | 1.572 | 0.419 | 0.264 |
+| lgbm_directo | 0 | neto | 1.940 | 0.936 | -0.001 | 1.577 | 0.877 | 0.002 |
+| lgbm_directo | 1 | salidas | 1.934 | 0.494 | 0.225 | 1.718 | 0.441 | 0.270 |
+| lgbm_directo | 1 | llegadas | 1.818 | 0.464 | 0.214 | 1.629 | 0.417 | 0.274 |
+| lgbm_directo | 1 | neto | 1.990 | 0.937 | -0.011 | 1.621 | 0.882 | 0.004 |
+| lgbm_directo | 2 | salidas | 1.977 | 0.498 | 0.233 | 1.746 | 0.442 | 0.269 |
+| lgbm_directo | 2 | llegadas | 1.874 | 0.468 | 0.235 | 1.665 | 0.417 | 0.277 |
+| lgbm_directo | 2 | neto | 2.008 | 0.951 | 0.002 | 1.637 | 0.899 | 0.008 |
+| lgbm_directo | 3 | salidas | 1.968 | 0.503 | 0.225 | 1.738 | 0.444 | 0.256 |
+| lgbm_directo | 3 | llegadas | 1.888 | 0.475 | 0.229 | 1.674 | 0.421 | 0.266 |
+| lgbm_directo | 3 | neto | 1.984 | 0.972 | 0.004 | 1.621 | 0.924 | 0.011 |
+| lgbm_directo | 4 | salidas | 1.941 | 0.506 | 0.217 | 1.714 | 0.447 | 0.241 |
+| lgbm_directo | 4 | llegadas | 1.875 | 0.482 | 0.218 | 1.665 | 0.426 | 0.251 |
+| lgbm_directo | 4 | neto | 1.948 | 0.989 | 0.002 | 1.592 | 0.943 | 0.010 |
+| lgbm_directo | 5 | salidas | 1.937 | 0.508 | 0.212 | 1.709 | 0.448 | 0.237 |
+| lgbm_directo | 5 | llegadas | 1.874 | 0.484 | 0.211 | 1.660 | 0.429 | 0.244 |
+| lgbm_directo | 5 | neto | 1.935 | 0.994 | -0.001 | 1.580 | 0.950 | 0.007 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.664 | 0.442 | 0.262 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.572 | 0.419 | 0.264 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.577 | 0.877 | 0.002 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.718 | 0.441 | 0.270 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.629 | 0.417 | 0.274 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.621 | 0.882 | 0.004 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.746 | 0.442 | 0.269 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.665 | 0.417 | 0.277 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.637 | 0.899 | 0.008 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.738 | 0.444 | 0.256 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.674 | 0.421 | 0.266 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.621 | 0.924 | 0.011 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.714 | 0.447 | 0.241 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.665 | 0.426 | 0.251 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.592 | 0.943 | 0.010 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.709 | 0.448 | 0.237 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.660 | 0.429 | 0.244 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.580 | 0.950 | 0.007 |
+
+### 2026-07
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.488 | 0.410 | -0.013 | 1.488 | 0.410 | -0.013 |
+| ma_diaria | 0 | llegadas | 1.403 | 0.387 | -0.016 | 1.403 | 0.387 | -0.016 |
+| ma_diaria | 0 | neto | 1.529 | 0.812 | -0.003 | 1.529 | 0.812 | -0.003 |
+| ma_diaria | 1 | salidas | 1.536 | 0.408 | -0.014 | 1.536 | 0.408 | -0.014 |
+| ma_diaria | 1 | llegadas | 1.453 | 0.385 | -0.017 | 1.453 | 0.385 | -0.017 |
+| ma_diaria | 1 | neto | 1.572 | 0.816 | -0.003 | 1.572 | 0.816 | -0.003 |
+| ma_diaria | 2 | salidas | 1.561 | 0.409 | -0.016 | 1.561 | 0.409 | -0.016 |
+| ma_diaria | 2 | llegadas | 1.484 | 0.385 | -0.019 | 1.484 | 0.385 | -0.019 |
+| ma_diaria | 2 | neto | 1.590 | 0.830 | -0.002 | 1.590 | 0.830 | -0.002 |
+| ma_diaria | 3 | salidas | 1.558 | 0.413 | -0.013 | 1.558 | 0.413 | -0.013 |
+| ma_diaria | 3 | llegadas | 1.496 | 0.390 | -0.016 | 1.496 | 0.390 | -0.016 |
+| ma_diaria | 3 | neto | 1.579 | 0.856 | -0.003 | 1.579 | 0.856 | -0.003 |
+| ma_diaria | 4 | salidas | 1.540 | 0.418 | -0.003 | 1.540 | 0.418 | -0.003 |
+| ma_diaria | 4 | llegadas | 1.491 | 0.398 | -0.008 | 1.491 | 0.398 | -0.008 |
+| ma_diaria | 4 | neto | 1.552 | 0.881 | -0.005 | 1.552 | 0.881 | -0.005 |
+| ma_diaria | 5 | salidas | 1.533 | 0.421 | 0.003 | 1.533 | 0.421 | 0.003 |
+| ma_diaria | 5 | llegadas | 1.487 | 0.402 | -0.000 | 1.487 | 0.402 | -0.000 |
+| ma_diaria | 5 | neto | 1.538 | 0.890 | -0.004 | 1.538 | 0.890 | -0.004 |
+| lgbm_diario | 0 | salidas | 1.474 | 0.406 | 0.024 | 1.488 | 0.410 | -0.013 |
+| lgbm_diario | 0 | llegadas | 1.389 | 0.383 | 0.016 | 1.403 | 0.387 | -0.016 |
+| lgbm_diario | 0 | neto | 1.522 | 0.809 | -0.008 | 1.529 | 0.812 | -0.003 |
+| lgbm_diario | 1 | salidas | 1.521 | 0.404 | 0.023 | 1.536 | 0.408 | -0.014 |
+| lgbm_diario | 1 | llegadas | 1.436 | 0.380 | 0.014 | 1.453 | 0.385 | -0.017 |
+| lgbm_diario | 1 | neto | 1.565 | 0.813 | -0.009 | 1.572 | 0.816 | -0.003 |
+| lgbm_diario | 2 | salidas | 1.545 | 0.404 | 0.020 | 1.561 | 0.409 | -0.016 |
+| lgbm_diario | 2 | llegadas | 1.467 | 0.381 | 0.010 | 1.484 | 0.385 | -0.019 |
+| lgbm_diario | 2 | neto | 1.583 | 0.827 | -0.010 | 1.590 | 0.830 | -0.002 |
+| lgbm_diario | 3 | salidas | 1.541 | 0.409 | 0.027 | 1.558 | 0.413 | -0.013 |
+| lgbm_diario | 3 | llegadas | 1.478 | 0.385 | 0.014 | 1.496 | 0.390 | -0.016 |
+| lgbm_diario | 3 | neto | 1.571 | 0.852 | -0.013 | 1.579 | 0.856 | -0.003 |
+| lgbm_diario | 4 | salidas | 1.522 | 0.414 | 0.042 | 1.540 | 0.418 | -0.003 |
+| lgbm_diario | 4 | llegadas | 1.474 | 0.393 | 0.026 | 1.491 | 0.398 | -0.008 |
+| lgbm_diario | 4 | neto | 1.543 | 0.876 | -0.016 | 1.552 | 0.881 | -0.005 |
+| lgbm_diario | 5 | salidas | 1.516 | 0.416 | 0.047 | 1.533 | 0.421 | 0.003 |
+| lgbm_diario | 5 | llegadas | 1.471 | 0.398 | 0.033 | 1.487 | 0.402 | -0.000 |
+| lgbm_diario | 5 | neto | 1.529 | 0.884 | -0.014 | 1.538 | 0.890 | -0.004 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.488 | 0.410 | -0.013 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.403 | 0.387 | -0.016 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.529 | 0.812 | -0.003 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.536 | 0.408 | -0.014 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.453 | 0.385 | -0.017 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.572 | 0.816 | -0.003 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.561 | 0.409 | -0.016 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.484 | 0.385 | -0.019 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.590 | 0.830 | -0.002 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.558 | 0.413 | -0.013 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.496 | 0.390 | -0.016 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.579 | 0.856 | -0.003 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.540 | 0.418 | -0.003 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.491 | 0.398 | -0.008 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.552 | 0.881 | -0.005 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.533 | 0.421 | 0.003 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.487 | 0.402 | -0.000 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.538 | 0.890 | -0.004 |
+| lgbm_directo | 0 | salidas | 1.704 | 0.468 | 0.003 | 1.488 | 0.410 | -0.013 |
+| lgbm_directo | 0 | llegadas | 1.601 | 0.441 | 0.006 | 1.403 | 0.387 | -0.016 |
+| lgbm_directo | 0 | neto | 1.898 | 0.883 | 0.004 | 1.529 | 0.812 | -0.003 |
+| lgbm_directo | 1 | salidas | 1.776 | 0.470 | 0.011 | 1.536 | 0.408 | -0.014 |
+| lgbm_directo | 1 | llegadas | 1.674 | 0.442 | 0.003 | 1.453 | 0.385 | -0.017 |
+| lgbm_directo | 1 | neto | 1.946 | 0.882 | -0.008 | 1.572 | 0.816 | -0.003 |
+| lgbm_directo | 2 | salidas | 1.811 | 0.472 | 0.008 | 1.561 | 0.409 | -0.016 |
+| lgbm_directo | 2 | llegadas | 1.719 | 0.444 | 0.008 | 1.484 | 0.385 | -0.019 |
+| lgbm_directo | 2 | neto | 1.965 | 0.893 | 0.001 | 1.590 | 0.830 | -0.002 |
+| lgbm_directo | 3 | salidas | 1.804 | 0.478 | 0.017 | 1.558 | 0.413 | -0.013 |
+| lgbm_directo | 3 | llegadas | 1.735 | 0.452 | 0.010 | 1.496 | 0.390 | -0.016 |
+| lgbm_directo | 3 | neto | 1.946 | 0.915 | -0.006 | 1.579 | 0.856 | -0.003 |
+| lgbm_directo | 4 | salidas | 1.780 | 0.484 | 0.034 | 1.540 | 0.418 | -0.003 |
+| lgbm_directo | 4 | llegadas | 1.724 | 0.462 | 0.025 | 1.491 | 0.398 | -0.008 |
+| lgbm_directo | 4 | neto | 1.907 | 0.937 | -0.009 | 1.552 | 0.881 | -0.005 |
+| lgbm_directo | 5 | salidas | 1.773 | 0.487 | 0.039 | 1.533 | 0.421 | 0.003 |
+| lgbm_directo | 5 | llegadas | 1.722 | 0.466 | 0.028 | 1.487 | 0.402 | -0.000 |
+| lgbm_directo | 5 | neto | 1.891 | 0.943 | -0.011 | 1.538 | 0.890 | -0.004 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.488 | 0.410 | -0.013 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.403 | 0.387 | -0.016 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.529 | 0.812 | -0.003 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.536 | 0.408 | -0.014 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.453 | 0.385 | -0.017 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.572 | 0.816 | -0.003 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.561 | 0.409 | -0.016 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.484 | 0.385 | -0.019 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.590 | 0.830 | -0.002 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.558 | 0.413 | -0.013 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.496 | 0.390 | -0.016 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.579 | 0.856 | -0.003 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.540 | 0.418 | -0.003 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.491 | 0.398 | -0.008 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.552 | 0.881 | -0.005 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.533 | 0.421 | 0.003 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.487 | 0.402 | -0.000 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.538 | 0.890 | -0.004 |
+
+### 2026-08
+
+| Variante | k | Objetivo | MAE | WAPE | Sesgo | MAE MA | WAPE MA | Sesgo MA |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| ma_diaria | 0 | salidas | 1.484 | 0.414 | -0.027 | 1.484 | 0.414 | -0.027 |
+| ma_diaria | 0 | llegadas | 1.414 | 0.394 | -0.028 | 1.414 | 0.394 | -0.028 |
+| ma_diaria | 0 | neto | 1.514 | 0.819 | -0.001 | 1.514 | 0.819 | -0.001 |
+| ma_diaria | 1 | salidas | 1.532 | 0.412 | -0.027 | 1.532 | 0.412 | -0.027 |
+| ma_diaria | 1 | llegadas | 1.464 | 0.393 | -0.028 | 1.464 | 0.393 | -0.028 |
+| ma_diaria | 1 | neto | 1.556 | 0.822 | -0.001 | 1.556 | 0.822 | -0.001 |
+| ma_diaria | 2 | salidas | 1.559 | 0.413 | -0.025 | 1.559 | 0.413 | -0.025 |
+| ma_diaria | 2 | llegadas | 1.496 | 0.393 | -0.027 | 1.496 | 0.393 | -0.027 |
+| ma_diaria | 2 | neto | 1.574 | 0.836 | -0.001 | 1.574 | 0.836 | -0.001 |
+| ma_diaria | 3 | salidas | 1.558 | 0.418 | -0.023 | 1.558 | 0.418 | -0.023 |
+| ma_diaria | 3 | llegadas | 1.509 | 0.398 | -0.025 | 1.509 | 0.398 | -0.025 |
+| ma_diaria | 3 | neto | 1.566 | 0.861 | -0.002 | 1.566 | 0.861 | -0.002 |
+| ma_diaria | 4 | salidas | 1.541 | 0.423 | -0.020 | 1.541 | 0.423 | -0.020 |
+| ma_diaria | 4 | llegadas | 1.505 | 0.406 | -0.022 | 1.505 | 0.406 | -0.022 |
+| ma_diaria | 4 | neto | 1.540 | 0.886 | -0.002 | 1.540 | 0.886 | -0.002 |
+| ma_diaria | 5 | salidas | 1.530 | 0.426 | -0.018 | 1.530 | 0.426 | -0.018 |
+| ma_diaria | 5 | llegadas | 1.497 | 0.410 | -0.019 | 1.497 | 0.410 | -0.019 |
+| ma_diaria | 5 | neto | 1.522 | 0.895 | -0.001 | 1.522 | 0.895 | -0.001 |
+| lgbm_diario | 0 | salidas | 1.453 | 0.405 | 0.045 | 1.484 | 0.414 | -0.027 |
+| lgbm_diario | 0 | llegadas | 1.379 | 0.385 | 0.045 | 1.414 | 0.394 | -0.028 |
+| lgbm_diario | 0 | neto | 1.498 | 0.810 | -0.000 | 1.514 | 0.819 | -0.001 |
+| lgbm_diario | 1 | salidas | 1.499 | 0.403 | 0.045 | 1.532 | 0.412 | -0.027 |
+| lgbm_diario | 1 | llegadas | 1.426 | 0.382 | 0.045 | 1.464 | 0.393 | -0.028 |
+| lgbm_diario | 1 | neto | 1.540 | 0.814 | -0.001 | 1.556 | 0.822 | -0.001 |
+| lgbm_diario | 2 | salidas | 1.524 | 0.404 | 0.045 | 1.559 | 0.413 | -0.025 |
+| lgbm_diario | 2 | llegadas | 1.456 | 0.382 | 0.044 | 1.496 | 0.393 | -0.027 |
+| lgbm_diario | 2 | neto | 1.558 | 0.827 | -0.001 | 1.574 | 0.836 | -0.001 |
+| lgbm_diario | 3 | salidas | 1.522 | 0.408 | 0.048 | 1.558 | 0.418 | -0.023 |
+| lgbm_diario | 3 | llegadas | 1.468 | 0.387 | 0.044 | 1.509 | 0.398 | -0.025 |
+| lgbm_diario | 3 | neto | 1.549 | 0.851 | -0.004 | 1.566 | 0.861 | -0.002 |
+| lgbm_diario | 4 | salidas | 1.503 | 0.413 | 0.055 | 1.541 | 0.423 | -0.020 |
+| lgbm_diario | 4 | llegadas | 1.465 | 0.395 | 0.048 | 1.505 | 0.406 | -0.022 |
+| lgbm_diario | 4 | neto | 1.521 | 0.875 | -0.007 | 1.540 | 0.886 | -0.002 |
+| lgbm_diario | 5 | salidas | 1.495 | 0.416 | 0.056 | 1.530 | 0.426 | -0.018 |
+| lgbm_diario | 5 | llegadas | 1.458 | 0.399 | 0.050 | 1.497 | 0.410 | -0.019 |
+| lgbm_diario | 5 | neto | 1.503 | 0.884 | -0.006 | 1.522 | 0.895 | -0.001 |
+| oraculo_diario | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.484 | 0.414 | -0.027 |
+| oraculo_diario | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.414 | 0.394 | -0.028 |
+| oraculo_diario | 0 | neto | 0.000 | 0.000 | 0.000 | 1.514 | 0.819 | -0.001 |
+| oraculo_diario | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.532 | 0.412 | -0.027 |
+| oraculo_diario | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.464 | 0.393 | -0.028 |
+| oraculo_diario | 1 | neto | 0.000 | 0.000 | 0.000 | 1.556 | 0.822 | -0.001 |
+| oraculo_diario | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.559 | 0.413 | -0.025 |
+| oraculo_diario | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.496 | 0.393 | -0.027 |
+| oraculo_diario | 2 | neto | 0.000 | 0.000 | 0.000 | 1.574 | 0.836 | -0.001 |
+| oraculo_diario | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.558 | 0.418 | -0.023 |
+| oraculo_diario | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.509 | 0.398 | -0.025 |
+| oraculo_diario | 3 | neto | 0.000 | 0.000 | 0.000 | 1.566 | 0.861 | -0.002 |
+| oraculo_diario | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.541 | 0.423 | -0.020 |
+| oraculo_diario | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.505 | 0.406 | -0.022 |
+| oraculo_diario | 4 | neto | 0.000 | 0.000 | 0.000 | 1.540 | 0.886 | -0.002 |
+| oraculo_diario | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.530 | 0.426 | -0.018 |
+| oraculo_diario | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.497 | 0.410 | -0.019 |
+| oraculo_diario | 5 | neto | 0.000 | 0.000 | 0.000 | 1.522 | 0.895 | -0.001 |
+| lgbm_directo | 0 | salidas | 1.685 | 0.469 | 0.033 | 1.484 | 0.414 | -0.027 |
+| lgbm_directo | 0 | llegadas | 1.592 | 0.444 | 0.038 | 1.414 | 0.394 | -0.028 |
+| lgbm_directo | 0 | neto | 1.876 | 0.885 | 0.005 | 1.514 | 0.819 | -0.001 |
+| lgbm_directo | 1 | salidas | 1.756 | 0.471 | 0.048 | 1.532 | 0.412 | -0.027 |
+| lgbm_directo | 1 | llegadas | 1.665 | 0.446 | 0.043 | 1.464 | 0.393 | -0.028 |
+| lgbm_directo | 1 | neto | 1.923 | 0.884 | -0.005 | 1.556 | 0.822 | -0.001 |
+| lgbm_directo | 2 | salidas | 1.793 | 0.473 | 0.042 | 1.559 | 0.413 | -0.025 |
+| lgbm_directo | 2 | llegadas | 1.709 | 0.447 | 0.051 | 1.496 | 0.393 | -0.027 |
+| lgbm_directo | 2 | neto | 1.942 | 0.894 | 0.009 | 1.574 | 0.836 | -0.001 |
+| lgbm_directo | 3 | salidas | 1.790 | 0.479 | 0.046 | 1.558 | 0.418 | -0.023 |
+| lgbm_directo | 3 | llegadas | 1.726 | 0.454 | 0.049 | 1.509 | 0.398 | -0.025 |
+| lgbm_directo | 3 | neto | 1.927 | 0.915 | 0.004 | 1.566 | 0.861 | -0.002 |
+| lgbm_directo | 4 | salidas | 1.766 | 0.486 | 0.052 | 1.541 | 0.423 | -0.020 |
+| lgbm_directo | 4 | llegadas | 1.716 | 0.464 | 0.051 | 1.505 | 0.406 | -0.022 |
+| lgbm_directo | 4 | neto | 1.888 | 0.937 | -0.001 | 1.540 | 0.886 | -0.002 |
+| lgbm_directo | 5 | salidas | 1.756 | 0.489 | 0.052 | 1.530 | 0.426 | -0.018 |
+| lgbm_directo | 5 | llegadas | 1.710 | 0.468 | 0.049 | 1.497 | 0.410 | -0.019 |
+| lgbm_directo | 5 | neto | 1.866 | 0.943 | -0.003 | 1.522 | 0.895 | -0.001 |
+| oraculo_directo | 0 | salidas | 0.000 | 0.000 | 0.000 | 1.484 | 0.414 | -0.027 |
+| oraculo_directo | 0 | llegadas | 0.000 | 0.000 | 0.000 | 1.414 | 0.394 | -0.028 |
+| oraculo_directo | 0 | neto | 0.000 | 0.000 | 0.000 | 1.514 | 0.819 | -0.001 |
+| oraculo_directo | 1 | salidas | 0.000 | 0.000 | 0.000 | 1.532 | 0.412 | -0.027 |
+| oraculo_directo | 1 | llegadas | 0.000 | 0.000 | 0.000 | 1.464 | 0.393 | -0.028 |
+| oraculo_directo | 1 | neto | 0.000 | 0.000 | 0.000 | 1.556 | 0.822 | -0.001 |
+| oraculo_directo | 2 | salidas | 0.000 | 0.000 | 0.000 | 1.559 | 0.413 | -0.025 |
+| oraculo_directo | 2 | llegadas | 0.000 | 0.000 | 0.000 | 1.496 | 0.393 | -0.027 |
+| oraculo_directo | 2 | neto | 0.000 | 0.000 | 0.000 | 1.574 | 0.836 | -0.001 |
+| oraculo_directo | 3 | salidas | 0.000 | 0.000 | 0.000 | 1.558 | 0.418 | -0.023 |
+| oraculo_directo | 3 | llegadas | 0.000 | 0.000 | 0.000 | 1.509 | 0.398 | -0.025 |
+| oraculo_directo | 3 | neto | 0.000 | 0.000 | 0.000 | 1.566 | 0.861 | -0.002 |
+| oraculo_directo | 4 | salidas | 0.000 | 0.000 | 0.000 | 1.541 | 0.423 | -0.020 |
+| oraculo_directo | 4 | llegadas | 0.000 | 0.000 | 0.000 | 1.505 | 0.406 | -0.022 |
+| oraculo_directo | 4 | neto | 0.000 | 0.000 | 0.000 | 1.540 | 0.886 | -0.002 |
+| oraculo_directo | 5 | salidas | 0.000 | 0.000 | 0.000 | 1.530 | 0.426 | -0.018 |
+| oraculo_directo | 5 | llegadas | 0.000 | 0.000 | 0.000 | 1.497 | 0.410 | -0.019 |
+| oraculo_directo | 5 | neto | 0.000 | 0.000 | 0.000 | 1.522 | 0.895 | -0.001 |
+
+## Efecto de rotar el submuestreo directo
+
+WAPE de `lgbm_directo` antes (fase siempre cero) y después (fase rotativa) por k. `accuracy_direct_comparison.csv` contiene también el desglose por mes; TOTAL pondera los errores y la verdad absoluta, no promedia WAPE mensuales.
+
+| k | Objetivo | WAPE antes | WAPE después | Δ puntos porcentuales |
+|---:|---|---:|---:|---:|
+| 0 | llegadas | 0.4276 | 0.4272 | -0.04 |
+| 0 | neto | 0.8846 | 0.8845 | -0.01 |
+| 0 | salidas | 0.4519 | 0.4512 | -0.07 |
+| 1 | llegadas | 0.4285 | 0.4282 | -0.04 |
+| 1 | neto | 0.8843 | 0.8838 | -0.05 |
+| 1 | salidas | 0.4527 | 0.4522 | -0.04 |
+| 2 | llegadas | 0.4300 | 0.4296 | -0.04 |
+| 2 | neto | 0.8948 | 0.8944 | -0.05 |
+| 2 | salidas | 0.4543 | 0.4538 | -0.05 |
+| 3 | llegadas | 0.4351 | 0.4345 | -0.06 |
+| 3 | neto | 0.9171 | 0.9165 | -0.06 |
+| 3 | salidas | 0.4580 | 0.4574 | -0.07 |
+| 4 | llegadas | 0.4422 | 0.4414 | -0.08 |
+| 4 | neto | 0.9377 | 0.9368 | -0.09 |
+| 4 | salidas | 0.4618 | 0.4610 | -0.08 |
+| 5 | llegadas | 0.4446 | 0.4436 | -0.09 |
+| 5 | neto | 0.9434 | 0.9425 | -0.10 |
+| 5 | salidas | 0.4626 | 0.4618 | -0.08 |
+
+## Comprobaciones (solo 15 días de selección, lgbm_diario, salidas)
+
+| Entrenamiento | WAPE | Δ WAPE relativo vs hacia adelante | IC95 por bootstrap pareado |
+|---|---:|---:|---:|
+| hacia adelante | 0.4420 | +0.00% | [+0.00%, +0.00%] |
+| con 2024 | 0.4439 | -0.42% | [-0.78%, -0.12%] |
+| al azar (sin 15 días de selección) | 0.4420 | -0.01% | [-0.09%, +0.06%] |
+
+Decisión 2024: **mantener ventana desde 2025**. División al azar solo es diagnóstico, nunca entrena los brazos del simulador.

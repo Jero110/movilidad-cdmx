@@ -1,0 +1,678 @@
+short_name,name,cap_max,cap_min,cap_mediana
+001,CE-001 Río Sena-Río Balsas,35,35,35.0
+002,CE-002 Río Guadalquivir - Río Nazas,23,23,23.0
+003,CE-003 Reforma - Insurgentes,31,31,31.0
+004,CE-004 Río Nilo - Río Panuco,19,19,19.0
+005,CE-005 Río Pánuco Río Tiber,23,23,23.0
+006,CE-006 Río Pánuco - Río Sena,15,15,15.0
+007,CE-007 Río Elba - Río Lerma,23,23,23.0
+008,CE-008 Reforma - General Prim,17,17,17.0
+009,CE-009 Río Guadalquivir - Río Lerma,19,19,19.0
+010,CE-010 Reforma - Ramírez,27,27,27.0
+011,CE-011 Río Amazonas - Río Lerma,15,15,15.0
+012,CE-012 Río Lerma - Villalongín,15,15,15.0
+013,CE-013 Reforma - Río Mississippi,28,28,28.0
+014,CE-014 Reforma - Río de Plata,39,39,39.0
+015,CE-015 Reforma - Río Mississippi,23,23,23.0
+016,CE-016 Reforma - Río Tiber,31,31,31.0
+017,CE-017 Reforma - Río Tiber,27,27,27.0
+018,CE-018 Reforma - Río Rhin,39,39,39.0
+019,CE-019 Reforma - Río Rhin,31,31,31.0
+020,CE-020 Reforma- Río Támesis,23,23,23.0
+021,CE-021 Reforma - Dublín,25,25,25.0
+022,CE-022 Reforma - Manchester,35,34,35.0
+023,CE-023 Reforma - Praga,36,36,36.0
+024,CE-024 Reforma- Varsovia,19,19,19.0
+025,CE-025 Reforma - Estocolmo,27,27,27.0
+026,CE-026 Reforma - Versalles,15,15,15.0
+027,CE-027 Reforma- Havre,43,43,43.0
+028,CE-028 Toledo- Tokio,35,35,35.0
+029,CE-029 Reforma - Bucareli,35,35,35.0
+030,CE-030 Hamburgo - Amberes,36,36,36.0
+031,CE-031 Hamburgo - Insurgentes,37,37,37.0
+032,CE-032 Londres - Sevilla,35,34,35.0
+033,CE-033 Londres - Florencia,17,17,17.0
+034,CE-034 Liverpool - Génova,23,23,23.0
+035,CE-035 Liverpool - Génova,41,41,41.0
+036,CE-036 Puebla - Veracruz,31,31,31.0
+037,CE-037 Guadalajara - Puebla,35,35,35.0
+038,CE-038 Cozumel - Puebla,35,34,35.0
+039,CE-039 Puebla - Medellín,23,23,23.0
+040,CE-040 Oaxaca - Puebla,23,23,23.0
+041,CE-041 Reforma - Av. de la República,33,33,33.0
+042,CE-042 Sinaloa - Valladolid,23,23,23.0
+043,CE-043 Revillagigedo - Juárez,31,31,31.0
+044,CE-044 Durango - Veracruz,25,25,25.0
+045,CE-045 Durango - Sonora,39,39,39.0
+046,CE-046 Durango - Salamanca,39,39,39.0
+047,CE-047 Plaza Madrid-Medellín,29,29,29.0
+048,CE-048 Independencia - Azueta,11,11,11.0
+049,CE-049 Mazatlán - Juan de la Barrera,39,39,39.0
+050,CE-050 Cuernavaca - Veracruz,27,27,27.0
+051,CE-051 Colima - Oaxaca,27,27,27.0
+052,CE-052 Hidalgo - Trujano,19,19,19.0
+053,CE-053 Fernando Montes de Oca - Tula,15,15,15.0
+054,CE-054 Parque España - Sonora,35,35,35.0
+055,CE-055  5 De Mayo - Bolívar,15,15,15.0
+056,CE-056 Alvaro Obregón - Medellin,35,35,35.0
+057,CE-057 Cuernavaca - Juan Escutia,11,11,11.0
+058,CE-058 Parque España - Juan de la Barrera,27,27,27.0
+059,CE-059 Popocatépetl - Ámsterdam,35,35,35.0
+060,CE-060 Mazatlán - Fernando Montes de Oca,39,39,39.0
+061,CE-061 Avenida México - Sonora,35,34,35.0
+062,CE-062 Fernando Montes de Oca - Amatlan,19,19,19.0
+063,CE-063 Nuevo León - Laredo,35,35,35.0
+064,CE-064 Sonora - Ámsterdam,27,27,27.0
+065,CE-065 Marconi - Tacuba,19,19,19.0
+066,CE-066 Mazatlán - Francisco Márquez,27,27,27.0
+067,CE-067 Vicente Suárez - Michoacán,23,23,23.0
+068,CE-068 Tamaulipas - Michoacán,25,25,25.0
+069,CE-069 Michoacán - Ámsterdam,17,17,17.0
+070,CE-070 Parque México - Michoacán,45,45,45.0
+071,CE-071 Amsterdam - Michoacan,35,34,35.0
+072,CE-072 Mazatlán - Alfonso Reyes,31,31,31.0
+073,CE-073 Campeche - Tamaulipas,35,35,35.0
+074,CE-074 Nuevo León - Ozulama,35,35,35.0
+075,CE-075 Alfonso Reyes - Atlixco,33,33,33.0
+076,CE-076 Chilpancingo - Campeche,19,19,19.0
+077,CE-077 Choapan - Tamaulipas,15,15,15.0
+078,CE-078 Benjamín Hill - Tamaulipas,35,35,35.0
+079,CE-079 Saltillo - Alfonso Reyes,31,31,31.0
+080,CE-080 Nuevo León - Aguascalientes,35,35,35.0
+081,CE-081 Aguascalientes - Insurgentes,27,27,27.0
+082,CE-082 Independencia - Marroquí,11,11,11.0
+083,CE-083 Alfonso Reyes - Nuevo León,15,15,15.0
+084,CE-084 Chilpancingo - Tlaxcala,19,19,19.0
+085,CE-085 Rosas Moreno - Sullivan,15,15,15.0
+086,CE-086 Sullivan-Insurgentes,17,17,17.0
+087,CE-087 Gante - Venustiano Carranza,25,25,25.0
+088,CE-088 2a Cerrada de 5 de Mayo - Palma,15,15,15.0
+089,CE-089 República de Guatemala - Monte de Piedad,11,10,11.0
+090,CE-090 José María Pino Suárez - Corregidora,27,27,27.0
+091,CE-091 Republica de Cuba-Allende,19,18,19.0
+092,CE-092 San Ildefonso-República de Argentina,23,23,23.0
+093,CE-093 Palma Norte-República de Cuba,35,35,35.0
+094,CE-094 Lic. Verdad-Moneda,23,23,23.0
+095,CE-095 20 de Noviembre-Venustiano Carranza,19,19,19.0
+096,CE-096 López-Ayuntamiento,35,35,35.0
+097,CE-097 República de Salvador-Pino Suárez,27,27,27.0
+098,CE-098 Emilio Dondé-Av. Balderas,31,31,31.0
+099,CE-099 Ernesto Pugibet-Luis Moya,27,27,27.0
+100,CE-100 20 de Noviembre-Mesones,23,23,23.0
+102,CE-102 Echeveste-Bolivar,15,15,15.0
+103,CE-103 Joaquín Velázquez de León - García Icazbalceta,31,31,31.0
+104,CE-104 San Jerónimo-Isabel la Católica,11,11,11.0
+105,CE-105 San Jerónimo-5 de Febrero,23,23,23.0
+106,CE-106 San Jerónimo-José María Pino Suarez,23,23,23.0
+107-108,CE-107-108 Tolsa-Balderas,59,59,59.0
+109,CE-109 Nezahualcóyotl-Isabel la Católica,31,31,31.0
+110,CE-110 Dr. Valenzuela-Dr. Río de la loza,35,35,35.0
+111,CE-111 Guillermo Prieto - Joaquín Velázquez de León,27,27,27.0
+112,CE-112 Av. Morelos-Abraham González,23,23,23.0
+113,CE-113 General Prim-Versalles,15,15,15.0
+114,CE-114 Lucerna-Abraham González,23,23,23.0
+115,CE-115 Roma-Dinamarca,27,27,27.0
+116,CE-116 Londres-Roma,23,23,23.0
+117,CE-117 Londres-Nápoles,31,31,31.0
+118,CE-118 Liverpool-Dinamarca,19,19,19.0
+119,CE-119 Turín-Abraham González,29,29,29.0
+120,CE-120 Marsella-Nápoles,15,15,15.0
+121,CE-121 Niza-Chapultepec,15,15,15.0
+122,CE-122 José María Vértiz-Av. Dr. Río de la Loza,31,31,31.0
+123,CE-123 Claudio Bernard-Dr. Lavista,27,27,27.0
+124,CE-124 Claudio Bernard-Dr. Liceaga,35,35,35.0
+125,CE-125 Morelia-Circular de Morelia,35,35,35.0
+126,CE-126 Jalapa-Puebla,34,34,34.0
+127,CE-127 Puebla-Merida,27,27,27.0
+128,CE-128 Orizaba-Río de Janeiro,23,23,23.0
+129,CE-129 Tonalá-Durango,23,23,23.0
+130,CE-130 Mérida-Durango,23,23,23.0
+131,CE-131 Colima-Jalapa,19,19,19.0
+132,CE-132 Colima-Frontera,23,23,23.0
+133,CE-133 Colima-Morelia,35,35,35.0
+134,CE-134 Álvaro Obregón-Orizaba,31,31,31.0
+135,CE-135 Álvaro Obregón-Morelia,38,38,38.0
+136,CE-136 Álvaro Obregón-Tonalá,23,23,23.0
+137,CE-137 Álvaro Obregón-Mérida,27,27,27.0
+138,CE-138 Guanajuato-Frontera,27,27,27.0
+139,CE-139 Tonalá-Guanajuato,23,23,23.0
+140,CE-140 Mérida-Zacatecas,19,19,19.0
+141,CE-141 Zacatecas-Luis Cabrera,31,31,31.0
+142,CE-142 San Luis Potosí-Eje 2 Pte. Monterrey,31,31,31.0
+143,CE-143 Córdoba-San Luis Potosí,23,23,23.0
+144,CE-144 Frontera-San Luis Potosí,27,27,27.0
+145,CE-145 Yucatán-Chiapas,27,27,27.0
+146,CE-146 Coahuila-Manzanillo,23,11,23.0
+147,CE-147 Coahuila-Orizaba,27,27,27.0
+148,CE-148 Coahuila-Av. Cuauhtémoc,21,21,21.0
+149,CE-149 Mérida-Antonio M. Anza,31,31,31.0
+150,CE-150 Campeche-Medellín,31,31,31.0
+151,CE-151 Campeche-Tonalá,27,27,27.0
+152,CE-152 Tlacotalpan-Campeche,35,35,35.0
+153,CE-153 Manzanillo-Tlaxcala,23,23,23.0
+154,CE-154 Tuxpan-Tlaxcala,35,35,35.0
+155,CE-155 Jalapa-Tlaxcala,35,35,35.0
+156,CE-156 Tepic-Ario,19,19,19.0
+157,CE-157 Tepic-Tlacotalpan,30,30,30.0
+158-159,CE-158-159 Huatabampo-Eje 1 Pte. Av. Cuauhtémoc,74,74,74.0
+160,CE-160 Alfonso Herrera-Gabino Barreda,23,23,23.0
+161,CE-161 Quintana Roo-Manzanillo,23,23,23.0
+162,CE-162 Tehuantepec-Medellín,27,27,27.0
+163,CE-163 Toluca-Bajío,35,35,35.0
+164,CE-164 Bajío-Tlacotalpan,27,27,27.0
+165,CE-165 Bajío-Eje 2 Pte. Monterrey,23,23,23.0
+166,CE-166 Progreso-Cda. Antonio Maceo,23,23,23.0
+167,CE-167 General Salvador Alvarado-Progreso,23,23,23.0
+168,CE-168 Comercio-Progreso,23,23,23.0
+169,CE-169 Prosperidad-Progreso,23,23,23.0
+170,CE-170 Observatorio Oriente-Revolución,23,23,23.0
+171,CE-171 Comercio-Jose Martí,27,27,27.0
+172,CE-172 General Francisco Murguía-José Martí,19,19,19.0
+173,CE-173 Minería-José Martí,23,23,23.0
+174,CE-174 Joaquín Garcia Icazbalceta-Ignacio Manuel Altamirano,31,31,31.0
+175,CE-175 Mutualismo-José Martí,23,23,23.0
+176,CE-176 Av. Jesús García-Luis Donaldo Colosio,39,39,39.0
+177,CE-177 Benjamín Hill - Carlos Zetina,19,19,19.0
+178,CE-178 Tamaulipas-Francisco Murguía,23,23,23.0
+179,CE-179 Nuevo León-Quintana Roo,27,27,27.0
+180,CE-180 Quintana Roo-Villahermosa,27,27,27.0
+181,CE-181 Benjamín Franklin - Ometusco,27,27,27.0
+182,CE-182 Progreso-Astrónomos,31,31,31.0
+183,CE-183 Gabino Barreda-Guillermo Prieto,35,35,35.0
+184,CE-184 General Gómez Pedraza-Gobernador Tiburcio Montiel,35,35,35.0
+185,CE-185 General Antonio Léon-General Pedro Antonio de los Santos,29,28,29.0
+186,CE-186 Gob. Gregorio V. Gelati-Gral. Francisco Molinos del Campo,15,15,15.0
+187,CE-187 General Cano-Gobernador Gregorio V. Gelati,23,23,23.0
+188,CE-188 Gobernador Melchor Múzquiz-Gobernador Ignacio Esteva,19,19,19.0
+189,CE-189 Gobernador Rafael Rebollar-Gobernador José Ceballos,19,19,19.0
+190,CE-190 Gobernador Ignacio Esteva-Maestro José Vasconcelos,31,31,31.0
+191,CE-191 Gobernador Rafael Rebollar-Gobernador Vicente Eguía,19,19,19.0
+192-193,CE-192-193 Rubén Darío.Reforma,49,49,49.0
+194,CE-194 Circuito Mahatma Gandhi-Reforma,35,35,35.0
+195,CE-195 Reforma-Circuito Mahatma Gandhi,31,31,31.0
+196,CE-196 Lago Tanganica- Av. Ejército Nacional,27,27,27.0
+197,CE-197 Presa Falcón - Miguel De Cervantes Saavedra,31,31,31.0
+198,CE-198 Sócrates-Ejército Nacional,25,25,25.0
+199,CE-199 Anatole France-Av. Ejército Nacional,23,23,23.0
+200,CE-200 Emerson-Av. Ejército Nacional,27,27,27.0
+201,CE-201 Lope de Vega-Av. Ejército Nacional,19,19,19.0
+202,CE-202 Calderón de la Barca-Av. Homero,19,19,19.0
+203,CE-203 Tennyson-Av. Homero,23,23,23.0
+204,CE-204 Temístocles-Homero,27,27,27.0
+205,CE-205 Taine-Homero,19,19,19.0
+206,CE-206 Homero-Moliere,23,23,23.0
+207,CE-207 Torquato Tasso-Homero,23,23,23.0
+208,CE-208 Hesiodo-Lamartine,25,25,25.0
+209,CE-209 Solón-Horacio,19,19,19.0
+210,CE-210 Eugenio Sue-Horacio,27,27,27.0
+211,CE-211 Isaac Newton-Horacio,35,35,35.0
+212,CE-212 Hegel-Horacio,35,35,35.0
+213,CE-213 Solón-Cicerón,27,27,27.0
+214,CE-214 Platón-Horacio,27,27,27.0
+215,CE-215 Edgar Alan Poe-Horacio,23,23,23.0
+216,CE-216 Alejandro Dumas-Horacio,27,27,27.0
+217,CE-217 Euler-Horacio,31,31,31.0
+218,CE-218 Hegel-Ibarbourou,23,23,23.0
+219,CE-219 Esopo-FC de Cuernavaca,39,39,39.0
+220,CE-220 Plinio-Presidente Masaryk,27,27,27.0
+221,CE-221 Emilio Castelar-Presidente Masaryk,25,24,25.0
+222,CE-222 Alejandro Dumas-Presidente Masarik,27,27,27.0
+223,CE-223 Isaac Newton-Presidente Masaryk,35,35,35.0
+224,CE-224 Hegel-Presidente Masaryk,15,15,15.0
+225,CE-225 Petrarca-Presidente Masaryk,21,21,21.0
+226,CE-226 Wallon-Presidente Masaryk,27,27,27.0
+227,CE-227 Campos Elíseos-Periférico,23,23,23.0
+228,CE-228 Campos Elíseos-La Fontaine,19,19,19.0
+229,CE-229 Carlos Dickens-Séneca,23,23,23.0
+230,CE-230 Edgar Allan Poe - Carlos Dickens,15,15,15.0
+231,CE-231 Isaac Newton-Aristóteles,27,26,27.0
+232,CE-232 Taine - Rubén Darío,31,31,31.0
+233,CE-233 Julio Verne-Luis G. Urbina,15,15,15.0
+234,CE-234 Tres Picos-Arquímides,27,27,27.0
+235-236,CE-235-236 Campos Elíseos-Moliere,55,55,55.0
+237-238,CE-237-238 Andrés Bello-George Eliot,63,63,63.0
+239,CE-239 Rincón del Bosque-Ruben Darío,19,19,19.0
+240,CE-240 Ejército Nacional-F.C. de Cuernavaca,17,17,17.0
+241,CE-241 Ejército Nacional-Juan Vázquez de la Mella,19,19,19.0
+242,CE-242 Pról. Moliere-Miguel de Cervantes Saavedra,31,31,31.0
+243,CE-243 Lago Filt-Miguel de Cervantes Saavedra,23,23,23.0
+244,CE-244 Lago Victoria-Miguel de Cervantes Saavedra,23,23,23.0
+245,CE-245 Lago Onega-Av. Ejército Nacional,21,21,21.0
+246,CE-246 Leibnitz-Thiers,15,15,15.0
+247,CE-247 Herschel-Rousseau,27,27,27.0
+248,CE-248 Shakespeare-Lafayette,23,23,23.0
+249,CE-249 Shakespeare-Darwin,15,15,15.0
+250,CE-250 Darwin-Mariano Escobedo,23,23,23.0
+251,CE-251 Goethe-Darwin,15,15,15.0
+252,CE-252 Víctor Hugo-Shakespeare,19,19,19.0
+253,CE-253 Dante-Tolstoi,19,19,19.0
+254,CE-254 Alfonso Herrera-Miguel Shultz,31,31,31.0
+255,CE-255 José Rosas Moreno-Guillermo Prieto,35,35,35.0
+256,CE-256 Gómez Farías-Sadi Carnot,23,23,23.0
+257,CE-257 Manuel Maria Contreras-Villalongin,19,19,19.0
+258,CE-258 Circuito Interior-Juan Escutia,33,33,33.0
+259,CE-259 Tómas Alva Edison-Ponciano Arriaga,27,27,27.0
+260,CE-260 Av. Juárez-Balderas,21,21,21.0
+261,CE-261 Paseo de la Reforma-Río de la Plata,43,43,43.0
+262,CE-262 República de Cuba-República de Brasil,31,31,31.0
+263,CE-263 Sadi Carnot - Gómez Farias,29,29,29.0
+264-275,CE-264-275 Héroes Ferrocarrileros - Jesús Garcia,71,71,71.0
+265,CE-265 Mina - Jesús García,33,33,33.0
+266-267,CE-266-267 Jesús García - Carlos J. Meneses,75,75,75.0
+268-269,CE-268-269 Luis Donaldo Colosio - Av. Jesús García,69,68,69.0
+270,CE-270 De la República-Ponciano Arriaga,33,33,33.0
+271-272,CE-271-272 Jesús García - Carlos J. Meneses,74,74,74.0
+273-274,CE-273-274 Luis Donaldo Colosio - Av. Jesús García,70,70,70.0
+276,CE-276 Anaxágoras-Obrero Mundial,19,19,19.0
+277,CE-277 Prolongación Tonalá-Obrero Mundial,31,31,31.0
+278,CE-278 Mier Y Pesado-Obrero Mundial,19,19,19.0
+279,CE-279 La Morena-Providencia,31,31,31.0
+280,CE-280 Anaxágoras-Obrero Mundial,39,39,39.0
+281,CE-281 Pitágoras-La Morena,31,31,31.0
+282,CE-282 La Morena-Eje 2 Poniente Gabriel Mancera,19,19,19.0
+283,CE-283 Av. Coyoacán-Rafael Dondé,19,19,19.0
+284,CE-284 Dakota-Vermont,31,30,31.0
+285,CE-285 12 de Octubre-Minería,19,19,19.0
+286,CE-286 13 de Septiembre-Avenida Patriotismo,19,19,19.0
+287,CE-287 13 de Septiembre-Puente de la Morena,19,19,19.0
+288,CE-288 11 de Abril-Avenida 2,15,15,15.0
+290,CE-290 Yosemite-Colorado,26,26,26.0
+291,CE-291 Magdalena-División Del Norte,35,35,35.0
+292,CE-292 Adolfo Prieto-Eje 4 Sur Xola,31,31,31.0
+293,CE-293 Mier y Pesado-Eje 4 Sur Xola,31,30,31.0
+294,CE-294 Nicolás San Juan-Eje 4 Sur Xola,21,21,21.0
+295,CE-295 Anaxágoras-Eje 4 Sur Xola,35,35,35.0
+296,CE-296 Diagonal San Antonio-Enrique Rébsamen,23,23,23.0
+297,CE-297 Diagonal San Antonio-Enrique Rébsamen,27,27,27.0
+298,CE-298 Romero de Terreros-Gabriel Mancera,19,19,19.0
+299,CE-299 Romero de Terreros-Mier Y Pesado,27,27,27.0
+300,CE-300 Providencia -Luz Saviñón,23,23,23.0
+301,CE-301 Luz Saviñón-Magdalena,25,25,25.0
+302,CE-302 Luz Saviñón-Magdalena,39,39,39.0
+303,CE-303 Montecito-Av. Insurgentes,26,26,26.0
+304,CE-304 Montecito-Dakota,35,35,35.0
+305,CE-305 Avenida del Parque-Arizona,31,31,31.0
+306,CE-306 Dakota-Minnesota,35,35,35.0
+307,CE-307 Minnesota-Dakota,27,27,27.0
+308,CE-308 Nueva York-Arizona,31,31,31.0
+309,CE-309 Pensilvania-Arizona,31,31,31.0
+310,CE-310 Calle 1-Av. Patriotismo,15,15,15.0
+312,CE-312 Avenida 2-Calle 7,27,27,27.0
+313,CE-313 Pensilvania-Oklahoma,23,23,23.0
+314,CE-314 Nueva York-Louisiana,19,19,19.0
+315,CE-315 Alabama-Montana,27,27,27.0
+316,CE-316 San Francisco-Concepción Beistegui,27,27,27.0
+317,CE-317 Avenida Coyoacán-Torres Adalid,35,35,35.0
+318,CE-318 Luz Saviñón-Amores,23,23,23.0
+319,CE-319 Diagonal San Antonio-Luz Saviñón,27,27,27.0
+320,CE-320 Enrique Rébsamen-Luz Saviñón,19,19,19.0
+321,CE-321 Torres Adalid-Anaxágoras,27,27,27.0
+322,CE-322 Heriberto Frías-Concepción Beistegui,27,27,27.0
+323,CE-323 Concepción Beistegui-Gabriel Mancera,27,15,15.0
+324,CE-324 Amores-Avenida Eugenia,19,19,19.0
+325,CE-325 Providencia -Avenida Del Valle,23,23,23.0
+326,CE-326 Eugenia-Nebraska,35,35,35.0
+327,CE-327 Georgia -Pensilvania,23,23,23.0
+328,CE-328 Avenida 1-Calle 7,15,15,15.0
+329,CE-329 Calle 13-Avenida 1,31,31,31.0
+330,CE-330 Calle 15-Avenida Patriotismo,19,19,19.0
+331,CE-331 Avenida 2-Calle 17,27,27,27.0
+332,CE-332 Calle 27-Avenida 3,23,23,23.0
+333,CE-333 Georgia-Carolina,23,23,23.0
+334,CE-334 Nueva York-Av. Insurgentes,27,27,27.0
+335,CE-335 Magdalena-Ameyalco,35,35,35.0
+336,CE-336 San Borja-Cda. Dr. J. Bartolache,23,23,23.0
+337,CE-337 San Borja-Martín Mendalde,19,18,19.0
+338,CE-338 Nicolás San Juan-San Borja,27,27,27.0
+339,CE-339 Enrique Rébsamen-Avenida Eugenia,23,23,23.0
+340,CE-340 Anaxágoras-Avenida Eugenia,31,31,31.0
+341,CE-341 San Borja-Avenida Cuauhtémoc,31,31,31.0
+342,CE-342 Pitágoras-Av. División del Norte,31,31,31.0
+343,CE-343 Enrique Rébsamen-División Del Norte,15,15,15.0
+345,CE-345 Patricio Sanz - Miraflores,23,23,23.0
+346,CE-346 San Francisco-Santa Margarita,26,26,26.0
+347,CE-347 Pensilvania-Maximino Avila Camacho,19,19,19.0
+348,CE-348 Indiana-Avenida San Antonio,19,19,19.0
+349,CE-349 Augusto Rodin-Avenida San Antonio,19,19,19.0
+351,CE-351 Calle 27-Avenida Revolución,15,15,15.0
+352,CE-352 Tintoreto-Giorgione,31,31,31.0
+353,CE-353 Carolina-Holbein,23,23,23.0
+354,CE-354 Boston-Av. Insurgentes,23,23,23.0
+355,CE-355 California-Sacramento,19,19,19.0
+356,CE-356 Matías Romero -Adolfo Prieto,15,15,15.0
+357,CE-357 Matías Romero -Amores,27,27,27.0
+358,CE-358 Nicolás San Juan-Matias Romero,23,23,23.0
+359,CE-359 Matías Romero -Pestalozzi,31,31,31.0
+360,CE-360 Heriberto Frías-Matias Romero,23,23,23.0
+361,CE-361 Porfirio Díaz-Capulín,27,27,27.0
+362,CE-362 Augusto Rodin-Alberto Balderas,19,19,19.0
+363,CE-363 Holbein-Paulo Ucello,23,23,23.0
+365,CE-365 Holbein-Avenida Revolución,21,21,21.0
+366,CE-366 Porfirio Díaz-Augusto Rodin,19,19,19.0
+367,CE-367 Boston -Augusto Rodin,19,19,19.0
+369,CE-369 Porfirio Díaz-Av. Insurgentes,35,35,35.0
+370,CE-370 Tlacoquemécatl-Av. Insurgentes,31,31,31.0
+371,CE-371 Tlacoquemécatl-Capulín,23,23,23.0
+372,CE-372 Dr. Roberto Gayol-Tlacoquemécatl,19,18,19.0
+373,CE-373 Pilares-Gabriel Mancera,19,19,19.0
+374,CE-374 Pitágoras-Pilares,31,31,31.0
+375,CE-375 Tenayuca-División Del Norte,23,23,23.0
+377,CE-377 Heriberto Frías-Miguel Laurent,35,35,35.0
+378,CE-378 Miguel Laurent-Amores,31,31,31.0
+380,CE-380 Moras-San Lorenzo,23,23,23.0
+381,CE-381 San Lorenzo-Manzanas,23,23,23.0
+384,CE-384 Empresa-Poussin,23,23,23.0
+385,CE-385 Poussin-Empresa,35,35,35.0
+386,CE-386 Poussin-Donatello,39,39,39.0
+387,CE-387 Cadiz-Empresa,19,19,19.0
+389,CE-389 Santander-Félix Cuevas,39,39,39.0
+390-391,CE-390-391 Oso-Félix Cuevas,47,47,47.0
+392,CE-392 Patricio Sanz-Félix Cuevas,19,19,19.0
+393,CE-393 Adolfo Prieto-Félix Cuevas,35,35,35.0
+394,CE-394 Dr. Roberto Gayol-Félix Cuevas,35,35,35.0
+395,CE-395 San Lorenzo-Martín Mendalde,31,31,31.0
+396,CE-396 Martin Mendalde-Felix Cuevas,19,19,19.0
+397,CE-397 San Lorenzo-Gabriel Mancera,31,31,31.0
+398,CE-398 Juan Sánchez Azcona-Félix Cuevas,27,27,27.0
+399,CE-399 Heriberto Frías-San Lorenzo,35,35,35.0
+401,CE-401 San Lorenzo-Avenida Cuauhtémoc,31,31,31.0
+402,CE-402 Uxmal-Municipio Libre,27,27,27.0
+404,CE-404 Miguel Laurent-Avenida División Del Norte,31,31,31.0
+405,CE-405 División Del Norte-Municipio Libre,27,27,27.0
+407,CE-407  Prolongación Xochicalco-General Emiliano Zapata,19,19,19.0
+409,CE-409 Azores - División Del Norte,23,23,23.0
+412,CE-412 Parroquia-Avenida Universidad,34,34,34.0
+413,CE-413 Parroquia-Avenida Coyoacán,35,35,35.0
+414,CE-414 Parroquia-José Ignacio Bartolache,27,27,27.0
+415,CE-415 San Francisco-Parroquia,27,27,27.0
+416,CE-416 Recreo-Parroquia,27,27,27.0
+417,CE-417 Goya-Augusto Rodin,27,27,27.0
+419,CE-419 Actipan-Cadiz,30,30,30.0
+420,CE-420 María Luz Bringas-Oso,23,23,23.0
+421,CE-421 María Luz Bringas-Oso,31,31,31.0
+422,CE-422 Búfalo-José María Rico (Eje 8),19,19,19.0
+423,CE-423 Moras-José María Rico (Eje 8),23,23,23.0
+424,CE-424 Amores-José María Rico (Eje 8),11,11,11.0
+425,CE-425 Nicolas San Juan-Avenida Universidad,35,35,35.0
+427,CE-427 Avenida México-Coyoacán-Av. Popocatépetl (Eje 8),19,19,19.0
+428,CE-428  Prolongación Uxmal-Av. Popocatépetl (Eje 8),27,27,27.0
+429,CE-429 Pirineos-Av. Popocatépetl (Eje 8),19,19,19.0
+430,CE-430 Tripoli-Av. Popocatépetl (Eje 8),23,23,23.0
+432,CE-432 Carrillo Puerto-Avenida México-Coyoacan,35,35,35.0
+433,CE-433 Jose María Olloqui-Lopéz Cotilla,19,19,19.0
+434,CE-434 Jose María Olloqui-Amores,27,27,27.0
+436,CE-436 Rodríguez Saro-Búfalo,30,30,30.0
+437,CE-437 Moras-Comunal,19,19,19.0
+438,CE-438 Adolfo Prieto-José María Olloqui,23,22,23.0
+439,CE-439 Amores-Avenida Coyoacán,19,19,19.0
+440,CE-440  Martin Mendalde - M. López Cotilla,27,27,27.0
+441,CE-441 Puente Xoco-Real de Mayorazgo,31,31,31.0
+442,CE-442  Real de Mayorazgo - Avenida México - Coyoacán,23,23,23.0
+443,CE-443 Bruno Traven-Golondrinas,31,29,31.0
+444,CE-444 General Manuel Rincón-Agustín Gutierrez,19,19,19.0
+445-446,CE-445-446 Riff-Avenida Río Churubusco,59,59,59.0
+447,CE-447 Agustín Melgar-Zamora,27,27,27.0
+448,CE-448 Dr. Andrade-Arcos De Belén,31,31,31.0
+449,CE-449 Acapulco-Puebla,27,27,27.0
+450,CE-450 Ramos Arizpe- Av México Tenochtitlan,31,31,31.0
+451,CE-451 Campos Elíseos-Goldsmith,33,33,33.0
+452,CE-452 Leibnitz-Av. Ejercito Nacional,15,15,15.0
+453,CE-453 Pedregal-Teapa,31,31,31.0
+454,CE-454 Montes Urales-Monte Pelvoux,15,15,15.0
+455,CE-455 Pedregal-Ferrocarril De Cuernavaca,23,23,23.0
+456,CE-456 Alpes-Montes Escandinavos,27,27,27.0
+457,CE-457 Av. Prado Norte-Explanada,17,17,17.0
+458,CE-458 Montes Urales-Volcán,19,19,19.0
+459,CE-459 Volcán-Montes Urales,31,31,31.0
+460,CE-460 Juan Vázquez De Mella-Homero,35,35,35.0
+461,CE-461 Presa Don Martín-Boulevard Miguel De Cervantes Saavedra,31,31,31.0
+462,CE-462 Presa Falcón-Presa Danxhó,23,23,23.0
+463,CE-463 Lago Andrómaco-Lago Zurich,27,19,19.0
+464,CE-464 Mateo Alemán-Prolongación Moliere,23,23,23.0
+465,CE-465 Lago Ginebra-Lago Wetter,27,27,27.0
+466,CE-466 Lago Onega-Lago Ladoga,27,27,27.0
+467,CE-467 Lago Mayor-Lago Alberto,27,27,27.0
+468,CE-468 Lago Xochimilco-Av. Ejército Nacional,33,33,33.0
+469,CE-469 Bahía de la Concepción-Bahía de Todos Los Santos,27,27,27.0
+470,CE-470 Bahía de Las Palmas-Bahía de Todos Los Santos,23,23,23.0
+471,CE-471 Bahía de Chachalacas-Bahía de Santa Bárbara,19,19,19.0
+472,CE-472 Bahía de Santa Bárbara-Bahía de Ballenas,23,23,23.0
+473,CE-473 Bahía del Espíritu Santo-Bahía de Banderas,35,35,35.0
+474,CE-474 Bahía de San Hipólito-Bahía del Espíritu Santo,31,31,31.0
+475,CE-475 Lago Muritz-Lago Alberto,23,23,23.0
+476,CE-476 Lago Como-Laguna de Mayrán,35,35,35.0
+477,CE-477 Lago Iseo-Laguna de Mayrán,23,23,23.0
+478,CE-478 Laguna de Mayrán-Lago Chalco,27,27,27.0
+479,CE-479 Lago Muritz-Av.Marina Nacional,25,25,25.0
+480,CE-480 Lago Iseo-Av. Marina Nacional,19,19,19.0
+481,CE-481 Lago Garda - Mariano Escobedo,19,19,19.0
+482,CE-482 Lago Xochimilco - Laguna de San Cristóbal,23,23,23.0
+483,CE-483 Colegio Salesiano - Marina Nacional,23,23,23.0
+484,CE-484 Laguna Mayran - Lago Cuitzeo,15,15,15.0
+485,CE-485 Lago de Pátzcuaro - Marina Nacional,23,23,23.0
+486,CE-486 Izcoatl - Circuito Interior Melchor Ocampo,23,23,23.0
+487,CE-487 Nopaltzin - Quetzalcoatl,23,23,23.0
+488,CE-488 Huetzin - Cuitláhuac,31,31,31.0
+489,CE-489 Lago Chalco - Laguna Tamiahua,27,27,27.0
+490,CE-490 Lago Garda - FFCC,23,23,23.0
+491,CE-491 Colegio Salesiano - Lago Catemaco,23,23,23.0
+492,CE-492 Lago Cuitzeo - Felipe Carrillo Puerto,35,35,35.0
+493,CE-493 Lago Tláhuac - Laguna de Guzmán,19,19,19.0
+494,CE-494 Tláloc - Calzada México Tacuba,22,22,22.0
+495,CE-495 Amado Nervo - de los Maestros,39,39,39.0
+496,CE-496 Maestro Rural - José Parres,35,35,35.0
+497,CE-497 Manuel Carpio - Plan de Ayala,51,51,51.0
+498,CE-498 de los Maestros - Plan de Agua Prieta,37,37,37.0
+499,CE-499 de los Maestros - Calzada de los Gallos,39,39,39.0
+500,CE-500 Plan de Guadalupe /Ferrocarril de Cuernavaca - Juan Sarabia,23,23,23.0
+501,CE-501 Plan de Guadalupe /Ferrocarril de Cuernavaca - Eligio Ancona,27,27,27.0
+502,CE-502 Mar Mediterráneo - Callejón de la Zanja,35,35,35.0
+503,CE-503 Nextitla - Mar Egeo,19,19,19.0
+504,CE-504 Mar Blanco - Calzada México Tacuba,27,27,27.0
+505,CE-505 Mar Negro - Mariano Escobedo,23,23,23.0
+506,CE-506 Mar Mediterráneo - Mar Arábigo,27,27,27.0
+507,CE-507 Mar Mediterráneo - Azcapotzalco,31,31,31.0
+508,CE-508 Libertad-C. José Sánchez Trujillo,19,19,19.0
+509,CE-509  Juárez - Venecia,23,23,23.0
+510,CE-510 Egipto - Calle Norte 79 A,23,23,23.0
+511,CE-511 Palestina - Egipto,27,27,27.0
+512,CE-512 Clavería - Floresta,27,27,27.0
+513,CE-513 Av. Aquiles Serdán - Av. Invierno,39,39,39.0
+514,CE-514 José F. Gutiérrez - Invierno,31,31,31.0
+515,CE-515 Tebas-C. Salónica,19,19,19.0
+516,CE-516 Texcoco - Nilo,19,19,19.0
+517,CE-517 Ignacio Allende - Clavería,27,27,27.0
+518,CE-518 Heliópolis - Norte 79A,27,27,27.0
+519,CE-519 Poniente 58 - Cuitláhuac,23,23,23.0
+520,CE-520 Salónica - Eje 3 Norte Camarones,33,33,33.0
+521,CE-521 Yuca - Clavelinas,31,31,31.0
+522,CE-522 Prol. Nueces - Av. Cuitlahuac,27,27,27.0
+523,CE-523 Toronjil - Av. Cuitlahuac,19,19,19.0
+524,CE-524 Malvón - Juan Sarabia,23,23,23.0
+525,CE-525 Boldo - Tila,23,23,23.0
+526,CE-526 Toronjil - Mejorana,19,19,19.0
+527,CE-527 Boldo - Alcanfores,23,23,23.0
+528,CE-528 Tlatilco - Av. Jardín,27,27,27.0
+529,CE-529  Av Plan de San Luis - Calle Clavelinas,19,19,19.0
+530,CE-530  Membrillo - Cda. Nueces,27,27,27.0
+531,CE-531 Norte 67 - Poniente 44,35,35,35.0
+532,CE-532  Av. Biólogo Maximino Martínez - Camarones,21,21,21.0
+533,CE-533  Av Plan de San Luis - Eulalia Gúzman,23,23,23.0
+534,CE-534 Tlatilco - Jazmín,27,27,27.0
+535,CE-535 Av. Jardín - Orquídea,19,19,19.0
+536,CE-536 Fresno - Eulalia Guzmán (Eje 2 Norte),23,23,23.0
+537,CE-537 Fresno - Clavel,23,23,23.0
+538,CE-538 Nogal - Eligio Ancona,23,23,23.0
+539,CE-539 Naranjo - Av. Ricardo Flores Magon,23,23,23.0
+540,CE-540 Eucalipto - Ricardo Flores Magón,23,23,23.0
+541,CE-541 Eligio Ancona - Naranjo,27,26,27.0
+542,CE-542 Dr. Enrique González Martínez - Eligio Ancona,23,23,23.0
+543,CE-543 Jaime Torres Bodet - Manuel Carpio,27,27,27.0
+544,CE-544 Salvador Díaz Mirón - Nogal,23,23,23.0
+545,CE-545 Sabino - Salvador Díaz Mirón,27,27,27.0
+546,CE-546 Salvador Díaz Mirón - Santa María la Ribera,23,23,23.0
+547,CE-547 Dr. Enrique González Martínez - Salvador Díaz Mirón,31,31,31.0
+548,CE-548 Dr. Mariano Azuela - Jose Antonio Alzate,39,39,39.0
+549,CE-549 Sor Juana Ines de la Cruz - Dr. Atl,27,27,27.0
+550,CE-550 Sor Juana Ines de la Cruz - Fresno,23,23,23.0
+551,CE-551 Nogal - Ribera de San Cosme,23,23,23.0
+552,CE-552 Fresno - Ribera de San Cosme,23,23,23.0
+553,CE-553  Jaime Torres Bodet - Ribera de San Cosme,35,35,35.0
+554,CE-554 Heroes Ferrocarrileros - Mariano Azuela,27,27,27.0
+555,CE-555 Ribera de San Cosme - Insurgentes Centro,35,35,35.0
+556,CE-556 Plaza Tlaxcoaque - Diagonal 20 de noviembre,33,33,33.0
+557,CE-557 5 de Febrero - Fernando de Alva Ixtlilxochitl,27,27,27.0
+558,CE-558 Chimalpopoca - Simón Bolívar,27,27,27.0
+559,CE-559 Fernando de Alva Ixtlilxochitl - Diagonal 20 de noviembre,27,27,27.0
+560,CE-560 Doctor Liceaga - Eje Central,27,27,27.0
+561,CE-561 Dr. Jiménez - Dr. Lavista,27,27,27.0
+562,CE-562 Claudio Bernard - José María Vertiz,23,23,23.0
+563,CE-563 Doctor Velasco - Niños Héroes,23,23,23.0
+564,CE-564 Doctor Carmona y Valle - Doctor Velasco,23,23,23.0
+565,CE-565 Dr. Martinez del Rio - Dr. Lucio,23,23,23.0
+566,CE-566 Dr. Jiménez - Dr. García Diego,23,23,23.0
+567,CE-567 Doctor Martínez del Río - Doctor José Terrés,23,23,23.0
+568,CE-568 Doctor Barragán - Doctor Erazo,23,23,23.0
+569,CE-569 Gutiérrez Nájera - Bolívar,19,19,19.0
+570,CE-570 Alfredo Chavero - Simón Bolívar,27,27,27.0
+571,CE-571 Manuel M. Flores - Calzada San Antonio Abad,35,35,35.0
+572,CE-572 Manuel J. Othón - José T. Cuellar,27,27,27.0
+573,CE-573 Fernando Ramírez - Isabel la Católica,27,27,27.0
+574,CE-574 José María Roa Bárcenas - Simón Bolívar,15,15,15.0
+575,CE-575 Fernando Ramírez - Eje Central,29,29,29.0
+576,CE-576 Doctor Arce - Jose Maria Vertiz,27,27,27.0
+577,CE-577 Doctor Márquez - Doctor Jiménez,31,31,31.0
+578,CE-578 Doctor Jiménez - Doctor Federico Gómez Santos,27,27,27.0
+579,CE-579 Doctor Márquez - Privada Doctor Duran,27,27,27.0
+580,CE-580 Antonio Solís - Bolívar,19,19,19.0
+581,CE-581 José María Roa Bárcenas - San Antonio Abad,27,27,27.0
+582,CE-582 Antonio Solis-San Antonio Abad,19,19,19.0
+583,CE-583 Ángel del Campo - 5 de Febrero,35,35,35.0
+584,CE-584 Enrique Granados - José Peón Contreras (Eje 3),31,31,31.0
+585,CE-585 José Toribio Medina - Manuel Navarrete,27,27,27.0
+586,CE-586 Bernardo Couto-Juan E. Hernández y Davalos,27,27,27.0
+587,CE-587 Jose Toribio Medina - Marcelino Davalos,27,27,27.0
+588,CE-588  Av. Fernando - La coruña,31,31,31.0
+589,CE-589 Cádiz - Calzada de Tlalpan,23,23,23.0
+590,CE-590 Fernando - Isabel la Católica,31,31,31.0
+591,CE-591 Simón Bolívar - La Coruña,27,27,27.0
+592,CE-592 Cádiz - Eje Central Lázaro Cárdenas,27,27,27.0
+593,CE-593 Zempoala - Diagonal de San Antonio,31,31,31.0
+594,CE-594 Xochicalco - Obrero Mundial,31,31,31.0
+595,CE-595 Yacatas - Diagonal de San Antonio,27,27,27.0
+596,CE-596 Cumbres de Maltrata - Uxmal,27,27,27.0
+597,CE-597 Diagonal San Antonio - Icacos,27,27,27.0
+598,CE-598 Palenque - Cumbres de Maltrata,31,31,31.0
+599,CE-599 La Morena - Zempoala,27,27,27.0
+600,CE-600 Cumbres de Acultzingo - Av. Universidad,31,31,31.0
+601,CE-601 Navarra - Fernando,31,31,31.0
+602,CE-602 Correspondencia - Eje Central Lázaro Cárdenas,35,35,35.0
+603,CE-603 Castilla - Eje 4 sur Xola,27,27,27.0
+604,CE-604 Andalucía - Carteros,31,31,31.0
+605,CE-605 5 de Febrero - Alfonso XIII,27,27,27.0
+606,CE-606 Alfonso XIII - Aragón,27,27,27.0
+607,CE-607 Unión Postal - Calzada de Tlalpan,19,19,19.0
+608,CE-608 Ahorro Postal - Francisco Márquez,51,51,51.0
+609,CE-609 Romero - Calzada de Tlalpan,31,31,31.0
+610,CE-610  Av. Víctor Hugo - Av. Niños Héroes de Chapultepec,31,31,31.0
+611,CE-611 Miguel Negrete - Niños Héroes de Chapultepec,23,23,23.0
+612,CE-612 Torres Adalid - Cumbres de Maltrata,31,31,31.0
+613,CE-613 Luz Saviñón - Doctor José María Vertiz,31,31,31.0
+614,CE-614 Torres Adalid - Av. Cuauhtémoc,27,27,27.0
+615,CE-615 Tajín - Universidad,31,31,31.0
+616,CE-616 Petén - Eje 5 Sur,23,23,23.0
+617,CE-617 Mitla - Eje 5 Sur,31,31,31.0
+618,CE-618 Bartolomé R. Salido - Edzna,31,31,31.0
+619,CE-619 Kiff - Rafael Solana Verduguillo,23,23,23.0
+620,CE-620 Fernando Montes de Oca - Priv. Lago,23,23,23.0
+621,CE-621 Lago Poniente - Calzada de Tlalpan,26,26,26.0
+622,CE-622 Fernando Montes de Oca - Eje 6 Sur,27,27,27.0
+623,CE-623 Fernando Montes de Oca - Antonio Rodríguez,35,35,35.0
+624,CE-624 Luis Spota - Eje Central Lázaro Cárdenas,35,35,35.0
+625,CE-625 Zempoala - Angel Urraza,19,19,19.0
+626,CE-626 San Borja - Petén,27,27,27.0
+627,CE-627 San Borja - Av. Universidad,31,30,31.0
+628,CE-628 Tenayuca - Chichen Itzá,23,21,23.0
+629,CE-629 Tajín - Chichen Itzá,19,19,19.0
+630,CE-630 Cuicuilco - Motozintla,31,31,31.0
+631,CE-631 Miguel Laurent - Eje Central,27,27,27.0
+632,CE-632 Victor Hugo - Sevilla,27,27,27.0
+633,CE-633 Canarias - Calzada Santa Cruz,27,27,27.0
+634,CE-634 Rumania - Víctor Hugo,27,27,27.0
+635,CE-635 Calzada Santa Cruz - Antillas,39,39,39.0
+636,CE-636 Ajusco - Antillas,23,23,23.0
+637,CE-637 Ajusco - Emperadores,23,23,23.0
+638,CE-638 Av Pirineos - C. Antillas,19,19,19.0
+639,CE-639 Bulgaria - Rumania,23,23,23.0
+640,CE-640 Odesa - Bulgaria,23,23,23.0
+641,CE-641 Sevilla - Av. Presidentes,23,23,23.0
+642,CE-642 Repúblicas - Monrovia,23,23,23.0
+643,CE-643 Filipinas - Av. Pirineos,39,39,39.0
+644,CE-644 Monrovia - Popocatépetl (Eje 8 Sur),23,23,23.0
+645,CE-645 Saratoga - Ajusco,27,27,27.0
+646,CE-646  Rumania - Av. Popocatépetl,27,27,27.0
+647,CE-647 Antillas - Nevado,23,23,23.0
+648,CE-648 Rafael Olivia - 20 de agosto,25,25,25.0
+649,CE-649 Héroes del 47 - Calzada de Tlalpan,23,23,23.0
+650,CE-650 Xicoténcatl- Prolongación Xicoténcatl,27,27,27.0
+651,CE-651 Héroes del 47 - División del Norte,31,31,31.0
+652,CE-652 Xicoténcatl - División del Norte,23,23,23.0
+653,CE-653 Londres - División del Norte,23,23,23.0
+654,CE-654 Londres - San Pedro,23,23,23.0
+655,CE-655 Gomez Farias - Viena,19,19,19.0
+656,CE-656 Ignacio Allende - Paris,35,35,35.0
+657,CE-657 Madrid - Centenario,19,19,19.0
+658,CE-658 Vicente Guerrero - Berlín,19,19,19.0
+659,CE-659  Madrid - Avenida Mexico,23,23,23.0
+660,CE-660 Josefa Ortiz de Dominguez - Circuito Interior,27,27,27.0
+661,CE-661 Madrid - Universidad,27,27,27.0
+662,CE-662 Manzano - Circuito Interior,23,23,23.0
+663,CE-663 Hortensia - Avenida Universidad,23,23,23.0
+664,CE-664 Hortensia - 2da cerrada de Minerva,23,23,23.0
+665,CE-665 Moras - Mango,23,23,23.0
+666,CE-666 Moras - Naranjo,23,23,23.0
+667,CE-667 Hermes - Mosqueta,23,23,23.0
+668,CE-668 Plateros - Capuchinas,33,33,33.0
+669,CE-669 Los Juarez - Sagredo,23,23,23.0
+670,CE-670 Felix Parra - Flamencos,23,23,23.0
+671,CE-671 Plateros - Jose María Velasco,36,36,36.0
+672,CE-672 José María Velasco - Damas,31,31,31.0
+673,CE-673 Miguel Noreña - José María Ibarrarán,35,35,35.0
+674,CE-674 Silvestre Revueltas - Macedonio Alcalá,27,27,27.0
+675,CE-675 Manuel Castro Padilla - Av. Revolución,35,35,35.0
+676,CE-676  Ricardo Palmerín - Abundio Martínez,19,19,19.0
+677,CE-677  Juan Pablo II - Av. de los Insurgentes Sur,35,35,35.0
+678,CE-678 Francia - Tecoyotitla,27,27,27.0
+679,CE-679 Olivo - Tecoyotitla,31,31,31.0
+680,CE-680  Diego Becerra - Av. Revolución,27,27,27.0
+681,CE-681 Guty Cárdenas - Ricardo Castro,19,19,19.0
+682,CE-682 Manuel M. Ponce - Fernando M. Villalpando,23,23,23.0
+683,CE-683 Pedro Luis Ogazón-Insurgentes Sur,27,27,27.0
+684,CE-684 Vito Alessio Robles - Tecoyotitla,31,31,31.0
+685,CE-685 Av De la Paz - Insurgentes,27,27,27.0
+686,CE-686 Vito Alessio Robles - Universidad,27,27,27.0
+687,CE-687 Francisco Sosa - Panzacola,27,27,27.0
+688,CE-688 Panzacola - Miguel Ángel de Quevedo,33,33,33.0
+689,CE-689 G. Pérez Valenzuela - Salvador Novo,23,23,23.0
+690,CE-690 Tata Vasco - Av. Miguel Ángel de Quevedo,23,23,23.0
+691,CE-691 Melchor Ocampo - Dulce Olivia,23,23,23.0
+692,CE-692 Presidente Carranza - Francisco Sosa,19,19,19.0
+693,CE-693 Xicoténcatl - Vicente Guerrero,31,31,31.0
+694,CE-694 Ignacio Aldama - Centenario,23,23,23.0
+695,CE-695 Malintzin - Allende,23,23,23.0
+696,CE-696 México - Malintzin,39,39,39.0
+697,CE-697 Francisco Sosa - Tres Cruces,35,35,35.0
+698,CE-698 Cerrada Zamora - Av. Miguel Ángel de Quevedo,15,15,15.0
+699,CE-699 San Gregorio - Felipe Carrillo Puerto,23,23,23.0
+700,CE-700 Abasolo - Miguel Hidalgo,35,35,35.0
+701,CE-701 Cuauhtémoc - Morelos,23,23,23.0
+702,CE-702 Fernández Leal - Plaza de la Conchita,31,31,31.0
+703,CE-703 Miguel Hidalgo - Calzada General Anaya,23,23,23.0
+704,CE-704 Pacífico - Asia,23,23,23.0
+705,CE-705 Europa - Miguel Ángel de Quevedo,27,27,27.0
+706,CE-706 Canadá - Acolotitla,23,23,23.0
+707,CE-707 Irlanda - División del Norte,27,27,27.0
+708,CE-708 Irlanda-Canada,27,27,27.0
+709,CE-709 Inglaterra - Antigua Taxqueña,23,22,23.0
+710,CE-710 Molino del Rey - Glorieta de la Lealtad,39,39,39.0
+711,CE-711 Molino del Rey - Av. Constituyentes,39,39,39.0

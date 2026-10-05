@@ -1,17 +1,6 @@
-"""Días de evaluación y de selección (plan 2026-09-28-ecosim2, "Días").
+"""Cortes reproducibles de los días del run 3.
 
-`uv run python -m ecosim.days` escribe `ecosim/days.json` con dos listas de 15
-días de sep–nov 2025 (sin el 2025-11-30, cuya ventana llega a diciembre):
-
-* `evaluacion`: los 15 días del run 1 (`config.RUN1_EVAL_DAYS`), conservados si
-  cumplen la cobertura nueva (≥ 90% de los bloques de 60 min de [05:30, 00:30)
-  con al menos un snapshot crudo). Uno que no cumpla se reemplaza por otro del
-  mismo estrato al azar con semilla `EVAL_SEED` (20260928).
-* `seleccion`: 15 días nuevos, disjuntos de los de evaluación, con cobertura
-  ≥ 90%, al azar con semilla `SELECTION_SEED` (20260929), estratificados 11
-  entre semana + 4 fin de semana o festivo (MX).
-
-`days` es un alias de `evaluacion` (compatibilidad con el código del run 1).
+`uv run python -m ecosim.days` reconstruye `days.json` desde el feed.
 """
 
 from __future__ import annotations
@@ -21,6 +10,7 @@ from datetime import date, timedelta
 
 import holidays
 import numpy as np
+import pandas as pd
 
 from ecosim import config as C
 from ecosim import data
@@ -32,101 +22,106 @@ def day_type(d: date) -> str:
     return "weekend" if d.weekday() >= 5 else "weekday"
 
 
-def _weekday(c: dict) -> bool:
-    return c["type"] == "weekday"
+def _dates(start: date, end: date):
+    for i in range((end - start).days + 1):
+        yield start + timedelta(days=i)
 
 
-def candidate_days() -> list[dict]:
-    out, d = [], C.EVAL_START
-    while d <= C.EVAL_END:
-        out.append({"day": d.isoformat(), "type": day_type(d), "coverage": round(data.coverage(d), 4)})
-        d += timedelta(days=1)
-    return out
+def candidate_days(start: date, end: date) -> list[dict]:
+    return [{"day": d.isoformat(), "type": day_type(d),
+             "coverage": round(data.coverage(d), 4),
+             "open_offset_min": _initial_photo_offset(d)} for d in _dates(start, end)]
 
 
-def evaluation_days(cands: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Los días del run 1 que cumplen la cobertura; cada uno que no cumpla se
-    reemplaza (en orden de fecha) por uno del mismo estrato elegido al azar
-    con `EVAL_SEED` entre los candidatos que cumplen y no están ya elegidos.
-    Devuelve (días, reemplazos)."""
-    by_day = {c["day"]: c for c in cands}
-    ok = [c for c in cands if c["coverage"] >= C.COVERAGE_MIN]
-    chosen = [by_day[d] for d in C.RUN1_EVAL_DAYS]
-    keep = [c for c in chosen if c["coverage"] >= C.COVERAGE_MIN]
-    rng = np.random.default_rng(C.EVAL_SEED)
-    out, repl = list(keep), []
-    for c in chosen:
-        if c in keep:
-            continue
-        taken = {x["day"] for x in out} | set(C.RUN1_EVAL_DAYS)
-        pool = [x for x in ok if _weekday(x) == _weekday(c) and x["day"] not in taken]
-        new = pool[rng.choice(len(pool))]
-        out.append(new)
-        repl.append({"run1": c["day"], "coverage": c["coverage"], "nuevo": new["day"]})
-    return sorted(out, key=lambda c: c["day"]), repl
+def _sample(candidates: list[dict], weekday: int, other: int,
+            seed: int | np.random.Generator) -> list[dict]:
+    eligible = [c for c in candidates if c["coverage"] >= C.COVERAGE_MIN
+                and c["open_offset_min"] is not None]
+    wd = [c for c in eligible if c["type"] == "weekday"]
+    we = [c for c in eligible if c["type"] != "weekday"]
+    if len(wd) < weekday or len(we) < other:
+        raise ValueError(f"pool insuficiente: {len(wd)} entre semana, {len(we)} otros")
+    rng = seed if isinstance(seed, np.random.Generator) else np.random.default_rng(seed)
+    out = [wd[i] for i in rng.choice(len(wd), weekday, replace=False)]
+    out += [we[i] for i in rng.choice(len(we), other, replace=False)]
+    return sorted(out, key=lambda c: c["day"])
 
 
-def selection_days(cands: list[dict], exclude: list[str]) -> list[dict]:
-    """11 entre semana + 4 fin de semana/festivo al azar (`SELECTION_SEED`),
-    sin reemplazo, entre los candidatos con cobertura ≥ 0.90 que no están en
-    `exclude`."""
-    ok = [c for c in cands if c["coverage"] >= C.COVERAGE_MIN and c["day"] not in set(exclude)]
-    wd = [c for c in ok if _weekday(c)]
-    we = [c for c in ok if not _weekday(c)]
-    rng = np.random.default_rng(C.SELECTION_SEED)
-    pick_wd = rng.choice(len(wd), C.N_SEL_WEEKDAY, replace=False)
-    pick_we = rng.choice(len(we), C.N_SEL_WEEKEND, replace=False)
-    chosen = [wd[i] for i in pick_wd] + [we[i] for i in pick_we]
-    return sorted(chosen, key=lambda c: c["day"])
+def selection_days(candidates: list[dict]) -> list[dict]:
+    return _sample(candidates, C.N_SEL_WEEKDAY, C.N_SEL_WEEKEND, C.SELECTION_SEED)
+
+
+def curve_days(candidates: list[dict]) -> list[dict]:
+    out = []
+    rng = np.random.default_rng(C.CURVE_SEED)
+    for month in ("2025-09", "2025-10", "2025-11", "2025-12"):
+        pool = [c for c in candidates if c["day"].startswith(month)]
+        out.extend(_sample(pool, 6, 2, rng))
+    return sorted(out, key=lambda c: c["day"])
+
+
+def _initial_photo_offset(d: date) -> float | None:
+    try:
+        raw = data._raw_snapshots(d)
+    except FileNotFoundError:
+        return None
+    raw = raw[raw["short_name"].str.fullmatch(C.SHORT_NAME_RE)]
+    opening = raw[raw["t"].dt.hour == 5].groupby("t")["is_renting"].agg(["mean", "size"])
+    renting = opening["mean"].where(opening["size"] >= 0.95 * opening["size"].max())
+    valid = renting[renting >= C.INITIAL_OPEN_RENTING_MIN]
+    if valid.empty:
+        return None
+    return float((valid.index[0] - pd.Timestamp(C.day_bounds(d)[0])) / pd.Timedelta(minutes=1))
 
 
 def build() -> dict:
-    cands = candidate_days()
-    ev, repl = evaluation_days(cands)
-    sel = selection_days(cands, [c["day"] for c in ev])
-    ok = [c for c in cands if c["coverage"] >= C.COVERAGE_MIN]
+    august = candidate_days(date(2025, 8, 1), date(2025, 8, 31))
+    test = candidate_days(date(2025, 9, 1), date(2026, 1, 31))
+    seleccion = selection_days(august)
+    prueba = {m: [c for c in test if c["day"].startswith(m) and c["coverage"] >= C.COVERAGE_MIN
+                  and c["open_offset_min"] is not None]
+              for m in ("2025-09", "2025-10", "2025-11", "2025-12", "2026-01")}
+    curva = curve_days(test)
+    prod = {}
+    trip_days = data.trip_days(date(2026, 2, 1), date(2026, 8, 31))
+    for m in range(2, 9):
+        month = f"2026-{m:02d}"
+        start = date(2026, m, 1)
+        end = C._month_offset(2026, m, 1) - timedelta(days=1)
+        candidates = []
+        for d in _dates(start, end):
+            offset = _initial_photo_offset(d)
+            full_trips = d in trip_days and (m != 3 or d <= C.TRIPS_2026_MARCH_LAST_COMPLETE)
+            if offset is not None and offset <= 10 and full_trips and data.coverage(d) >= C.COVERAGE_MIN:
+                candidates.append({"day": d.isoformat(), "type": day_type(d),
+                                   "offset_min": round(offset, 2), "coverage": round(data.coverage(d), 4)})
+        prod[month] = candidates[:8]
     out = {
-        "range": [C.EVAL_START.isoformat(), C.EVAL_END.isoformat()],
+        "coverage_def": "fracción de 20 bloques (19 de 60 min y uno de 30 min) en [05:00, 00:30) con foto",
         "coverage_min": C.COVERAGE_MIN,
-        "coverage_def": "fracción de los 19 bloques de 60 min en [05:30, 00:30 del día siguiente) "
-                        "con ≥1 snapshot GBFS crudo",
-        "eval_seed": C.EVAL_SEED,
-        "selection_seed": C.SELECTION_SEED,
-        "pool": {
-            "weekday": sum(_weekday(c) for c in ok),
-            "weekend_or_holiday": sum(not _weekday(c) for c in ok),
-            "excluded_low_coverage": [c["day"] for c in cands if c["coverage"] < C.COVERAGE_MIN],
-            "excluded_sealed_window": ["2025-11-30"],
-        },
-        "reemplazos_evaluacion": repl,
-        "evaluacion": ev,
-        "seleccion": sel,
-        "days": ev,
-        "all_candidates": cands,
+        "selection_seed": C.SELECTION_SEED, "curve_seed": C.CURVE_SEED,
+        "seleccion": seleccion, "prueba": prueba, "curva": curva, "prod_2026": prod,
+        "coverage_by_month": json.loads(C.COVERAGE_AUDIT.read_text())["months"],
     }
     C.DAYS_JSON.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n")
     return out
 
 
-def load_days(kind: str = "evaluacion") -> list[str]:
-    """Días ('YYYY-MM-DD') en orden: `kind` = "evaluacion" (por defecto),
-    "seleccion" o "todos" (las dos listas juntas, ordenadas)."""
+def load_days(kind: str = "seleccion", month: str | None = None) -> list[str]:
     js = json.loads(C.DAYS_JSON.read_text())
-    if kind == "todos":
-        return sorted(d["day"] for d in js["evaluacion"] + js["seleccion"])
-    if kind not in ("evaluacion", "seleccion"):
-        raise ValueError(f"kind: 'evaluacion', 'seleccion' o 'todos', llegó {kind!r}")
-    return [d["day"] for d in js[kind]]
+    if kind in ("seleccion", "curva"):
+        rows = js[kind]
+    elif kind in ("prueba", "prod_2026") and month is not None:
+        rows = js[kind][month]
+    else:
+        raise ValueError(f"kind/mes inválido: {kind!r}, {month!r}")
+    return [r["day"] for r in rows]
 
 
 if __name__ == "__main__":
-    out = build()
-    for kind in ("evaluacion", "seleccion"):
-        ds = out[kind]
-        n_wd = sum(_weekday(d) for d in ds)
-        print(f"{kind}: {len(ds)} días ({n_wd} entre semana, {len(ds) - n_wd} fin de semana/festivo)")
-        for d in ds:
-            print(" ", d["day"], d["type"], d["coverage"])
-    print("reemplazos:", out["reemplazos_evaluacion"] or "ninguno")
-    print("excluidos por cobertura:", out["pool"]["excluded_low_coverage"])
+    result = build()
+    print("seleccion:", len(result["seleccion"]), "días")
+    print("prueba:", {m: len(v) for m, v in result["prueba"].items()})
+    print("curva:", len(result["curva"]), "días")
+    print("prod_2026:", {m: len(v) for m, v in result["prod_2026"].items()})
     print("→", C.DAYS_JSON)

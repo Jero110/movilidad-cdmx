@@ -1,98 +1,63 @@
-# Rebalanceo de Ecobici con un asignador cada 15 minutos
+# Rebalanceo de Ecobici: pronóstico de viajes + asignación cada 15 minutos
 
-**Pregunta:** ¿qué tanto bajarían las estaciones vacías o llenas de Ecobici si un asignador decidiera cada 15 min
-qué bicis mover, con un pronóstico de viajes? **Resultado** (simulador viaje por viaje, 05:30–00:30, 15 días de
-evaluación): con un pronóstico emitido una sola vez a las 05:30 (`daily`), el asignador baja los minutos-estación
-vacíos + llenos (E+F) **55% contra lo que hizo Ecobici**. Gana los 15 días con casi los mismos movimientos. El
-resultado es *dentro del simulador*.
+**Pregunta:** ¿combinar un pronóstico de viajes con un algoritmo de asignación reduce los minutos en que las estaciones de Ecobici están vacías o llenas, frente a lo que hace hoy Ecobici, con restricciones logísticas realistas?
 
-- **Reporte:** [`report/reporte-final.pdf`](report/reporte-final.pdf) (formato IEEE, 9 páginas).
-- **Conclusiones y sesgos:** [`ecosim/results/CONCLUSIONES.md`](ecosim/results/CONCLUSIONES.md).
+**Resultado:** simulador viaje por viaje, 05:00–00:30, 152 días de prueba (septiembre de 2025 a enero de 2026), con parámetros fijados antes en días de selección. Una asignación cada 15 minutos guiada por una media móvil deja **56,542 minutos-estación vacíos o llenos (E+F) por día, contra 100,641 de Ecobici: 43.8 % menos** (IC95 41.7–46.0 %). Gana los 152 días. El resultado es *dentro del simulador*. Los límites están en el reporte y en [`ecosim/results/CONCLUSIONES.md`](ecosim/results/CONCLUSIONES.md).
+
+- **Reporte:** [`report/reporte-final.pdf`](report/reporte-final.pdf) (IEEE). Fuente en [`report/reporte-final.tex`](report/reporte-final.tex). Cada cifra tiene su origen en [`report/fuentes-numeros.md`](report/fuentes-numeros.md).
 - **Datos y supuestos:** [`ecosim/FUNDAMENTOS.md`](ecosim/FUNDAMENTOS.md).
+- **Resultados:** [`ecosim/results/`](ecosim/results/) (`resultados.csv`, `tablas.md`, `frozen.json`).
+
+## Código
+
+| Módulo | Qué hace |
+|---|---|
+| `ecosim/data.py` | Viajes de datos abiertos y fotos del feed de estaciones |
+| `ecosim/medicion.py` | Movimientos de Ecobici inferidos: cambio entre fotos menos viajes |
+| `ecosim/sim.py` | Simulador viaje por viaje: recoge en t+15, entrega en t+60, desvíos a la estación más cercana |
+| `ecosim/pronostico.py` | Media móvil y LightGBM, en forma diaria y directa (1–4 h) |
+| `ecosim/asignador.py` | Programa entero (HiGHS) que decide cada 15 min qué recoger y qué entregar |
+| `ecosim/run.py` | Experimentos: selección y prueba de los siete escenarios |
+| `ecosim/replay.py` | Precálculo del Replay de la app (16 días × 7 escenarios) |
+| `ecosim/live.py` | Pronóstico y asignación en vivo sobre el feed |
+| `ecosim/actualizar.py` | Actualización mensual: baja el mes nuevo y reentrena los modelos de producción |
 
 ## Prender la app
 
-Hace falta [`uv`](https://docs.astral.sh/uv/) (instala Python ≥ 3.12 si falta).
+Hace falta [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
 cd scripts/ecobici_mapa
-uv run python3 server.py            # abre http://localhost:8000
+uv run python3 server.py            # http://localhost:8000
 ```
 
-Opciones: `--port 9000`, `--no-browser`, `--no-live` (sin el loop de predicción en vivo). Ctrl-C para detener.
-
-Qué funciona según los datos que haya:
+Opciones: `--port`, `--no-browser`, `--no-live`.
 
 | Pestaña | Qué muestra | Qué necesita |
 |---|---|---|
-| **Bicis ahora** | mapa 3D con el feed GBFS en vivo | nada, solo internet |
-| **Predicción** | cada 15 min: pronóstico `daily` + asignador, qué mover ahora y qué tan bueno habría sido | los CSV de viajes en `data/ecobici/` |
-| **Replay** | un día paso a paso (cada 15 min): estado, viajes, decisión del asignador, movimientos de Ecobici, E+F acumulado | los insumos de "Datos" y `uv run python -m ecosim.replay` |
-| **Snapshots** | la red a las 05:30 o 12:30 de un día pasado | `uv run python3 scripts/fetch_daily_snapshots.py --since 2026-09-01` |
-| **Rebalanceo** | reubicaciones de bicis entre viajes en un día | `uv run python3 analysis/rebalance_routes.py 2025-09-17` |
+| **Ahora** | Mapa con las bicis disponibles, buscador y ficha de estación con todos los campos del feed | Solo internet |
+| **Replay** | Un día paso a paso cada 15 min, con los números de cada foto que cuadran (viajes, órdenes, cambios de etiqueta), comparación de dos escenarios y coropleta por AGEB | Los datos de abajo y `uv run python -m ecosim.replay --force` |
+| **Predicción** | Pronóstico (diario o a 1–4 h, tres modelos) y asignación en vivo que emite órdenes cada 15 min, disparada por los cambios del feed | Modelos de producción: `uv run python -m ecosim.actualizar` |
 
-Sin la carpeta `data/` solo funciona **Bicis ahora**. Detalle de cada pestaña en
-[`scripts/ecobici_mapa/README.md`](scripts/ecobici_mapa/README.md) y capturas en
-[`scripts/ecobici_mapa/screenshots/`](scripts/ecobici_mapa/screenshots/).
+Contratos JSON, qué es medido y qué es estimado: [`scripts/ecobici_mapa/README.md`](scripts/ecobici_mapa/README.md). Capturas en [`scripts/ecobici_mapa/screenshots/`](scripts/ecobici_mapa/screenshots/).
 
 ## Datos
 
-`data/` **no está en el repo** (2 GB). Sale de dos fuentes públicas:
+`data/` no está en el repo, por tamaño. Fuentes, todas públicas:
 
-1. **Viajes de Ecobici** (datos abiertos, un CSV por mes, viaje por viaje: estación y hora de origen y destino):
-   <https://ecobici.cdmx.gob.mx/datos-abiertos/>. Se guardan en `data/ecobici/` con los nombres que espera
-   `ecosim/config.py`: `2025-01.csv` … `2025-09.csv`, `2025-10-1.csv`, `2025-11.csv`. La predicción en vivo
-   usa además los meses más recientes que haya (p. ej. `public_data_web_2026-08_2.csv`).
-2. **Estado de las estaciones (GBFS) histórico**: el bucket público de
-   [`MaxHalford/bike-sharing-history`](https://github.com/MaxHalford/bike-sharing-history)
-   (`s3://bike-sharing-history/mexico-city/ecobici`, vía `storage.googleapis.com`). `build-snapshots` lo lee
-   directo con duckdb; no hay descarga manual.
+- **Viajes:** CSV mensuales de [datos abiertos de Ecobici](https://ecobici.cdmx.gob.mx/datos-abiertos/), en `data/ecobici/`. `uv run python -m ecosim.data build-trips` arma el parquet.
+- **Fotos del estado de estaciones:** archivo histórico público [`MaxHalford/bike-sharing-history`](https://github.com/MaxHalford/bike-sharing-history). Se baja con `uv run python -m ecosim.data build-snapshots`.
+- **Feed en vivo:** <https://gbfs.mex.lyftbikes.com/gbfs/gbfs.json>.
+- **Zonas:** AGEB urbanas del Marco Geoestadístico 2024 del INEGI, ya recortadas en `scripts/ecobici_mapa/zonas_ageb.geojson`. `zonas_ageb.py` las regenera.
 
-Construir los insumos, en este orden, desde la raíz del repo:
+## Reproducir
 
 ```bash
-uv run python -m ecosim.data build-trips       # CSV ene–nov 2025 → data/derived/ecosim/trips_2025_01_11.parquet
-uv run python -m ecosim.data build-snapshots   # bucket GBFS → data/derived/ecosim/snapshots/{día}.parquet
-uv run python -m ecosim.days                   # días de evaluación y selección → ecosim/days.json (ya versionado)
-uv run python -m ecosim.medicion               # movimientos de Ecobici y dañadas → ecobici_moves.parquet, damage_events.parquet
-uv run python -m ecosim.pronostico             # pronósticos daily/ma/model/oracle → data/derived/ecosim/forecasts/
-uv run python -m ecosim.replay                 # precalcula el replay de la app (15 días × 4 brazos, ~15 min)
+uv run pytest -q                                   # pruebas (requieren data/)
+node scripts/ecobici_mapa/test_ui.cjs              # prueba de la app en navegador contra el servidor real
+uv run python3 report/figs/numeros_run3.py --check # cada cifra del reporte contra su origen
+cd report && pdflatex reporte-final.tex && bibtex reporte-final && pdflatex reporte-final.tex && pdflatex reporte-final.tex
 ```
 
-**Diciembre 2025 está sellado.** `2025-12.csv` no se lee nunca: `config.SEALED_FROM`, los cargadores de ecosim y
-el pronóstico en vivo lo excluyen explícitamente y lo registran en el log.
-
-## Experimentos
-
-```bash
-uv run python -m ecosim.run --all                  # todo desde cero, ~85 min (8 procesos de 1 thread)
-uv run python -m ecosim.run --stage eval           # un paso: v1 | lambda | h | grid | eval | sens | falla | tablas
-uv run python -m ecosim.sim --day 2025-09-03 --arm ecobici   # un día de un brazo del simulador
-uv run pytest tests/ecosim -q                      # 318 tests con data/ construida
-```
-
-Sin `data/` pasan 292, 22 se saltan y los 4 de `test_replay.py` dan error porque necesitan los viajes del día.
-
-Resultados versionados en `ecosim/results/`: `resultados.csv` (todas las corridas), `frozen.json` (parámetros
-congelados en días de selección), `tablas.md` y `CONCLUSIONES.md`.
-
-## Estructura
-
-```
-ecosim/                 el código del proyecto
-  data.py, days.py        carga de viajes y snapshots, días de selección y evaluación
-  medicion.py             qué movió Ecobici de verdad (desde GBFS) y bicis dañadas
-  pronostico.py           pronósticos daily / ma / model / oracle
-  asignador.py            asignador MILP de horizonte móvil (HiGHS), decide cada 15 min
-  sim.py                  simulador viaje por viaje
-  run.py                  experimentos: selección, evaluación, sensibilidades, tablas
-  replay.py, live.py      replay de decisiones y predicción en vivo para la app
-  results/                resultados versionados
-  FUNDAMENTOS.md          auditoría de datos y supuestos
-scripts/ecobici_mapa/   servidor (FastAPI) y app web (MapLibre)
-tests/ecosim/           tests
-report/                 reporte final (PDF, fuente .qmd, figuras, tablas y el origen de cada número)
-docs/, wiki/            solo los documentos que el código y el reporte citan como fuente (planes de los dos runs,
-                        notas del run 1 y dos notas de investigación)
-```
+El apéndice del reporte trae el comando que genera cada tabla y cada figura.
