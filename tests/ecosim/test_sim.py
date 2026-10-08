@@ -40,9 +40,9 @@ def damage(*rows):
     return df
 
 
-def run(st, travel=None, orders=None, policy=None, damage_events=None, **kw):
-    return sim.simulate(st, travel if travel is not None else trips(), neighbors(), START, END,
-                        orders=orders, policy=policy, damage_events=damage_events, day=DAY, **kw)
+def run(st, travel=None, orders=None, policy=None, damage_events=None, nbrs=None, **kw):
+    return sim.simulate(st, travel if travel is not None else trips(), neighbors() if nbrs is None else nbrs,
+                        START, END, orders=orders, policy=policy, damage_events=damage_events, day=DAY, **kw)
 
 
 def stock(r, station, when, field="bikes_minute"):
@@ -51,19 +51,20 @@ def stock(r, station, when, field="bikes_minute"):
     return int(r.extra[field][m, i])
 
 
-def order(t, s, d, pickup=15, delivery=60):
-    return K.Order(t, t + timedelta(minutes=pickup), t + timedelta(minutes=delivery), s, d)
+def order(t, s, d, pickup=15, delivery=60, paquete=0):
+    return K.Order(t, t + timedelta(minutes=pickup), t + timedelta(minutes=delivery), s, d, paquete)
 
 
 class Script:
+    """Órdenes fijas por instante: (estación, delta) o (estación, delta, paquete)."""
     def __init__(self, schedule):
         self.schedule = schedule
         self.seen = []
 
     def decide(self, t, state, pending_orders, forecast, params):
         self.seen.append((t, state.warehouse, list(pending_orders)))
-        return [order(t, s, d, params.pickup_min, params.delivery_min)
-                for s, d in self.schedule.get(t, [])]
+        return [order(t, *row[:2], params.pickup_min, params.delivery_min, *row[2:])
+                for row in self.schedule.get(t, [])]
 
 
 def test_conservacion_sin_y_con_ordenes_en_cada_minuto():
@@ -107,14 +108,91 @@ def test_recorte_recogida_escala_entregas_de_misma_decision():
         run(st, policy=Script({at(6): [("A", -1), ("B", 2)]}))
 
 
-def test_entrega_sin_anclaje_vuelve_al_origen():
-    st = init(A=(2, 0, 3), B=(0, 0, 1), C=(1, 0, 3))
-    travel = trips(("C", "B", at(6, 30), at(6, 45)))
-    r = run(st, travel, policy=Script({at(6): [("A", -2), ("B", 2)]}))
+def test_entrega_sin_anclaje_se_deja_cerca_del_destino():
+    # B está lleno a las 07:00; lo más cercano a B con espacio es A (300 m), no el origen C (400 m).
+    st = init(A=(0, 0, 3), B=(1, 0, 1), C=(2, 0, 3))
+    r = run(st, policy=Script({at(6): [("C", -2), ("B", 2)]}))
     assert stock(r, "B", at(7)) == 1
     assert stock(r, "A", at(7)) == 2
-    assert r.recortes["devolucion_origen"] == 2
+    assert stock(r, "C", at(7)) == 0
+    assert r.recortes["reubicacion_destino"] == 2
+    assert "devolucion_origen" not in r.recortes
     assert r.extra["truck_end"] == 0
+    moved = r.extra["reubicaciones"]
+    assert moved[["destino", "estacion", "bicis", "dist_m", "paquete"]].values.tolist() == [["B", "A", 2, 300., 0]]
+    pairs = sim.pares_ejecutados(r)
+    assert pairs[["origen", "destino", "bicis", "tipo"]].values.tolist() == [
+        ["C", "B", 2, "traslado"], ["B", "A", 2, "reubicacion"]]
+
+
+def test_destino_fuera_de_servicio_se_deja_cerca_y_parcial():
+    # B fuera de servicio: todo se deja junto a B. C solo tiene 1 bici: se lleva lo que hay.
+    st = init(A=(0, 0, 3), B=(0, 0, 3), C=(1, 0, 3))
+    st.loc[st.short_name == "B", "out_of_service"] = True
+    r = run(st, policy=Script({at(6): [("C", -2), ("B", 2)]}))
+    assert (stock(r, "A", at(7)), stock(r, "B", at(7)), stock(r, "C", at(7))) == (1, 0, 0)
+    assert r.recortes["fuera_servicio"] == 1 and r.recortes["fisico"] == 1
+    assert r.recortes["reubicacion_destino"] == 1 and r.extra["truck_end"] == 0
+
+
+def test_destino_inexistente_es_error():
+    st = init(A=(2, 0, 3), B=(0, 0, 3), C=(1, 0, 3))
+    with pytest.raises(ValueError, match="no existe"):
+        run(st, policy=Script({at(6): [("A", -1), ("Z", 1)]}))
+
+
+def neighbors4():
+    pts = {"A": 0., "B": 300., "C": 1000., "D": 1200.}
+    return pd.DataFrame([(a, b, abs(pa - pb)) for a, pa in pts.items() for b, pb in pts.items() if a != b],
+                        columns=["short_name", "nbr", "dist_m"])
+
+
+def test_lotes_por_paquete_no_mezclan_receptores():
+    # Paquete 1: A → B; paquete 2: C → D. A solo tiene 1 de 3 bicis: B recibe 1 y D
+    # recibe sus 2 (en una bolsa común por decisión B se habría quedado con parte de las de C).
+    st = init(A=(1, 0, 5), B=(0, 0, 5), C=(2, 0, 5), D=(0, 0, 5))
+    p = Script({at(6): [("A", -3, 1), ("B", 3, 1), ("C", -2, 2), ("D", 2, 2)]})
+    r = run(st, policy=p, nbrs=neighbors4())
+    assert (stock(r, "B", at(7)), stock(r, "D", at(7))) == (1, 2)
+    assert r.recortes["entrega_sin_recogida"] == 2 and r.extra["truck_end"] == 0
+    oa = r.extra["orders_applied"]
+    assert list(oa.columns) == sim.APPLIED_COLUMNS
+    assert oa.set_index("short_name").paquete.to_dict() == {"A": 1, "B": 1, "C": 2, "D": 2}
+    pairs = sim.pares_ejecutados(r)
+    assert list(pairs.columns) == sim.PAIR_COLUMNS
+    assert pairs[["paquete", "origen", "destino", "bicis", "tipo"]].values.tolist() == [
+        [1, "A", "B", 1, "traslado"], [2, "C", "D", 2, "traslado"]]
+    assert (pairs.issued_at == at(6)).all() and (pairs.delivery_at == at(7)).all()
+
+
+def test_paquete_lleno_reubica_junto_a_su_receptor():
+    # D está llena: las bicis del paquete 2 se quedan junto a D (en C, 200 m), nunca en B.
+    st = init(A=(2, 0, 5), B=(0, 0, 5), C=(2, 0, 5), D=(1, 0, 1))
+    p = Script({at(6): [("A", -2, 1), ("B", 2, 1), ("C", -2, 2), ("D", 2, 2)]})
+    r = run(st, policy=p, nbrs=neighbors4())
+    assert (stock(r, "B", at(7)), stock(r, "C", at(7)), stock(r, "D", at(7))) == (2, 2, 1)
+    moved = r.extra["reubicaciones"]
+    assert moved[["paquete", "destino", "estacion", "bicis"]].values.tolist() == [[2, "D", "C", 2]]
+    pairs = sim.pares_ejecutados(r)
+    assert pairs[["paquete", "origen", "destino", "bicis", "tipo"]].values.tolist() == [
+        [1, "A", "B", 2, "traslado"], [2, "C", "D", 2, "traslado"], [2, "D", "C", 2, "reubicacion"]]
+
+
+def test_cada_paquete_equilibra_y_tope_por_decision():
+    st = init(A=(3, 0, 5), B=(0, 0, 5), C=(3, 0, 5), D=(0, 0, 5))
+    with pytest.raises(ValueError, match="equilibrar"):
+        run(st, policy=Script({at(6): [("A", -2, 1), ("B", 1, 1), ("C", -1, 2), ("D", 2, 2)]}), nbrs=neighbors4())
+    rows = [("A", -1, 1), ("B", 1, 1), ("C", -1, 2), ("D", 1, 2)]
+    with pytest.raises(ValueError, match="tope"):
+        run(st, policy=Script({at(6): rows}), nbrs=neighbors4(), params=K.PolicyParams(visits_per_decision=3))
+    assert run(st, policy=Script({at(6): rows}), nbrs=neighbors4()).visitas == 4
+
+
+def test_replay_ecobici_sin_pares():
+    st = init(A=(3, 0, 5), B=(1, 0, 5), C=(1, 0, 5))
+    r = run(st, orders=[K.Order(at(6), at(6), at(6), "A", -1), K.Order(at(6), at(6), at(6), "B", 1)])
+    assert r.extra["orders_applied"].paquete.tolist() == [0, 0]
+    assert sim.pares_ejecutados(r).empty and r.extra["reubicaciones"].empty
 
 
 def test_danadas_en_sitio_antes_de_orden_y_no_aplicables():

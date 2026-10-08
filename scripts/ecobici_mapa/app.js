@@ -11,6 +11,7 @@
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const NF = new Intl.NumberFormat('es-MX');
+const fmtDec = (n, d) => (n === null || n === undefined || Number.isNaN(+n)) ? '—' : (+n).toLocaleString('es-MX', {minimumFractionDigits: d, maximumFractionDigits: d});
 const fmt = n => (n === null || n === undefined || Number.isNaN(+n)) ? '—' : NF.format(n);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -113,13 +114,49 @@ const S = {
   snapshot: null,
   zones: {on: {ahora: false, replay: false, pronostico: false, asignacion: false}, geo: null},  // interruptor independiente por vista
   nums: {replay: false, pronostico: false, asignacion: false},  // "Bicis por estación", independiente por vista
-  replay: {index: null, days: {}, arms: {}, dayData: null, sel: [], keys: [], k: 0, timer: null, list: 'emitidas', side: 0, token: 0},
+  replay: {index: null, days: {}, arms: {}, dayData: null, sel: [], keys: [], k: 0, timer: null, list: 'emitidas', side: 0, token: 0, alfa: 0},
   live: {models: null, forecast: null, fk: 0, risk: 'all', sessionId: null, session: null, poll: null, step: -1, list: 'emitidas'},
 };
 // Escenario principal del Replay (el primero elegido).
 Object.defineProperty(S.replay, 'arm', {get() { return this.sel[0] || null; }});
 const SESSION_KEY = 'ecobici.asignacion.session';
 const SIDE = ['A', 'B'];
+
+// ───────────────────────── estilo de las líneas de órdenes ─────────────────────────
+// Tres opciones visuales (se prueban con ?lineas=a|b|c). Todas: arcos o rectas finas, emitidas más claras y llegaron más
+// intensas del mismo matiz (distinción por luminosidad, segura para daltonismo), reubicación punteada.
+const LINEAS = {
+  // A: arcos con degradado (tenue en el origen, intenso en el destino) y un punto en el destino; rosa → magenta.
+  a: {nombre: 'Arcos con degradado, magenta', emit: '#ec7fbf', arrive: '#a1176f', curva: 0.2, degradado: true, flecha: false, ancho: [1.3, 2, 2.7], anchoLlegan: [1.6, 2.5, 3.3], emitOp: [0.35, 1], arriveOp: [0.4, 1]},
+  // B: arcos lisos con flecha; gris arena (plan, discreto) → vino (ejecutado).
+  b: {nombre: 'Arcos con flecha, arena y vino', emit: '#a89f91', arrive: '#8a1c5c', curva: 0.2, degradado: false, flecha: true, ancho: [1.1, 1.8, 2.5], anchoLlegan: [1.4, 2.3, 3.1], emitOp: [0.7, 0.7], arriveOp: [0.8, 0.8]},
+  // C: rectas finas con flecha y halo blanco; turquesa → fucsia.
+  c: {nombre: 'Rectas finas, turquesa y fucsia', emit: '#5fb7c9', arrive: '#d63384', curva: 0, degradado: false, flecha: true, halo: true, ancho: [1.1, 1.8, 2.5], anchoLlegan: [1.4, 2.3, 3.1], emitOp: [0.8, 0.8], arriveOp: [0.85, 0.85]},
+};
+const LINEA_DEFAULT = 'a';
+// Viajes de la foto (son un toggle, no hace falta que sean tenues): opacidad sin y con órdenes en el mapa.
+const TRIPS_OP = {now: 0.42, nowOrd: 0.34, detour: 0.78, detourOrd: 0.68};
+// Paletas de color (emitida → llegó; el degradado va de tenue a intenso), para combinar con la UI fría y sobria. ?paleta=1..5
+const PALETAS = {
+  // Cada capa tiene UN matiz propio; el sentido (tenue en el origen → intenso en el destino) va en la opacidad.
+  1: {nombre: 'Arena y azul tinta', emit: '#c4905c', arrive: '#1b4a8f'},
+  2: {nombre: 'Ocre e índigo', emit: '#b8893a', arrive: '#2f3e6b'},
+  3: {nombre: 'Camello y azul pizarra', emit: '#d09560', arrive: '#355070'},
+  4: {nombre: 'Bronce y petróleo', emit: '#b87a4a', arrive: '#0e5a7a'},
+  5: {nombre: 'Malva y petróleo', emit: '#9f7fae', arrive: '#0e5a7a'},
+};
+const PALETA_DEFAULT = 1;
+const QS = new URLSearchParams(location.search);
+const ORD = {...(LINEAS[QS.get('lineas')] || LINEAS[LINEA_DEFAULT]), ...(PALETAS[QS.get('paleta')] || PALETAS[PALETA_DEFAULT])};
+const hexA = (hex, a) => `rgba(${[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(',')},${a})`;
+{
+  const r = document.documentElement;
+  r.style.setProperty('--emit', ORD.emit);
+  r.style.setProperty('--arrive', ORD.arrive);
+  r.style.setProperty('--emit-fade', hexA(ORD.emit, 0.18));
+  r.style.setProperty('--arrive-fade', hexA(ORD.arrive, 0.18));
+  r.classList.toggle('lg-grad', ORD.degradado);
+}
 
 // ───────────────────────── colores y estados ─────────────────────────
 const CSSV = getComputedStyle(document.documentElement);
@@ -129,7 +166,7 @@ const ST_COLOR = {
   llena: cssv('--st-llena'), inactiva: cssv('--st-inactiva'),
 };
 const C = {deliver: cssv('--deliver'), pickup: cssv('--pickup'), relabel: cssv('--relabel'), detour: cssv('--detour'),
-  trip: cssv('--trip-now'), gray: '#9aa4ad'};
+  trip: cssv('--trip-now'), emit: cssv('--emit'), arrive: cssv('--arrive'), gray: '#9aa4ad'};
 const ST_LABEL = {vacia: 'Vacía', pocas: 'Pocas bicis', normal: 'Normal', llena: 'Llena', inactiva: 'Inactiva'};
 /** Estado de una estación según bicis y anclajes libres. Pocas = 1 a 3 bicis. */
 function stationState(bikes, docks, active = true) {
@@ -228,6 +265,16 @@ function deltaImage(parts) {
   });
   return c;
 }
+/** Flecha que marca el sentido de una línea de órdenes (apunta a la derecha; el mapa la gira con la línea). */
+function arrowImage(kind) {
+  const [c, ctx] = canvas(14 * PR, 14 * PR);
+  ctx.scale(PR, PR);
+  ctx.beginPath(); ctx.moveTo(3, 2.5); ctx.lineTo(12, 7); ctx.lineTo(3, 11.5); ctx.closePath();
+  ctx.fillStyle = kind === 'emit' ? C.emit : C.arrive;
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.2; ctx.lineJoin = 'round';
+  ctx.stroke(); ctx.fill();
+  return c;
+}
 function makeImage(map, id) {
   if (!map || map.hasImage(id)) return;
   const [kind, ...rest] = id.split('|');
@@ -235,6 +282,7 @@ function makeImage(map, id) {
   if (kind === 'pin') c = pinImage(rest[0], rest[1]);
   else if (kind === 'num') c = numImage(rest[0], rest[1]);
   else if (kind === 'd') c = deltaImage(rest);
+  else if (kind === 'arrow') c = arrowImage(rest[0]);
   if (!c) return;
   const data = c.getContext('2d').getImageData(0, 0, c.width, c.height);
   map.addImage(id, data, {pixelRatio: PR});
@@ -386,10 +434,41 @@ function addLayers(M) {
   map.addLayer({id: 'zones-fill', type: 'fill', source: 'zones', paint: {'fill-color': ['get', 'c'], 'fill-opacity': 0.32}});
   map.addLayer({id: 'zones-line', type: 'line', source: 'zones', paint: {'line-color': '#ffffff', 'line-width': 0.8, 'line-opacity': 0.9}});
   map.addLayer({id: 'trips-now', type: 'line', source: 'trips', filter: ['==', ['get', 'k'], 'now'],
-    layout: {'line-cap': 'round'}, paint: {'line-color': C.trip, 'line-opacity': 0.24, 'line-width': 1.1}});
+    layout: {'line-cap': 'round'}, paint: {'line-color': C.trip, 'line-opacity': TRIPS_OP.now, 'line-width': 1.3}});
   map.addLayer({id: 'trips-detour', type: 'line', source: 'trips', filter: ['==', ['get', 'k'], 'detour'],
     layout: {'line-cap': 'round'},
-    paint: {'line-color': C.detour, 'line-opacity': 0.55, 'line-width': 1.6, 'line-dasharray': [1.6, 1.4]}});
+    paint: {'line-color': C.detour, 'line-opacity': TRIPS_OP.detour, 'line-width': 1.6, 'line-dasharray': [1.6, 1.4]}});
+  // Órdenes (Replay y Asignación): origen → destino. Debajo de las estaciones.
+  map.addSource('orders', {type: 'geojson', data: EMPTY, lineMetrics: true});
+  const LS = ['==', ['geometry-type'], 'LineString'];
+  const ordWs = a => ['interpolate', ['linear'], ['get', 'n'], 1, a[0], 10, a[1], 30, a[2]];
+  const grad = (hex, [a0, a1]) => ['interpolate', ['linear'], ['line-progress'], 0, hexA(hex, a0), 1, hexA(hex, a1)];
+  for (const [id, kind, hex, [o0, o1], ordW] of [['ord-emit', 'emit', ORD.emit, ORD.emitOp, ordWs(ORD.ancho)], ['ord-arrive', 'arrive', ORD.arrive, ORD.arriveOp, ordWs(ORD.anchoLlegan)]]) {
+    if (ORD.halo) map.addLayer({id: `${id}-halo`, type: 'line', source: 'orders', filter: ['all', LS, ['==', ['get', 'k'], kind]],
+      layout: {'line-cap': 'round'}, paint: {'line-color': '#ffffff', 'line-opacity': 0.55, 'line-width': ['+', ordW, 1.6]}});
+    map.addLayer({id, type: 'line', source: 'orders', filter: ['all', LS, ['==', ['get', 'k'], kind]],
+      layout: {'line-cap': 'round'},
+      paint: ORD.degradado ? {'line-gradient': grad(hex, [o0, o1]), 'line-width': ordW}
+                           : {'line-color': hex, 'line-opacity': o0, 'line-width': ordW}});
+  }
+  map.addLayer({id: 'ord-reloc', type: 'line', source: 'orders', filter: ['all', LS, ['==', ['get', 'k'], 'reloc']],
+    layout: {'line-cap': 'butt'}, paint: {'line-color': ORD.arrive, 'line-opacity': 0.9, 'line-width': 2, 'line-dasharray': [1, 1.6]}});
+  // Punto en el destino (solo con degradado: el sentido va en el degradado, no en una flecha).
+  map.addLayer({id: 'ord-end', type: 'circle', source: 'orders', filter: ['all', ['==', ['geometry-type'], 'Point'], ['==', ['get', 'k'], 'end']],
+    layout: {visibility: ORD.degradado ? 'visible' : 'none'},
+    paint: {'circle-color': ['match', ['get', 'a'], 'emit', ORD.emit, ORD.arrive], 'circle-opacity': 0.95, 'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 2, 15, 3.4],
+      'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1}});
+  // Línea bajo el cursor: más gruesa y con borde blanco; las demás se atenúan (ver `resalta`).
+  const hlFilter = ['all', LS, ['==', ['get', 'fid'], -1]];
+  map.addLayer({id: 'ord-hl-casing', type: 'line', source: 'orders', filter: hlFilter,
+    layout: {'line-cap': 'round'}, paint: {'line-color': '#ffffff', 'line-opacity': 0.95, 'line-width': 6}});
+  map.addLayer({id: 'ord-hl', type: 'line', source: 'orders', filter: hlFilter,
+    layout: {'line-cap': 'round'}, paint: {'line-color': ['match', ['get', 'a'], 'emit', ORD.emit, ORD.arrive], 'line-opacity': 1, 'line-width': 3.4}});
+  map.addLayer({id: 'ord-arrow', type: 'symbol', source: 'orders', filter: LS,
+    layout: {'symbol-placement': 'line-center', 'icon-image': ['concat', 'arrow|', ['get', 'a']], 'icon-rotation-alignment': 'map',
+      'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 15, 0.8],
+      visibility: ORD.flecha ? 'visible' : 'none'}});
+  map.addLayer({id: 'ord-hit', type: 'line', source: 'orders', filter: LS, paint: {'line-color': '#000', 'line-opacity': 0, 'line-width': 14}});
   map.addLayer({id: 'st-dot', type: 'circle', source: 'st', layout: {'circle-sort-key': ['get', 'sort']},
     paint: {
       'circle-color': ['get', 'color'], 'circle-opacity': ['get', 'op'], 'circle-stroke-opacity': ['get', 'op'],
@@ -417,8 +496,8 @@ function addLayers(M) {
   map.addLayer({id: 'st-delta', type: 'symbol', source: 'st',
     filter: ['!=', ['get', 'dimg'], ''],
     layout: {
-      // Lejos solo se ven +N verde y −N rojo; el cambio neto de etiqueta (+N/−N azul) aparece al acercarse.
-      'icon-image': ['step', ['zoom'], ['get', 'dlow'], 13, ['get', 'dimg']], 'icon-anchor': 'bottom', 'icon-offset': [0, -7],
+      // +N verde, −N rojo y, si "Cambios de dañadas" está prendido, el cambio neto de etiqueta (±N azul): todos con el mismo zoom.
+      'icon-image': ['get', 'dimg'], 'icon-anchor': 'bottom', 'icon-offset': [0, -7],
       'icon-allow-overlap': true, 'icon-ignore-placement': true, 'symbol-sort-key': ['get', 'sort'],
     }});
 
@@ -435,6 +514,26 @@ function addLayers(M) {
   map.on('click', ST_LAYERS, e => {
     const i = e.features[0]?.properties?.i;
     if (i !== undefined) openStation(i, {fly: false, side: M.side});
+  });
+  // Líneas de órdenes: al pasar, ficha con origen, destino, bicis y horas; al pulsar, la ficha se queda hasta cerrarla.
+  M.pinned = new maplibregl.Popup({closeButton: true, closeOnClick: false, offset: 10, maxWidth: '280px', className: 'ord'});
+  const sobreEstacion = pt => map.queryRenderedFeatures(pt, {layers: ST_LAYERS}).length > 0;
+  const resalta = fid => {
+    for (const l of ['ord-hl-casing', 'ord-hl']) map.setFilter(l, ['all', ['==', ['geometry-type'], 'LineString'], ['==', ['get', 'fid'], fid]]);
+    // El resto de las líneas se atenúa mientras una está resaltada (con degradado, el degradado ya trae su opacidad).
+    ordOpacidad(map, fid === -1 ? 1 : 0.28);
+  };
+  map.on('mousemove', 'ord-hit', e => {
+    if (sobreEstacion(e.point)) { resalta(-1); return; }
+    map.getCanvas().style.cursor = 'pointer';
+    resalta(e.features[0].properties.fid);
+    M.popup.setLngLat(e.lngLat).setHTML(e.features[0].properties.tip).addTo(map);
+  });
+  map.on('mouseleave', 'ord-hit', () => { resalta(-1); if (M.hit === -1) { map.getCanvas().style.cursor = ''; M.popup.remove(); } });
+  map.on('click', 'ord-hit', e => {
+    if (sobreEstacion(e.point)) return;
+    M.popup.remove();
+    M.pinned.setLngLat(e.lngLat).setHTML(e.features[0].properties.tip).addTo(map);
   });
   map.on('mousemove', 'zones-fill', e => {
     if (M.hit !== -1 || map.queryRenderedFeatures(e.point, {layers: ST_LAYERS}).length) return;
@@ -467,6 +566,15 @@ function paint(M, v) {
   });
   M.map.getSource('st').setData({type: 'FeatureCollection', features: feats});
   M.map.getSource('trips').setData(v.trips ? v.trips() : EMPTY);
+  const ord = v.orders ? v.orders() : EMPTY;
+  M.map.getSource('orders').setData(ord);
+  ordOpacidad(M.map, 1);
+  M.pinned?.remove();
+  for (const l of ['ord-hl-casing', 'ord-hl']) M.map.setFilter(l, ['all', ['==', ['geometry-type'], 'LineString'], ['==', ['get', 'fid'], -1]]);
+  // Con órdenes en el mapa, los viajes de la foto bajan de tono para que las órdenes se lean.
+  const hayOrdenes = ord.features.length > 0;
+  M.map.setPaintProperty('trips-now', 'line-opacity', hayOrdenes ? TRIPS_OP.nowOrd : TRIPS_OP.now);
+  M.map.setPaintProperty('trips-detour', 'line-opacity', hayOrdenes ? TRIPS_OP.detourOrd : TRIPS_OP.detour);
   M.map.getSource('zones').setData(zonesGeo(v));
   M.map.setFilter('st-sel', ['==', ['get', 'i'], S.sel ?? -1]);
   M.popup?.remove(); M.hit = -1;
@@ -562,6 +670,17 @@ function zoneLegend(compact) {
     <span>Mismos colores y cortes que las estaciones, con bicis y anclajes libres de la AGEB.</span>
   </div>`;
 }
+/** Leyenda de las líneas de órdenes que estén prendidas (la flecha marca el sentido: origen → destino). */
+function ordersLegend(emitSel, arriveSel, reloc) {
+  const e = $(emitSel)?.checked, a = $(arriveSel)?.checked;
+  if (!e && !a) return '';
+  const items = [
+    e ? '<span class="legend-item"><i class="line-sw emit"></i>orden emitida: de dónde se recoge a dónde se entrega</span>' : '',
+    a ? '<span class="legend-item"><i class="line-sw arrive"></i>llegó: bicis movidas del origen al destino</span>' : '',
+    a && reloc ? '<span class="legend-item"><i class="line-sw reloc"></i>no cupieron: del destino a la estación cercana</span>' : '',
+  ].join('');
+  return `<div class="legend-row">${items}</div>`;
+}
 function legendParts(mode) {
   const nums = !!S.nums[mode];
   const numChip = nums ? '<span class="legend-item"><i class="chip gray st-ink">12</i>bicis de la estación</span>' : '';
@@ -574,15 +693,17 @@ function legendParts(mode) {
   if (mode === 'replay') {
     const trips = $('#showTrips').checked, detours = $('#showDetours').checked;
     const lines = `${trips ? '<span class="legend-item"><i class="line-sw"></i>viajes que llegaron en esta foto</span>' : ''}${detours ? '<span class="legend-item"><i class="line-sw detour"></i>viaje desviado: de la estación buscada a la real</span>' : ''}`;
+    const ord = ordersLegend('#showEmit', '#showArrive', true);
+    const dam = $('#showDamaged').checked;
     return {
       full: `<span class="legend-title">Rebalanceo en esta foto</span>
         <div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>entregadas</span><span class="legend-item"><i class="chip minus">−N</i>recogidas</span></div>
-        <div class="legend-row"><span class="legend-item"><i class="chip pm">+N</i><i class="chip pm">−N</i>azul: pasan a rentables / a no rentables, sin moverse (al acercar)</span></div>
+        ${dam ? '<div class="legend-row"><span class="legend-item"><i class="chip pm">+N</i><i class="chip pm">−N</i>azul: pasan a rentables / a no rentables, sin moverse</span></div>' : ''}
         <span class="legend-title">Estado de la estación</span>
         <div class="legend-row">${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}${numChip}</div>
-        ${lines ? `<div class="legend-row">${lines}</div>` : ''}`,
-      compact: `<div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>entregadas</span><span class="legend-item"><i class="chip minus">−N</i>recogidas</span><span class="legend-item"><i class="chip pm">±</i>etiquetas</span></div>
-        <div class="legend-row">${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}</div>${lines ? `<div class="legend-row">${lines}</div>` : ''}`,
+        ${lines ? `<div class="legend-row">${lines}</div>` : ''}${ord}`,
+      compact: `<div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>entregadas</span><span class="legend-item"><i class="chip minus">−N</i>recogidas</span>${dam ? '<span class="legend-item"><i class="chip pm">±</i>etiquetas</span>' : ''}</div>
+        <div class="legend-row">${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}</div>${lines ? `<div class="legend-row">${lines}</div>` : ''}${ord}`,
     };
   }
   if (mode === 'pronostico') {
@@ -591,12 +712,13 @@ function legendParts(mode) {
       compact: `<div class="legend-row">${stateItems(['vacia', 'pocas', 'normal', 'llena'])}</div>`,
     };
   }
+  const ord = ordersLegend('#showEmitA', '#showArriveA', false);
   return {  // asignación
     full: `<span class="legend-title">Órdenes del paso</span>
       <div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>entregar</span><span class="legend-item"><i class="chip minus">−N</i>recoger</span></div>
       <span class="legend-title">Estado actual de la estación</span>
-      <div class="legend-row">${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}${numChip}</div>`,
-    compact: `<div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>entregar</span><span class="legend-item"><i class="chip minus">−N</i>recoger</span>${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}</div>`,
+      <div class="legend-row">${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}${numChip}</div>${ord}`,
+    compact: `<div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>entregar</span><span class="legend-item"><i class="chip minus">−N</i>recoger</span>${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}</div>${ord}`,
   };
 }
 function renderLegend() {
@@ -743,12 +865,14 @@ const HELP = {
     'En el mapa, <span class="k-plus">+N</span> son bicis entregadas y <span class="k-minus">−N</span> recogidas; en azul, <span class="k-pm">+N/−N</span> son bicis que pasan a rentables o a no rentables sin moverse. Cada estación es una bolita con el color de su estado; <b>Bicis por estación</b> muestra en su lugar el número de bicis.',
     'El panel derecho da cada número de la foto y su acumulado desde las 05:00. La ficha de cada estación muestra su cuenta: bicis anteriores − salidas + llegadas + entregadas − recogidas ± etiquetas = bicis actuales.',
     '<b>Zonas de la ciudad</b> colorea las AGEB urbanas del INEGI con el mismo estado que los pines (vacía, pocas, normal, llena), sumando sus estaciones; cambia con cada foto.',
+    '<b>Órdenes emitidas</b> dibuja, en la foto en que se emitieron, una línea naranja de cada estación donde se recoge a la estación donde se entrega (la flecha marca el sentido). <b>Órdenes que llegaron</b> dibuja lo que el simulador realmente movió (azul) y, punteado, las bicis que no cupieron y se dejaron en la estación cercana. Pasa o pica una línea para ver origen, destino, bicis y horas.',
     'Pica una estación para ver su cuenta. Teclado: ← y → mueven 15 minutos, la barra espaciadora reproduce o pausa, y [ y ] ocultan los paneles.'],
   pronostico: ['Pronostica, con el feed de este momento, cuántas bicis tendrá cada estación en las próximas horas o en lo que queda del día.',
     'Elige modelo y pulsa <b>Pronosticar</b>. Los modelos diarios pronostican el día completo; el directo, de 1 a 4 horas. Mueve la barra de arriba para ver cada cuarto de hora.',
     'A la derecha están las estaciones que se vaciarán o llenarán y en cuántos minutos.',
     'La proyección no incluye rebalanceo: es lo que pasaría si nadie mueve bicis. <b>Bicis por estación</b> y <b>Zonas de la ciudad</b> usan la proyección del minuto elegido.'],
-  asignacion: ['Con el pronóstico elegido, el asignador decide cada 15 minutos qué estaciones visitar y cuántas bicis recoger o entregar.',
+  asignacion: ['Con el pronóstico elegido, el asignador decide con un procedimiento greedy, cada 15 minutos, qué estaciones visitar y cuántas bicis recoger o entregar.',
+    '<b>Órdenes emitidas</b> y <b>Órdenes que llegaron</b> dibujan en el mapa de dónde a dónde van las bicis del paso elegido (en la demo en vivo, lo que llega es lo planeado).',
     'Pulsa <b>Iniciar</b> y déjalo corriendo: el cálculo vive en el servidor, así que puedes recargar la página sin perder la sesión.',
     'Cada orden recoge 15 minutos después de emitirse y entrega una hora después de emitirse.',
     'Los viajes del panel derecho se estiman con los cambios del feed; no son viajes registrados.',
@@ -977,15 +1101,109 @@ $('#q').addEventListener('keydown', e => {
   }
 });
 
+// ───────────────────────── órdenes: de dónde a dónde ─────────────────────────
+/** Agrupa órdenes [{id, delta, paq, key, ex}] en paquetes: un receptor con sus donantes.
+ *  Las órdenes sin paquete (las de Ecobici) no forman pares y se muestran como siempre. */
+function packagesOf(orders) {
+  const by = new Map();
+  for (const o of orders) {
+    if (!o.paq) continue;
+    const id = `${o.key}|${o.paq}`;
+    const g = by.get(id) || {paq: o.paq, key: o.key, recv: null, donors: []};
+    if (o.delta > 0) g.recv = {id: o.id, n: o.delta, ex: o.ex}; else g.donors.push({id: o.id, n: -o.delta, ex: o.ex});
+    by.set(id, g);
+  }
+  return [...by.values()].filter(g => g.recv && g.donors.length).sort((a, b) => a.paq - b.paq);
+}
+/** Opacidad de las líneas de órdenes × f (f < 1 las atenúa mientras otra está resaltada; con degradado, el degradado ya trae la suya). */
+function ordOpacidad(map, f) {
+  for (const [l, base] of [['ord-emit', ORD.emitOp[0]], ['ord-arrive', ORD.arriveOp[0]], ['ord-reloc', 0.9]]) {
+    if (ORD.degradado && l !== 'ord-reloc') continue;
+    map.setPaintProperty(l, 'line-opacity', base * f);
+  }
+}
+let ORD_FID = 0;  // identifica cada línea para resaltarla al pasar el cursor
+/** Línea origen → destino para el mapa; `tip` es la ficha que sale al pasar o pulsar. */
+function ordFeature(st, o, d, props, tip) {
+  if (o == null || d == null || o === d || st.lon[o] == null || st.lon[d] == null) return null;
+  const A = [st.lon[o], st.lat[o]], B = [st.lon[d], st.lat[d]];
+  return {type: 'Feature', properties: {...props, tip, fid: ORD_FID++}, geometry: {type: 'LineString', coordinates: arco(A, B, ORD.curva)}};
+}
+/** Arco suave (bézier cuadrática) de A a B que se curva siempre a la izquierda del sentido: A → B y B → A no se encinman.
+ *  `curva` es la flecha del arco como fracción del largo; 0 = recta. */
+function arco(A, B, curva) {
+  if (!curva) return [A, B];
+  const k = Math.cos(((A[1] + B[1]) / 2) * Math.PI / 180);  // longitud en grados → mismas unidades que la latitud
+  const dx = (B[0] - A[0]) * k, dy = B[1] - A[1];
+  const cx = (A[0] + B[0]) / 2 * k - dy * curva, cy = (A[1] + B[1]) / 2 + dx * curva;
+  const pts = [];
+  for (let i = 0; i <= 20; i++) {
+    const t = i / 20, u = 1 - t;
+    pts.push([(u * u * A[0] * k + 2 * u * t * cx + t * t * B[0] * k) / k, u * u * A[1] + 2 * u * t * cy + t * t * B[1]]);
+  }
+  return pts;
+}
+/** FeatureCollection de las órdenes: las líneas y, al final de cada una, su punto de destino (para el estilo con degradado). */
+function ordCollection(feats) {
+  const ends = feats.map(f => ({type: 'Feature', properties: {k: 'end', a: f.properties.a, fid: f.properties.fid},
+    geometry: {type: 'Point', coordinates: f.geometry.coordinates.at(-1)}}));
+  return {type: 'FeatureCollection', features: [...feats, ...ends]};
+}
+const bikesTxt = n => plural(n, 'bici', 'bicis');
+const hhmmOf = t => String(t ?? '').slice(-5);
+
+/** Paquetes emitidos en la foto k del Replay (decision.orders = [estación, delta, paquete]). */
+function replayPackages(a, k) {
+  return packagesOf((a.decision?.[k]?.orders || []).map(([i, d, q]) => ({id: i, delta: d, paq: q, key: k})));
+}
+/** Pares ejecutados que llegaron en la foto k: [paquete, origen, destino, bicis, tipo (1 = reubicación), dist_m, foto emitida, …]. */
+function replayArrived(a, k) { return a.pares?.[k] || []; }
+
+function replayOrders(a) {
+  const emit = $('#showEmit').checked, arrive = $('#showArrive').checked;
+  if (!emit && !arrive) return EMPTY;
+  const dd = S.replay.dayData, k = S.replay.k, T = dd.times, ss = dd._stations, feats = [];
+  const nm = i => `${ss[i].short_name} · ${esc(bare(ss[i].name))}`;
+  const deliv = a.spec?.delivery || 60;
+  const add = f => { if (f) feats.push(f); };
+  if (emit) {
+    for (const g of replayPackages(a, k)) for (const dn of g.donors) {
+      add(ordFeature(dd.stations, dn.id, g.recv.id, {k: 'emit', a: 'emit', n: dn.n},
+        `Recoge ${bikesTxt(dn.n)} en ${nm(dn.id)} → entrega en ${nm(g.recv.id)}<small>Paquete ${g.paq} · recoge a las ${esc(addMin(T[k], 15))} · entrega a las ${esc(addMin(T[k], deliv))}</small>`));
+    }
+  }
+  if (arrive) {
+    for (const [q, o, d, n, tipo, m, ki] of replayArrived(a, k)) {
+      const pick = addMin(T[ki], 15), when = addMin(T[ki], deliv);
+      add(tipo
+        ? ordFeature(dd.stations, o, d, {k: 'reloc', a: 'arrive', n},
+          `No cupieron ${bikesTxt(n)} en ${nm(o)}: dejadas en ${nm(d)}${m == null ? '' : ` (${fmt(m)} m)`}<small>Paquete ${q} · dejadas a las ${esc(when)}</small>`)
+        : ordFeature(dd.stations, o, d, {k: 'arrive', a: 'arrive', n},
+          `Llegaron ${bikesTxt(n)} de ${nm(o)} a ${nm(d)}<small>Paquete ${q} · recogidas a las ${esc(pick)} · entregadas a las ${esc(when)}</small>`));
+    }
+  }
+  return ordCollection(feats);
+}
+
+/** Filas de la lista de órdenes emitidas de un paquete: encabezado + una fila por donante. */
+function pkgRowsEmitidas(g, name, pickAt, delivAt) {
+  const x = g.recv.n;
+  const head = `<li class="pkg">Paquete ${g.paq} <small>· entrega ${bikesTxt(x)} en ${esc(name(g.recv.id))} a las ${esc(delivAt)}</small></li>`;
+  const rows = g.donors.map(dn => `<li><button class="row" data-i="${dn.id}">${actChip('recoger')}
+      <span class="r-main"><span class="r-title">Recoge en ${esc(name(dn.id))}</span><span class="r-sub">→ entrega en ${esc(name(g.recv.id))} · recoge a las ${esc(pickAt)}</span></span>
+      <span class="r-end">${bikesTxt(dn.n)}</span></button></li>`);
+  return [head, ...rows];
+}
+
 // ───────────────────────── Replay ─────────────────────────
 const ARM_TEXT = {
   sin_rebalanceo: 'Nadie mueve bicis: solo ocurren los viajes del día.',
   ecobici: 'Los movimientos que hizo Ecobici ese día, inferidos de las fotos del feed.',
-  ma_diaria: 'El asignador decide cada 15 min con un pronóstico de media móvil del mismo tipo de día, hecho a las 05:00.',
-  lgbm_diario: 'El asignador decide cada 15 min con un pronóstico LightGBM del día completo, hecho a las 05:00.',
-  lgbm_directo: 'El asignador decide cada 15 min con un pronóstico LightGBM de las próximas horas que usa lo observado en el día.',
-  oraculo_diario: 'El asignador conoce los viajes reales del día desde las 05:00. Es un techo de referencia, no una estrategia.',
-  oraculo_directo: 'El asignador conoce los viajes reales de las próximas horas. Es un techo de referencia, no una estrategia.',
+  ma_diaria: 'El asignador decide con un procedimiento greedy cada 15 min, con un pronóstico de media móvil del mismo tipo de día, hecho a las 05:00.',
+  lgbm_diario: 'El asignador decide con un procedimiento greedy cada 15 min, con un pronóstico LightGBM del día completo, hecho a las 05:00.',
+  lgbm_directo: 'El asignador decide con un procedimiento greedy cada 15 min, con un pronóstico LightGBM de las próximas horas que usa lo observado en el día.',
+  oraculo_diario: 'El asignador (greedy) conoce los viajes reales del día desde las 05:00. Es un techo de referencia, no una estrategia.',
+  oraculo_directo: 'El asignador (greedy) conoce los viajes reales de las próximas horas. Es un techo de referencia, no una estrategia.',
 };
 const MAX_ARMS = 2;
 
@@ -1003,6 +1221,7 @@ async function loadReplayIndex() {
     const h = readHash();
     if (h.tab === 'replay' && days.includes(h.rest[0])) $('#rday').value = h.rest[0];
     fillArms(h.tab === 'replay' && h.rest[1] ? h.rest[1].split('+') : []);
+    fillAlfa();
     $('#rday').disabled = false;
     if (idx.stale) showNote('#rerror', 'Este replay se calculó con otros parámetros congelados. Vuelve a precalcularlo para que coincida.', {kind: 'warn'});
     const k0 = h.tab === 'replay' ? +h.rest[2] : 0;
@@ -1027,6 +1246,19 @@ function fillArms(prefer = []) {
   $$('#rarms input').forEach(cb => { cb.onchange = () => toggleArm(cb); });
   syncArmsUI();
 }
+/** α disponibles en el día elegido (0 siempre; las variantes existen solo en los brazos con asignador). */
+function alfasDelDia() {
+  const v = S.replay.index?.days?.[$('#rday').value]?.alfas || {};
+  return [0, ...new Set(Object.values(v).flatMap(o => Object.keys(o).map(Number)))].sort((x, y) => x - y);
+}
+function fillAlfa() {
+  const al = alfasDelDia();
+  if (!al.includes(S.replay.alfa)) S.replay.alfa = 0;
+  $('#ralfaField').hidden = al.length < 2;
+  $('#ralfa').innerHTML = al.map(x => `<option value="${x}">${x === 0 ? '0 (sin costo por km)' : x}</option>`).join('');
+  $('#ralfa').value = String(S.replay.alfa);
+}
+$('#ralfa').onchange = () => { S.replay.alfa = +$('#ralfa').value; loadReplay(S.replay.k); };
 function syncArmsUI() {
   const keys = S.replay.keys, full = keys.length >= MAX_ARMS;
   $$('#rarms input').forEach(cb => {
@@ -1053,9 +1285,10 @@ function toggleArm(cb) {
   syncArmsUI();
   loadReplay(S.replay.k);
 }
-$('#rday').onchange = () => { fillArms(); loadReplay(S.replay.k); };
+$('#rday').onchange = () => { fillArms(); fillAlfa(); loadReplay(S.replay.k); };
 $('#showTrips').onchange = () => renderMap();
 $('#showDetours').onchange = () => renderMap();
+for (const id of ['#showDamaged', '#showEmit', '#showArrive', '#showEmitA', '#showArriveA']) $(id).onchange = () => renderMap();
 
 /** Sumas desde la primera foto: acumulado de cada número de snap[k] (suma de lo que manda la API). */
 const ACC_FIELDS = ['emitidas', 'recogidas', 'entregadas', 'salidas', 'llegadas', 'desvios_salida', 'desvios_llegada', 'a_rentable', 'a_no_rentable', 'E', 'F'];
@@ -1076,12 +1309,15 @@ async function loadReplay(k = 0) {
   try {
     const dayP = S.replay.days[day] || api(`/api/replay/${encodeURIComponent(day)}/dia`);
     S.replay.days[day] = dayP;
+    const alfa = S.replay.alfa;
     const armPs = keys.map(arm => {
-      const id = `${day}/${arm}`;
+      // Con α > 0, los brazos con asignador usan su variante `<brazo>@a<α>`; Ecobici y "sin rebalanceo" no cambian.
+      const file = alfa && S.replay.index.days?.[day]?.alfas?.[arm]?.[alfa] ? `${arm}@a${alfa}` : arm;
+      const id = `${day}/${file}`;
       if (!S.replay.arms[id]) {
-        S.replay.arms[id] = api(`/api/replay/${encodeURIComponent(day)}/${encodeURIComponent(arm)}`).then(a => {
+        S.replay.arms[id] = api(`/api/replay/${encodeURIComponent(day)}/${encodeURIComponent(file).replace('%40', '@')}`).then(a => {
           if (!Array.isArray(a?.bikes)) throw new ApiError('El archivo de replay no tiene el formato esperado. Vuelve a precalcular.');
-          const out = {...a, day, arm};
+          const out = {...a, day, arm, alfa: +a.alfa || 0};
           accumulate(out);
           return out;
         });
@@ -1140,6 +1376,7 @@ function specHtml(a) {
   if (sp.n) parts.push(['Horizonte', `${sp.n} h`]);
   if (sp.lam) parts.push(['λ', fmt(Math.round(sp.lam * 100) / 100)]);
   if (sp.n) parts.push(['Recoge', 't+15 min'], ['Entrega', `t+${sp.delivery || 60} min`]);
+  if (a.alfa > 0) parts.push(['α', `${fmt(a.alfa)} min-estación/km`]);
   if (sp.forma && sp.train_start) parts.push(['Entrenado', `${sp.train_start} a ${sp.train_end}`]);
   if (a.final?.EF !== undefined) parts.push(['E+F del día', fmt(a.final.EF)]);
   return `<p>${esc(ARM_TEXT[a.arm] || a.label || a.arm)}</p>
@@ -1195,7 +1432,7 @@ function renderReplay() {
   setRangeFill($('#rk'));
   $('#prev').disabled = k <= 0;
   $('#next').disabled = k >= n - 1;
-  arms.forEach((a, j) => { $(`#mapLabel${j}`).innerHTML = `<span class="side-tag">${SIDE[j]}</span> ${esc(a.label || a.arm)}`; });
+  arms.forEach((a, j) => { $(`#mapLabel${j}`).innerHTML = `<span class="side-tag">${SIDE[j]}</span> ${esc(a.label || a.arm)}${a.alfa > 0 ? ` · α ${fmt(a.alfa)}` : ''}`; });
   renderReplayPanel();
   renderMap();
   if (S.sel !== null) renderCard();
@@ -1229,6 +1466,7 @@ function replayView(a, side) {
         if (parts.length) dimg = `d|${parts.join('|')}`;
         const low = parts.filter(p => p[0] !== 'L');
         dlow = low.length ? `d|${low.join('|')}` : '';
+        if (!$('#showDamaged').checked) dimg = dlow;  // sin "Cambios de dañadas": solo entregadas y recogidas
       }
       // Punto con el color de estado de los pines, translúcido para que resalte el rebalanceo.
       const free = cap[i] - bikes[i] - (dis[i] || 0) - (dk[i] || 0);
@@ -1241,6 +1479,7 @@ function replayView(a, side) {
     hover: i => `${plural(bikes[i], 'bici', 'bicis')} · ${fmt(dis[i])} no rentables · ${ST_LABEL[stationState(bikes[i], cap[i] - bikes[i] - (dis[i] || 0) - (dk[i] || 0), !oos[i])]}`,
     card: i => ({state: null, html: replayCard(a, i)}),
     trips: () => replayTrips(a),
+    orders: () => replayOrders(a),
   };
 }
 
@@ -1266,10 +1505,30 @@ function replayTrips(a) {
   return {type: 'FeatureCollection', features: feats};
 }
 
+/** Km en línea recta de cada tramo donante → receptor ejecutado, por foto de entrega (de `pares` y las coordenadas del día). */
+function kmTramos(a) {
+  const dd = S.replay.dayData, st = dd.stations;
+  if (a._km?.day !== dd.day) {
+    const rad = x => x * Math.PI / 180;
+    const dist = (o, d) => {
+      if (st.lat[o] == null || st.lat[d] == null) return null;
+      const h = Math.sin(rad(st.lat[d] - st.lat[o]) / 2) ** 2 + Math.cos(rad(st.lat[o])) * Math.cos(rad(st.lat[d])) * Math.sin(rad(st.lon[d] - st.lon[o]) / 2) ** 2;
+      return 2 * 6371 * Math.asin(Math.sqrt(h));
+    };
+    const n = dd.times.length, km = Array(n).fill(0), bkm = Array(n).fill(0), bikes = Array(n).fill(0);
+    (a.pares || []).forEach((fr, k) => { for (const [, o, d, b, tipo] of fr) { if (tipo) continue; const x = dist(o, d); if (x == null) continue; km[k] += x; bkm[k] += x * b; bikes[k] += b; } });
+    const cum = v => v.reduce((r, x, i) => (r.push((r[i - 1] || 0) + x), r), []);
+    a._km = {day: dd.day, km, bkm, bikes, ckm: cum(km), cbkm: cum(bkm), cbikes: cum(bikes)};
+  }
+  return a._km;
+}
+
 // Filas del panel derecho: [clave, etiqueta, marca]. Las filas de una sola celda son títulos de grupo.
 const PANEL_ROWS = [
   ['Rebalanceo'],
   ['emitidas', 'Órdenes emitidas', ''],
+  ['km_tramos', 'Km de tramos (donante → receptor)', '', 1],
+  ['km_por_bici', 'Km por bici', '', 2],
   ['recogidas', 'Bicis recogidas', 'minus'],
   ['entregadas', 'Bicis entregadas', 'plus'],
   ['Viajes'],
@@ -1286,6 +1545,13 @@ const PANEL_ROWS = [
 ];
 /** Valor de la foto k (acc=false) o acumulado desde la primera foto (acc=true). E+F acumulado viene del backend. */
 function snapVal(a, k, key, acc) {
+  if (key === 'km_tramos' || key === 'km_por_bici') {
+    if (!a.pares) return null;
+    const m = kmTramos(a);
+    if (key === 'km_tramos') return acc ? m.ckm[k] : m.km[k];
+    const b = acc ? m.cbikes[k] : m.bikes[k];
+    return b ? (acc ? m.cbkm[k] : m.bkm[k]) / b : null;
+  }
   if (acc) {
     if (key === 'EF') return a.snap?.[k]?.EF_acum;
     const r = a._acc?.[k];
@@ -1327,8 +1593,9 @@ function renderReplayPanel() {
     const cols = 1 + arms.length * 2;
     const body = PANEL_ROWS.map(row => {
       if (row.length === 1) return `<tr class="grp"><th colspan="${cols}" scope="colgroup">${esc(row[0])}</th></tr>`;
-      const [key, label, mk] = row;
-      const cells = arms.map((a, j) => `<td class="foto" data-side="${j}">${fmt(snapVal(a, k, key, false))}</td><td class="acum" data-side="${j}">${fmt(snapVal(a, k, key, true))}</td>`).join('');
+      const [key, label, mk, dec] = row;
+      const f = v => dec ? fmtDec(v, dec) : fmt(v);
+      const cells = arms.map((a, j) => `<td class="foto" data-side="${j}">${f(snapVal(a, k, key, false))}</td><td class="acum" data-side="${j}">${f(snapVal(a, k, key, true))}</td>`).join('');
       return `<tr data-stat="${key}"><th scope="row">${mk ? `<i class="mk ${mk}"></i>` : ''}${esc(label)}</th>${cells}</tr>`;
     }).join('');
     const sysRows = [['min_desde_anterior', 'Minutos desde la foto anterior'], ['bicis_sistema', 'Bicis en el sistema'], ['en_viaje', 'Bicis en viaje'], ['en_camioneta', 'Bicis en camioneta']]
@@ -1347,10 +1614,11 @@ function renderReplayPanel() {
   const counts = {
     emitidas: a.decision?.[k]?.orders?.length || 0,
     aplicadas: (a.applied?.[k] || []).filter(o => o[2] !== 0).length,
+    llegaron: replayArrived(a, k).length,
     desvios: a.desvios?.[k]?.length || 0,
   };
   $$('#rpTabs [role="tab"]').forEach(b => {
-    const base = {emitidas: 'Emitidas', aplicadas: 'Aplicadas', desvios: 'Desviados'}[b.dataset.list];
+    const base = {emitidas: 'Emitidas', aplicadas: 'Aplicadas', llegaron: 'Llegaron', desvios: 'Desviados'}[b.dataset.list];
     b.innerHTML = `${base}<span class="n">${fmt(counts[b.dataset.list])}</span>`;
   });
   renderReplayList();
@@ -1383,10 +1651,13 @@ function renderReplayList() {
   const name = i => st[i] ? `${st[i].short_name} · ${bare(st[i].name)}` : 'Estación desconocida';
   let rows = [], empty = '';
   if (S.replay.list === 'emitidas') {
-    const orders = (a.decision?.[k]?.orders || []).slice().sort((x, y) => x[1] - y[1]);
-    rows = orders.map(([i, d]) => `<li><button class="row" data-i="${i}">${actChip(d < 0 ? 'recoger' : 'entregar')}
+    const deliv = a.spec?.delivery || 60;
+    const pk = replayPackages(a, k);
+    const orders = (a.decision?.[k]?.orders || []).filter(o => !o[2]).sort((x, y) => x[1] - y[1]);
+    rows = pk.flatMap(g => pkgRowsEmitidas(g, name, addMin(T[k], 15), addMin(T[k], deliv)));
+    rows.push(...orders.map(([i, d]) => `<li><button class="row" data-i="${i}">${actChip(d < 0 ? 'recoger' : 'entregar')}
       <span class="r-main"><span class="r-title">${esc(name(i))}</span><span class="r-sub">${d < 0 ? `Recoge a las ${esc(addMin(T[k], 15))}` : `Entrega a las ${esc(addMin(T[k], a.spec?.delivery || 60))}`}</span></span>
-      <span class="r-end">${plural(Math.abs(d), 'bici', 'bicis')}</span></button></li>`);
+      <span class="r-end">${plural(Math.abs(d), 'bici', 'bicis')}</span></button></li>`));
     empty = 'No se emitieron órdenes en esta foto.';
   } else if (S.replay.list === 'aplicadas') {
     const ap = (a.applied?.[k] || []).filter(o => o[2] !== 0).slice().sort((x, y) => x[2] - y[2]);
@@ -1394,6 +1665,21 @@ function renderReplayList() {
       <span class="r-main"><span class="r-title">${esc(name(i))}</span><span class="r-sub">Emitida a las ${esc(T[ik] ?? '—')}${real !== d ? ` · pedía ${fmt(Math.abs(d))}, se aplicaron ${fmt(Math.abs(real))}` : ''}</span></span>
       <span class="r-end">${plural(Math.abs(real), 'bici', 'bicis')}</span></button></li>`);
     empty = 'No se aplicaron órdenes en esta foto.';
+  } else if (S.replay.list === 'llegaron') {
+    const deliv = a.spec?.delivery || 60;
+    const arr = replayArrived(a, k);
+    const seen = new Set();
+    for (const [q, o, d, n, tipo, m, ki] of arr.slice().sort((x, y) => x[0] - y[0] || x[4] - y[4])) {
+      if (!seen.has(q)) { seen.add(q); rows.push(`<li class="pkg">Paquete ${q} <small>· emitido a las ${esc(T[ki] ?? '—')}, llegó a las ${esc(addMin(T[ki], deliv))}</small></li>`); }
+      rows.push(tipo
+        ? `<li><button class="row" data-i="${d}"><span class="act reloc">${icon('down')}Dejadas</span>
+            <span class="r-main"><span class="r-title">En ${esc(name(d))}</span><span class="r-sub">No cupieron en ${esc(name(o))}${m == null ? '' : ` · a ${fmt(m)} m`}</span></span>
+            <span class="r-end">${bikesTxt(n)}</span></button></li>`
+        : `<li><button class="row" data-i="${d}"><span class="act plus">${icon('down')}Llegaron</span>
+            <span class="r-main"><span class="r-title">${esc(name(o))}</span><span class="r-sub">→ ${esc(name(d))} · recogidas a las ${esc(addMin(T[ki], 15))}</span></span>
+            <span class="r-end">${bikesTxt(n)}</span></button></li>`);
+    }
+    empty = a.pares ? 'No llegaron órdenes con camioneta en esta foto.' : 'Este replay no trae los pares ejecutados.';
   } else {
     const dv = a.desvios?.[k] || [];
     rows = dv.map(([, kind, io, ir, m]) => `<li><button class="row" data-i="${ir}"><span class="act detour">${kind === 'salida' ? 'Salida' : 'Llegada'}</span>
@@ -1706,7 +1992,10 @@ function renderAssign() {
       ['Inicio', hhmm(sess.inicio)],
       ['Duración', sess.horas ? `${sess.horas} h` : '—'],
       ['Pasos registrados', fmt(pasos.length)],
+      ['Costo por km (α)', fmt(sess.params?.alfa ?? 0)],
     ] : [];
+    $('#salfaField').hidden = !running;
+    if (running) $('#salfa').value = String(sess.params?.alfa ?? 0);
     if (running) rows.splice(3, 0, ['Siguiente paso', hhmm(sess.siguiente_paso)]);
     $('#sessInfo').innerHTML = rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd${k === 'Siguiente paso' ? ' id="nextStep"' : ''}>${esc(v)}</dd></div>`).join('') ||
       '<div><dt>Sesión</dt><dd><span class="skeleton w-8"></span></dd></div>';
@@ -1727,6 +2016,17 @@ $('#astep').onchange = () => {
   renderAssignPanel(); renderMap();
 };
 
+const LIVE_ALFAS = [0, 1, 3, 5, 7, 10];
+for (const id of ['#aalfa', '#salfa']) $(id).innerHTML = LIVE_ALFAS.map(x => `<option value="${x}">${x === 0 ? '0 (sin costo por km)' : x}</option>`).join('');
+$('#salfa').onchange = async () => {
+  const id = S.live.sessionId, v = $('#salfa').value;
+  if (!id) return;
+  try {
+    await api(`/api/live/assign/${encodeURIComponent(id)}/alfa?${new URLSearchParams({alfa: v})}`, {method: 'POST'});
+    toast(`α = ${v}: aplica desde la siguiente decisión.`);
+    pollSession();
+  } catch (e) { showNote('#aerror', e.message); $('#salfa').value = String(S.live.session?.params?.alfa ?? 0); }
+};
 $('#startAssign').onclick = async () => {
   const f = S.live.forecast;
   if (!f) return;
@@ -1734,7 +2034,7 @@ $('#startAssign').onclick = async () => {
   setBusy(btn, true, 'Iniciando…');
   showNote('#aerror', null);
   try {
-    const r = await api(`/api/live/assign/start?${new URLSearchParams({forecast_id: f.id, horas: $('#ahours').value})}`, {method: 'POST', timeout: 180000});
+    const r = await api(`/api/live/assign/start?${new URLSearchParams({forecast_id: f.id, horas: $('#ahours').value, alfa: $('#aalfa').value})}`, {method: 'POST', timeout: 180000});
     if (!r?.session_id) throw new ApiError('El servidor no devolvió una sesión.');
     S.live.sessionId = r.session_id; S.live.session = null; S.live.step = -1; S.live.follow = true;
     try { localStorage.setItem(SESSION_KEY, r.session_id); } catch { /* sin almacenamiento */ }
@@ -1815,18 +2115,22 @@ function renderAssignPanel() {
     return;
   }
   $('#apTitle').textContent = `Paso de las ${hhmm(p.t)}`;
-  $('#apSub').textContent = `Foto del feed de las ${p.t_feed ? p.t_feed.slice(11, 19) : '—'}`;
+  $('#apSub').textContent = `Foto del feed de las ${p.t_feed ? p.t_feed.slice(11, 19) : '—'}${p.alfa > 0 ? ` · α ${fmt(p.alfa)}` : ''}`;
   const tot = sess.totales || {};
+  const km = liveKm(p);
   $('#apStats').innerHTML = `
     <div class="stat-group"><h3>Este paso</h3><div class="stat-pair">
       <div class="tile" data-stat="visitas"><b>${fmt(p.visitas)}</b><span>visitas</span></div>
-      <div class="tile" data-stat="bicis_a_mover"><b>${fmt(p.bicis_a_mover)}</b><span>bicis a mover</span></div></div></div>
+      <div class="tile" data-stat="bicis_a_mover"><b>${fmt(p.bicis_a_mover)}</b><span>bicis a mover</span></div></div>
+      <div class="stat-pair">
+      <div class="tile" data-stat="km_tramos"><b>${fmtDec(km.km, 1)}</b><span>km de tramos</span></div>
+      <div class="tile" data-stat="km_por_bici"><b>${km.bikes ? fmtDec(km.bkm / km.bikes, 2) : '—'}</b><span>km por bici</span></div></div></div>
     <div class="stat-group"><h3>Acumulado de la sesión</h3><div class="stat-pair">
       <div class="tile"><b>${fmt(tot.visitas)}</b><span>visitas</span></div>
       <div class="tile"><b>${fmt(tot.bicis_a_mover)}</b><span>bicis a mover</span></div></div></div>`;
-  const counts = {emitidas: p.emitidas?.length || 0, aplicadas: p.aplicadas?.length || 0};
+  const counts = {emitidas: p.emitidas?.length || 0, aplicadas: p.aplicadas?.length || 0, llegaron: liveArrived(p).length};
   $$('#apTabs [role="tab"]').forEach(b => {
-    const base = {emitidas: 'Emitidas', aplicadas: 'Aplicadas', viajes: 'Viajes'}[b.dataset.list];
+    const base = {emitidas: 'Emitidas', aplicadas: 'Aplicadas', llegaron: 'Llegaron', viajes: 'Viajes'}[b.dataset.list];
     b.innerHTML = base + (b.dataset.list in counts ? `<span class="n">${fmt(counts[b.dataset.list])}</span>` : '');
   });
   renderAssignList();
@@ -1842,18 +2146,78 @@ function renderAssignList() {
       ${pasos.length > 1 ? `<li class="stat-group" style="margin-top:12px"><h3>Por paso (salidas / llegadas estimadas)</h3>${pasos.map(x => `<div class="stat"><span>${esc(hhmm(x.t))}</span><b>${fmt(x.salidas_est)} / ${fmt(x.llegadas_est)}</b></div>`).join('')}</li>` : ''}`;
     return;
   }
-  const orders = (S.live.list === 'emitidas' ? p.emitidas : p.aplicadas) || [];
-  const rows = orders.slice().sort((a, b) => (a.accion > b.accion ? -1 : 1) || b.n - a.n).map(o => {
+  const nameOf = sn => `${sn} · ${bare(stationName(sn))}`;
+  const idxOf = sn => S.view?.mode === 'asignacion' ? S.view.stations.findIndex(s => s.short_name === sn) : -1;
+  const pkgRows = (g, verbo) => [
+    `<li class="pkg">Paquete ${g.paq} <small>· entrega ${bikesTxt(g.recv.n)} en ${esc(nameOf(g.recv.id))} a las ${esc(hhmm(g.recv.ex.entrega))}</small></li>`,
+    ...g.donors.map(dn => `<li><button class="row" data-i="${idxOf(dn.id)}">${verbo === 'Recoge' ? actChip('recoger') : `<span class="act plus">${icon('down')}Llegaron</span>`}
+      <span class="r-main"><span class="r-title">${verbo === 'Recoge' ? `Recoge en ${esc(nameOf(dn.id))}` : esc(nameOf(dn.id))}</span><span class="r-sub">→ entrega en ${esc(nameOf(g.recv.id))} · recoge a las ${esc(hhmm(dn.ex.recoge))}</span></span>
+      <span class="r-end">${bikesTxt(dn.n)}</span></button></li>`)];
+  if (S.live.list === 'llegaron') {
+    const rows = liveArrived(p).flatMap(g => pkgRows(g, 'Llegaron'));
+    el.innerHTML = `<li><div class="note">${icon('info')}<span>Demo en vivo: se muestra lo planeado que llega en este paso; no se simula cuántas bicis caben en cada estación.</span></div></li>`
+      + rowsHtml(rows, 'No llega ninguna entrega en este paso.');
+    $$('.row', el).forEach(b => { b.onclick = () => { const i = +b.dataset.i; if (i >= 0) openStation(i); }; });
+    return;
+  }
+  const orders = ((S.live.list === 'emitidas' ? p.emitidas : p.aplicadas) || []).filter(o => S.live.list !== 'emitidas' || !o.paquete);
+  const pkRows = S.live.list === 'emitidas' ? livePackages(p.emitidas).flatMap(g => pkgRows(g, 'Recoge')) : [];
+  const rows = pkRows.concat(orders.slice().sort((a, b) => (a.accion > b.accion ? -1 : 1) || b.n - a.n).map(o => {
     const i = S.view?.mode === 'asignacion' ? S.view.stations.findIndex(s => s.short_name === o.short_name) : -1;
     const when = o.accion === 'recoger' ? `Recoge a las ${hhmm(o.recoge)} · entrega a las ${hhmm(o.entrega)}` : `Entrega a las ${hhmm(o.entrega)}`;
     return `<li><button class="row" data-i="${i}">${actChip(o.accion)}
       <span class="r-main"><span class="r-title">${esc(o.short_name)} · ${esc(bare(stationName(o.short_name)))}</span><span class="r-sub" title="${esc(when)}">${esc(when)}</span></span>
       <span class="r-end">${plural(o.n, 'bici', 'bicis')}</span></button></li>`;
-  });
+  }));
   el.innerHTML = rowsHtml(rows, S.live.list === 'emitidas' ? 'El asignador no emitió órdenes en este paso.' : 'Ninguna orden se aplica en este paso.');
   $$('.row', el).forEach(b => { b.onclick = () => { const i = +b.dataset.i; if (i >= 0) openStation(i); }; });
 }
 
+/** Paquetes de una lista de órdenes de la sesión en vivo (`paquete` viene de la orden, `emitida` los separa entre pasos). */
+function livePackages(orders) {
+  return packagesOf((orders || []).map(o => ({id: o.short_name, delta: o.accion === 'entregar' ? o.n : -o.n, paq: o.paquete, key: o.emitida, ex: o})));
+}
+/** Paquetes cuya entrega cae en el paso actual. En la demo en vivo no hay simulador: se muestra lo planeado completo. */
+function liveArrived(p) {
+  const llegan = new Set((p?.aplicadas || []).filter(o => o.accion === 'entregar' && o.paquete).map(o => `${o.emitida}|${o.paquete}`));
+  if (!llegan.size) return [];
+  return livePackages((S.live.session?.pasos || []).flatMap(x => x.emitidas || [])).filter(g => llegan.has(`${g.key}|${g.paq}`));
+}
+/** Km en línea recta de los tramos donante → receptor emitidos en un paso (coordenadas del feed). */
+function liveKm(p) {
+  const out = {km: 0, bkm: 0, bikes: 0};
+  const st = new Map((S.snapshot?.stations || []).map(s => [s.short_name, s]));
+  const rad = x => x * Math.PI / 180;
+  for (const g of livePackages(p?.emitidas)) {
+    const r = st.get(g.recv.id);
+    for (const dn of g.donors) {
+      const o = st.get(dn.id);
+      if (!o || !r || o.lat == null || r.lat == null) continue;
+      const h = Math.sin(rad(r.lat - o.lat) / 2) ** 2 + Math.cos(rad(o.lat)) * Math.cos(rad(r.lat)) * Math.sin(rad(r.lon - o.lon) / 2) ** 2;
+      const d = 2 * 6371 * Math.asin(Math.sqrt(h));
+      out.km += d; out.bkm += d * dn.n; out.bikes += dn.n;
+    }
+  }
+  return out;
+}
+function assignOrders() {
+  const emit = $('#showEmitA').checked, arrive = $('#showArriveA').checked, p = currentStep();
+  if ((!emit && !arrive) || !p || !S.snapshot) return EMPTY;
+  const st = S.snapshot.stations, idx = new Map(st.map((s, i) => [s.short_name, i]));
+  const coords = {lon: st.map(s => s.lon), lat: st.map(s => s.lat)};
+  const nm = sn => `${esc(sn)} · ${esc(bare(stationName(sn)))}`;
+  const feats = [];
+  const draw = (g, kind, verbo) => {
+    for (const dn of g.donors) {
+      const f = ordFeature(coords, idx.get(dn.id), idx.get(g.recv.id), {k: kind, a: kind, n: dn.n},
+        `${verbo} ${bikesTxt(dn.n)} ${kind === 'emit' ? `en ${nm(dn.id)} → entrega en ${nm(g.recv.id)}` : `de ${nm(dn.id)} a ${nm(g.recv.id)}`}<small>Paquete ${g.paq} · recoge a las ${esc(hhmm(dn.ex.recoge))} · entrega a las ${esc(hhmm(g.recv.ex.entrega))}</small>`);
+      if (f) feats.push(f);
+    }
+  };
+  if (emit) for (const g of livePackages(p.emitidas)) draw(g, 'emit', 'Recoge');
+  if (arrive) for (const g of liveArrived(p)) draw(g, 'arrive', 'Llegaron');
+  return ordCollection(feats);
+}
 function assignView() {
   const st = S.snapshot.stations, p = currentStep();
   const by = new Map();
@@ -1863,7 +2227,7 @@ function assignView() {
     by.set(o.short_name, e);
   }
   return {
-    mode: 'asignacion', stations: st,
+    mode: 'asignacion', stations: st, orders: () => assignOrders(),
     props: i => {
       const s = st[i], e = by.get(s.short_name);
       const parts = [];

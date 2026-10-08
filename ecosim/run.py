@@ -1,6 +1,6 @@
 """Experimento walk-forward ecosim run 3. Reanuda por (día, brazo, configuración).
 
-    uv run python -m ecosim.run --all --procesos 8 --threads 1
+    uv run python -m ecosim.run --all --procesos 5 --threads 1
     uv run python -m ecosim.run --paso 1
 
 Nunca se ajusta un parámetro mirando prueba. Los conteos se cargan una vez por
@@ -15,8 +15,7 @@ import os
 import time
 import traceback
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
-from datetime import date, timedelta
-from functools import lru_cache
+from datetime import date
 from functools import lru_cache
 import joblib
 import numpy as np
@@ -39,7 +38,7 @@ POLICIES = ("oraculo_diario", "ma_diaria", "lgbm_diario", "oraculo_directo", "lg
 ARMS = ("sin_rebalanceo", "ecobici", *POLICIES)
 REAL = ("ma_diaria", "lgbm_diario", "lgbm_directo")
 N_LAM = (15, 30, 60)
-LAM = (10, 15, 20, 30, 45, 60)
+LAM = (10, 15, 20, 30, 45, 60, 75, 90, 120)
 RETIRO = 0.0  # mismo margen de seguridad para oráculo y modelo
 _COUNTS = None
 _MODELS = {}
@@ -47,17 +46,19 @@ _FORECASTS = {}  # por proceso: (día, brazo) → predicción ya calculada
 
 
 def days(kind):
+    """seleccion = todo agosto 2025 válido; prueba = septiembre–diciembre 2025."""
     if kind in ("seleccion", "curva"):
         return load_days(kind)
-    months = ("2025-09", "2025-10", "2025-11", "2025-12", "2026-01") if kind == "prueba" else tuple(f"2026-{m:02d}" for m in range(2, 9))
-    return [d for month in months for d in load_days(kind, month)]
+    if kind != "prueba":
+        raise ValueError(f"kind inválido: {kind!r}")
+    return [d for month in ("2025-09", "2025-10", "2025-11", "2025-12") for d in load_days(kind, month)]
 
 
 def cap(source="base"):
-    stats = json.loads(STATS.read_text())
-    key = "referencia_wiki" if source in ("base", "p99") else "recalculados"
-    quantile = "p99" if source == "p99" else "p95"
-    return stats[key][quantile]
+    """Topes duros: p95 de Ecobici en todo 2025 (`anual_2025` de medición)."""
+    if source != "base":
+        raise ValueError(f"solo hay topes base (p95 anual 2025), llegó {source!r}")
+    return json.loads(STATS.read_text())["anual_2025"]["p95"]
 
 
 def spec(day, arm, tag, n=0, lam=0.0, caps="base", delivery=60, pairs="todas", damage="onsite"):
@@ -158,21 +159,21 @@ def one(s):
                                 visits_per_decision=limit["visitas_por_decision"],
                                 max_bikes_per_visit=limit["bicis_por_visita"],
                                 delivery_min=s["delivery"], retiro=RETIRO)
-        policy = Asignador(threads=int(os.environ.get("ECOSIM_THREADS", "1")), time_limit=10)
+        policy = Asignador()
         kwargs.update(policy=policy, forecast=forecast, params=params)
     r = sim.run_day(day, **kwargs)
     oa = r.extra["orders_applied"]
     applied = oa[oa.applied != 0]
     picked = int(-applied.loc[applied.applied < 0, "applied"].sum())
     delivered = int(applied.loc[applied.applied > 0, "applied"].sum())
-    # Las entregas imposibles vuelven físicamente al origen: contabilizarlas,
-    # sin confundirlas con órdenes exitosas al destino previsto.
-    returned = int(sum(item[2] for item in r.extra["returns"]))
+    # Lo que no cupo en un destino se dejó en la estación libre más cercana:
+    # contabilizarlo sin confundirlo con entregas en el destino previsto.
+    relocated = int(r.extra["reubicaciones"].bicis.sum())
     max_visit = int(applied.applied.abs().max()) if len(applied) else 0
     max_decision = int(oa.groupby("issued_at").size().max()) if len(oa) else 0
     if arm in POLICIES:
         limit = cap(s["caps"])
-        assert picked == delivered + returned and r.extra["truck_end"] == 0, (day, arm, picked, delivered, returned)
+        assert picked == delivered + relocated and r.extra["truck_end"] == 0, (day, arm, picked, delivered, relocated)
         assert max_visit <= limit["bicis_por_visita"] and max_decision <= limit["visitas_por_decision"]
     times = r.tiempos_decision
     metrics = r.metrics.copy()
@@ -184,16 +185,15 @@ def one(s):
     row = {"run": key(s), **s, **metrics,
            "visitas_aplicadas_replay": r.visitas if arm == "ecobici" else 0,
            "recogidas_aplicadas": picked,
-           "entregadas_aplicadas": delivered + returned, "devoluciones_origen": returned,
+           "entregadas_aplicadas": delivered + relocated, "reubicaciones_destino": relocated,
            "truck_end": r.extra["truck_end"],
            "replay_neto": r.extra["replay_neto"], "damage_external": r.extra["damage_external"],
            "visitas_sin_regla": r.extra["visitas_sin_regla"], "pares_visitas": r.extra["pares_visitas"],
            "max_bicis_visita": max_visit, "max_visitas_decision": max_decision,
-           "decisiones_limite_10s": sum(t >= 9.99 for t in times),
            "decisiones": len(times), "tiempos_decision": json.dumps([round(t, 4) for t in times]),
            "decision_mediana_s": float(np.median(times)) if times else 0,
            "decision_p95_s": float(np.percentile(times, 95)) if times else 0,
-           "decision_max_s": max(times, default=0), "fallbacks": len(policy.fallbacks) if policy else 0,
+           "decision_max_s": max(times, default=0),
            "segundos": round(time.perf_counter()-start, 3),
            "recortes": json.dumps(r.recortes, sort_keys=True)}
     if s["tag"] == "prueba":
@@ -205,7 +205,6 @@ def one(s):
 def _worker_init(threads):
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "POLARS_MAX_THREADS"):
         os.environ[var] = str(threads)
-    os.environ["ECOSIM_THREADS"] = str(threads)
     # La carga de conteos es lazy: el control sin rebalanceo no la necesita.
 
 
@@ -250,8 +249,8 @@ def reconcile_benchmark():
 
 
 def execute(specs, procesos=2, threads=1):
-    if procesos > 2 or procesos * threads > 8:
-        raise ValueError("máximo dos procesos de simulación y ocho threads en total")
+    if procesos > 5 or procesos * threads > 8:
+        raise ValueError("máximo cinco procesos de simulación y ocho threads en total")
     ids = [key(s) for s in specs]
     if len(set(ids)) != len(ids):
         raise ValueError("especificaciones duplicadas")
@@ -358,7 +357,7 @@ def paso1(procesos, threads):
     table.to_csv(N_FILE, index=False)
     save_frozen({"seleccion": selection, "n": choice, "n_ci_promedio_lambda": all_ci,
                  "n_regla": "primera n sin mejora distinguible: IC95 t pareado por día de la media sobre las tres λ incluye 0; si el IC95 indica empeoramiento, también se detiene por dominancia", "retiro": RETIRO,
-                 "topes_base": cap(), "topes_p99": cap("p99"), "topes_hacia_adelante": cap("adelante"),
+                 "topes_base": cap(),
                  "procesos": procesos, "threads": threads})
     return table
 
@@ -386,96 +385,95 @@ def choose_n(rows):
     return choices, summary
 
 
+def _bracket(points, target):
+    """Devuelve los dos puntos de visitas que encierran target, si existen."""
+    ordered = points.sort_values("lam")
+    for left, right in zip(ordered.iloc[:-1].itertuples(), ordered.iloc[1:].itertuples()):
+        if min(left.visitas, right.visitas) <= target <= max(left.visitas, right.visitas):
+            if left.visitas != right.visitas:
+                return left, right
+    return None
+
+
+def _interpolate_visits(points, target):
+    """Interpola lambda entre las dos observaciones que encierran target."""
+    bracket = _bracket(points, target)
+    if bracket is None:
+        return None
+    left, right = bracket
+    return round(left.lam + (target - left.visitas) * (right.lam - left.lam) /
+                 (right.visitas - left.visitas), 4)
+
+
 def paso2(procesos, threads):
-    fz = frozen(); sel = days("seleccion")
-    eco = execute([spec(d, "ecobici", "eco_seleccion") for d in sel], procesos, threads)
+    """Congela lambda con agosto, sin consultar ningún día de prueba."""
+    fz = frozen()
+    selection = days("seleccion")
+    eco = execute([spec(day, "ecobici", "eco_seleccion") for day in selection], procesos, threads)
     target = float(eco.visitas.mean())
-    target_ef = float(eco.EF.mean())
-    grid = execute([spec(d, arm, "curva_sel", _n(arm, fz), lam) for arm in POLICIES for lam in LAM for d in sel], procesos, threads)
+    grid = execute([spec(day, arm, "curva_sel", _n(arm, fz), lam)
+                    for arm in POLICIES for lam in LAM for day in selection], procesos, threads)
     grid.to_csv(CURVE, index=False)
     picks = {}
     for arm in POLICIES:
-        curve = grid[grid.arm == arm].groupby("lam", as_index=False)[["visitas", "EF"]].mean().sort_values("lam")
-        # Interpolación y confirmación; si discreción del MILP deja >3%,
-        # agregar el punto medido y repetir hasta cuatro veces sin mirar prueba.
-        points = curve[["lam", "visitas"]].copy()
-        if curve.visitas.max() < .97*target:
-            attempts = [10.0]
-        else:
-            attempts = []
-        for attempt in range(4):
-            if not attempts:
-                options = []
-                for a, b in zip(points.sort_values("lam").iloc[:-1].itertuples(),
-                                points.sort_values("lam").iloc[1:].itertuples()):
-                    if min(a.visitas, b.visitas) <= target <= max(a.visitas, b.visitas) and a.visitas != b.visitas:
-                        options.append(float(a.lam+(target-a.visitas)*(b.lam-a.lam)/(b.visitas-a.visitas)))
-                if options:
-                    candidate = options[0]
-                elif points.visitas.min() > target:
-                    last = points.sort_values("lam").iloc[-2:]
-                    a, b = last.iloc[0], last.iloc[1]
-                    slope = max((a.visitas-b.visitas)/(b.lam-a.lam), .01)
-                    candidate = b.lam + max(5, (b.visitas-target)/slope)
-                else:
-                    candidate = float(points.loc[(points.visitas-target).abs().idxmin(), "lam"])
-                attempts.append(round(max(10, min(300, candidate)), 4))
-            lam = attempts[-1]
-            confirm = execute([spec(d, arm, "confirm", _n(arm, fz), lam) for d in sel], procesos, threads)
+        points = grid[grid.arm == arm].groupby("lam", as_index=False).visitas.mean()
+        extensions = []
+        # No extrapolar: amplía la rejilla antes de interpolar si no contiene
+        # el esfuerzo observado de Ecobici.
+        while _bracket(points, target) is None:
+            if target > points.visitas.max():
+                extra_lam = max(0.0, float(points.lam.min() - 5))
+            else:
+                extra_lam = float(points.lam.max() * 1.5)
+            if extra_lam in set(points.lam):
+                raise RuntimeError(f"No se pudo encerrar el objetivo para {arm}")
+            extra = execute([spec(day, arm, "curva_sel_extension", _n(arm, fz), extra_lam)
+                             for day in selection], procesos, threads)
+            actual = float(extra.visitas.mean())
+            points = pd.concat([points, pd.DataFrame([{"lam": extra_lam, "visitas": actual}])], ignore_index=True)
+            extensions.append(extra_lam)
+        confirmations = []
+        candidate = float("nan")
+        actual = float("nan")
+        confirm = None
+        for _ in range(4):
+            candidate = _interpolate_visits(points, target)
+            if candidate is None:
+                raise RuntimeError(f"Rejilla sin bracket para {arm}")
+            confirm = execute([spec(day, arm, "confirm", _n(arm, fz), candidate)
+                               for day in selection], procesos, threads)
             actual = float(confirm.visitas.mean())
-            if abs(actual/target-1) <= .03 or lam == 10 and actual < .97*target:
+            confirmations.append(candidate)
+            if abs(actual / target - 1) <= .01:
                 break
-            points = pd.concat([points, pd.DataFrame([{"lam":lam,"visitas":actual}])], ignore_index=True)
+            points = pd.concat([points, pd.DataFrame([{"lam": candidate, "visitas": actual}])], ignore_index=True)
             points = points.drop_duplicates("lam", keep="last")
-            options = []
-            for a, b in zip(points.sort_values("lam").iloc[:-1].itertuples(),
-                            points.sort_values("lam").iloc[1:].itertuples()):
-                if min(a.visitas, b.visitas) <= target <= max(a.visitas, b.visitas) and a.visitas != b.visitas:
-                    options.append(round(float(a.lam+(target-a.visitas)*(b.lam-a.lam)/(b.visitas-a.visitas)), 4))
-            next_lam = next((p for p in options if p not in attempts), None)
-            if next_lam is None and points.visitas.min() > target:
-                a, b = points.sort_values("lam").iloc[-2:].itertuples(index=False)
-                slope = max((a.visitas-b.visitas)/(b.lam-a.lam), .01)
-                next_lam = round(min(300, b.lam + max(5, (b.visitas-target)/slope)), 4)
-            if next_lam is None or next_lam in attempts:
-                break
-            attempts.append(next_lam)
-        # La meta E+F de Ecobici queda fuera de la rejilla principal si todas
-        # las políticas la superan ampliamente; extender solo para leer el
-        # esfuerzo al mismo resultado, sin usarlo para elegir n ni λ operativa.
-        result_curve = curve.copy()
-        extension = []
-        if result_curve.EF.max() < target_ef:
-            for extra_lam in (90, 120, 180, 240, 300):
-                extra = execute([spec(d, arm, "igual_resultado", _n(arm, fz), extra_lam)
-                                 for d in sel], procesos, threads)
-                extension.append(extra_lam)
-                result_curve = pd.concat([result_curve, pd.DataFrame([{
-                    "lam":extra_lam,"visitas":extra.visitas.mean(),"EF":extra.EF.mean()}])], ignore_index=True)
-                if extra.EF.mean() >= target_ef:
-                    break
-        same_result = float("nan")
-        for a, b in zip(result_curve.sort_values("lam").iloc[:-1].itertuples(),
-                        result_curve.sort_values("lam").iloc[1:].itertuples()):
-            if min(a.EF, b.EF) <= target_ef <= max(a.EF, b.EF) and a.EF != b.EF:
-                same_result = float(a.visitas+(target_ef-a.EF)*(b.visitas-a.visitas)/(b.EF-a.EF))
-                break
-        picks[arm] = {"lambda": lam, "visitas_confirmadas": actual, "visitas_ecobici": target,
-                      "EF_confirmado": float(confirm.EF.mean()), "diferencia_pct": 100*(actual/target-1),
-                      "confirmaciones": attempts, "tipo_ajuste": "extrapolación >60" if lam > 60 else "interpolación rejilla",
-                      "lectura_igual_resultado_lambda_extra": extension,
-                      "igual_esfuerzo_3pct": bool(abs(actual/target-1) <= .03),
-                      "visitas_igual_resultado": same_result,
-                      "visitas_menos_igual_resultado_pct": 100*(1-same_result/target) if np.isfinite(same_result) else None,
-                      "no_alcanza_con_10": bool(lam == 10 and actual < .97*target)}
+        assert confirm is not None
+        picks[arm] = {
+            "lambda": candidate,
+            "visitas_confirmadas": actual,
+            "visitas_ecobici": target,
+            "EF_confirmado": float(confirm.EF.mean()),
+            "diferencia_pct": 100 * (actual / target - 1),
+            "rondas": len(confirmations),
+            "confirmaciones": confirmations,
+            "extension_rejilla": extensions,
+            "igual_esfuerzo_1pct": bool(abs(actual / target - 1) <= .01),
+        }
     fz["lambda_por_brazo"] = picks
-    fz["mejor_real"] = min(REAL, key=lambda a: picks[a]["EF_confirmado"])
-    fz["cortes"] = [{k: str(v) for k, v in fold.items()} for fold in C.FOLDS]
-    fz["configuracion"] = {"intervalo_decision_min": C.STEP_MIN,
-                             "recogida_min": C.PICKUP_MIN, "entrega_min": C.DELIVERY_MIN,
-                             "lambda_rejilla": list(LAM), "n_rejilla": list(C.N_GRID),
-                             "modelo_directorio": str(P.OUT_MODELS), "conteos": str(C.TRIPS_PARQUET),
-                             "movimientos": str(sim.MOVES_FILE), "danadas": str(sim.DAMAGE_EVENTS_FILE)}
+    fz["mejor_real"] = min(REAL, key=lambda arm: picks[arm]["EF_confirmado"])
+    fz["cortes"] = [{key: str(value) for key, value in fold.items()} for fold in C.FOLDS]
+    fz["configuracion"] = {
+        "intervalo_decision_min": C.STEP_MIN,
+        "recogida_min": C.PICKUP_MIN,
+        "entrega_min": C.DELIVERY_MIN,
+        "lambda_rejilla": list(LAM),
+        "n_rejilla": list(C.N_GRID),
+        "modelo_directorio": str(P.OUT_MODELS),
+        "conteos": str(C.TRIPS_PARQUET),
+        "movimientos": str(sim.MOVES_FILE),
+        "danadas": str(sim.DAMAGE_EVENTS_FILE),
+    }
     save_frozen(fz)
     return grid
 
@@ -509,9 +507,9 @@ def check_oracles(rows):
 
 
 def validate_v1(rows):
-    """V1: replay contra escalones observados del feed en quince días de prueba."""
+    """V1: replay contra escalones observados del feed en todo el test."""
     out = []
-    for day in days("prueba")[:15]:
+    for day in days("prueba"):
         snaps = medicion.state_time(data.snapshots(day))
         observed = medicion.observed_ef(snaps, day).iloc[0]
         replay = rows[(rows.day == day) & (rows.arm == "ecobici")].iloc[0]
@@ -549,25 +547,38 @@ def where_fails(rows):
 
 
 def paso4(procesos, threads):
+    """Curvas de lambda en test, extendidas solo para leer igual esfuerzo."""
     fz = frozen()
+    test_days = days("prueba")
     specs = []
     for arm in POLICIES:
         lam = fz["lambda_por_brazo"][arm]["lambda"]
-        lower = max((x for x in LAM if x < lam), default=max(10, lam-5))
-        upper = min((x for x in LAM if x > lam), default=lam+(LAM[-1]-LAM[-2]))
+        lower = max((x for x in LAM if x < lam), default=max(0, lam - 5))
+        upper = min((x for x in LAM if x > lam), default=lam + (LAM[-1] - LAM[-2]))
         grid = sorted(set((round(float(lower), 4), lam, round(float(upper), 4))))
-        specs += [spec(d, arm, "curva_prueba", _n(arm, fz), price) for d in days("curva") for price in grid]
-    return execute(specs, procesos, threads)
+        specs += [spec(day, arm, "curva_prueba", _n(arm, fz), price)
+                  for day in test_days for price in grid]
+    rows = execute(specs, procesos, threads)
+    target = float(saved().query("tag == 'prueba' and arm == 'ecobici'").visitas.mean())
+    for arm in POLICIES:
+        while True:
+            points = rows[rows.arm == arm].groupby("lam", as_index=False).visitas.mean()
+            if _bracket(points, target) is not None:
+                break
+            extra_lam = max(0.0, float(points.lam.min() - 5)) if target > points.visitas.max() else float(points.lam.max() * 1.5)
+            extra = execute([spec(day, arm, "curva_prueba", _n(arm, fz), extra_lam)
+                             for day in test_days], procesos, threads)
+            rows = pd.concat([rows, extra], ignore_index=True)
+    return rows
 
 
 def paso5(procesos, threads):
     fz = frozen(); selected = ("oraculo_directo", fz["mejor_real"])
-    variants = (("p99", {"caps":"p99"}), ("hacia_adelante", {"caps":"adelante"}),
-                ("entrega_45", {"delivery":45}), ("entrega_75", {"delivery":75}),
+    variants = (("entrega_45", {"delivery":45}), ("entrega_75", {"delivery":75}),
                 ("pares_sin_regla", {"pairs":"sin_regla"}), ("pares_solo_1", {"pairs":"solo_1"}),
                 ("danadas_feed", {"damage":"feed"}))
     specs = []
-    for d in days("curva"):
+    for d in days("prueba"):
         for label, override in variants:
             for arm in selected:
                 p = base_spec(d, arm, "sens_"+label)
@@ -576,26 +587,6 @@ def paso5(procesos, threads):
             if label.startswith("pares"):
                 specs.append(spec(d, "ecobici", "sens_"+label, pairs=override["pairs"]))
     return execute(specs, procesos, threads)
-
-
-def paso6(procesos, threads):
-    ds = [d for d in days("prod_2026") if not "2026-03-23" <= d <= "2026-03-31"]
-    assert all(not "2026-03-23" <= d <= "2026-03-31" for d in ds)
-    apr = []
-    universe = len(json.loads((P.OUT_FORECASTS / "universe_run3.json").read_text()))
-    for day in load_days("prod_2026", "2026-04"):
-        d = date.fromisoformat(day)
-        lag7 = d - timedelta(days=7)
-        lag14 = d - timedelta(days=14)
-        missing7 = date(2026,3,23) <= lag7 <= date(2026,3,31)
-        missing14 = date(2026,3,23) <= lag14 <= date(2026,3,31)
-        apr.append({"day": day, "rezago_7_cero": missing7, "rezago_14_cero": missing14,
-                    "bloques_estacion_afectados": (int(missing7)+int(missing14))*P.NB15*universe})
-    pd.DataFrame(apr).to_csv(RESULTS / "rezagos_abril.csv", index=False)
-    rows = execute([spec(d, "sin_rebalanceo", "prod_2026") if arm == "sin_rebalanceo" else base_spec(d, arm, "prod_2026")
-                    for d in ds for arm in ("sin_rebalanceo", *POLICIES)], procesos, threads)
-    check_oracles(rows)
-    return rows
 
 
 def _md(df):
@@ -620,7 +611,7 @@ def tablas():
     df = pd.read_csv(FINAL)
     lines = ["# Run 3: tablas reproducibles", "", "E/F = minutos-estación/día; IC95 t pareado por día, diferencia brazo − Ecobici. Empates separados.", ""]
     if N_FILE.exists():
-        lines += ["## Horizonte n (15 días de selección)", "",
+        lines += ["## Horizonte n (31 días de selección)", "",
                   "`n=1` equivale a sin rebalanceo por entrega a t+60. Regla sobre la media diaria de las tres λ: parar si n+1 no mejora significativamente o empeora.",
                   "", _md(pd.read_csv(N_FILE)), ""]
     summary = []
@@ -640,7 +631,7 @@ def tablas():
     v1 = RESULTS / "v1_run3.csv"
     if v1.exists():
         v = pd.read_csv(v1)
-        lines += ["## V1: replay Ecobici contra GBFS (15 días)", "",
+        lines += [f"## V1: replay Ecobici contra GBFS ({len(v)} días)", "",
                   _md(v[["E_obs", "F_obs", "E_replay", "F_replay", "rel_E", "rel_F", "blank_min", "unobs_min"]].mean().to_frame().T), ""]
     falla = RESULTS / "donde_falla.csv"
     if falla.exists():
@@ -652,10 +643,10 @@ def tablas():
         readings.append({"brazo":arm,"E+F_menos_pct": -100*delta/eco.EF.mean(), "IC95_pct_inf":-100*hi/eco.EF.mean(),
                          "IC95_pct_sup":-100*lo/eco.EF.mean(),"gana":wins,"empata":ties,
                          "visitas_pct":100*(a.visitas.mean()/eco.visitas.mean()-1),
-                         "visitas_menos_igual_resultado_pct":fz["lambda_por_brazo"][arm]["visitas_menos_igual_resultado_pct"],
+                         "visitas_menos_igual_resultado_pct":np.nan,
                          "minutos_por_visita_lambda":fz["lambda_por_brazo"][arm]["lambda"],
                          "mediana_decision_s":a.decision_mediana_s.median(),"p95_decision_s":a.decision_p95_s.quantile(.95),
-                         "max_decision_s":a.decision_max_s.max(),"limite_10s":a.decisiones_limite_10s.sum()})
+                         "max_decision_s":a.decision_max_s.max()})
     lines += [_md(pd.DataFrame(readings)), "", "## Tiempos por decisión en estados reales, brazo × λ", ""]
     timing = []
     raw = saved()
@@ -666,7 +657,7 @@ def tablas():
             if values:
                 timing.append({"brazo": arm, "lambda":lam, "decisiones":len(values),
                                "mediana_s":np.median(values), "p95_s":np.percentile(values,95),
-                               "max_s":max(values), "limite_10s":sum(t >= 9.99 for t in values)})
+                               "max_s":max(values)})
     if timing:
         lines += [_md(pd.DataFrame(timing)), ""]
     lines += ["## Brechas pareadas (modelo − oráculo; directo − diario)", ""]
@@ -682,7 +673,7 @@ def tablas():
     lines += [_md(pd.DataFrame(gaps)), "", "## Evolución de topes Ecobici", ""]
     stats = json.loads(STATS.read_text())
     lines += [_md(pd.DataFrame(stats["meses"])[["mes","ventana","visitas_p95","bicis_p95","visitas_p99","bicis_p99"]]), ""]
-    for tag, title in (("curva_prueba", "Curvas fuera de selección"), ("sens_", "Sensibilidades"), ("prod_2026", "Producción 2026 sin Ecobici")):
+    for tag, title in (("curva_prueba", "Curvas fuera de selección"), ("sens_", "Sensibilidades")):
         raw = saved()
         rows = raw[raw.tag.str.startswith(tag)] if len(raw) else pd.DataFrame()
         if len(rows):
@@ -698,33 +689,14 @@ def tablas():
                                         "visitas":g.visitas.mean(),"damage_external":g.damage_external.mean(),
                                         "delta_EF_base":change,"IC95_inf":low,"IC95_sup":high,
                                         "gana_dias":wins,"empata_dias":ties})
-                lines += ["### Sensibilidad frente al mismo brazo, mismos 32 días", "",
+                lines += ["### Sensibilidad frente al mismo brazo, mismos 121 días de prueba", "",
                           _md(pd.DataFrame(paired_sens)), ""]
-    prod = saved()
-    prod = prod[prod.tag == "prod_2026"] if len(prod) else pd.DataFrame()
-    if len(prod):
-        comparison = []
-        all_rows = pd.concat([df, prod], ignore_index=True)
-        all_rows["mes"] = all_rows.day.str[:7]
-        for month, group in all_rows.groupby("mes"):
-            for model, oracle in (("ma_diaria", "oraculo_diario"),
-                                  ("lgbm_diario", "oraculo_diario"),
-                                  ("lgbm_directo", "oraculo_directo")):
-                a = group[group.arm == model].set_index("day").EF
-                b = group[group.arm == oracle].set_index("day").EF
-                value, lo, hi, wins, ties = paired(a, b)
-                comparison.append({"mes":month,"modelo":model,"costo_error":value,
-                                   "IC95_inf":lo,"IC95_sup":hi,"gana_dias":wins,"empata_dias":ties})
-        lines += ["## Costo del error por mes: 2025 frente a 2026", "",
-                  _md(pd.DataFrame(comparison)), ""]
     # Pronóstico al lado del resultado; k=0, neto.
     acc = P.OUT_RESULTS / "accuracy_run3.csv"
     if acc.exists():
-        a = pd.read_csv(acc).query("k == 0 and objetivo == 'neto'")
+        # Solo validación y prueba (agosto–diciembre 2025): 2026 no se evalúa.
+        a = pd.read_csv(acc).query("k == 0 and objetivo == 'neto' and mes <= '2025-12'")
         lines += ["## Exactitud del pronóstico (neto, k=0)", "", _md(a[["mes","variante","mae","wape"]]), ""]
-    lag = RESULTS / "rezagos_abril.csv"
-    if lag.exists():
-        lines += ["## Abril 2026: rezagos afectados por marzo incompleto", "", _md(pd.read_csv(lag)), ""]
     eff = RESULTS / "eficiencia_run3.csv"
     if eff.exists():
         lines += ["## Recursos y duración por paso", "", _md(pd.read_csv(eff)), ""]
@@ -734,7 +706,7 @@ def tablas():
     text=["# Conclusiones — ecosim run 3", "", "Resultados dentro del simulador, no promesa operacional ni rutas verificadas.", "",
           f"El mejor brazo real elegido en agosto fue **{fz['mejor_real']}**. En la prueba, Ecobici obtuvo {eco_ef:,.0f} minutos-estación vacíos o llenos por día; el brazo real, {real_ef:,.0f} ({100*(1-real_ef/eco_ef):.1f}% menos).",
           "", "## Brazos con esfuerzo equiparado en selección (no en prueba)", "", _md(pd.DataFrame(readings)[["brazo","E+F_menos_pct","IC95_pct_inf","IC95_pct_sup","gana","empata","visitas_pct"]]),
-          "", f"El esfuerzo se ajustó en los 15 días de selección, no en los meses de prueba. En prueba {fz['mejor_real']} hizo {100*(1-best.visitas.mean()/eco.visitas.mean()):.1f}% menos visitas que Ecobici, así que estos resultados no son estrictamente a igual esfuerzo fuera de muestra. Cuando λ=60 aún movía más que Ecobici se extrapoló por encima de la rejilla y se confirmó con otra corrida; `frozen.json` conserva intentos y error residual. La tabla muestra las visitas fuera de muestra.",
+          "", f"El esfuerzo se ajustó exclusivamente en los 31 días de agosto; no se ajustó después de congelar λ. En prueba {fz['mejor_real']} hizo {100*(1-best.visitas.mean()/eco.visitas.mean()):.1f}% menos visitas que Ecobici. Las curvas fuera de muestra permiten leer E+F al esfuerzo de Ecobici.",
           f"El replay de Ecobici tiene neto aplicado medio {eco.replay_neto.mean():+.1f} bicis/día. Si es positivo, incorpora bicicletas externas dentro de la ventana y favorece a Ecobici frente a las políticas cerradas.", "",
           "## Pronóstico y actualización", ""]
     for model, oracle in (("ma_diaria","oraculo_diario"),("lgbm_diario","oraculo_diario"),("lgbm_directo","oraculo_directo")):
@@ -743,8 +715,8 @@ def tablas():
         text.append(f"{model} menos {oracle}: costo del error {dif:,.0f} min/día (IC95 [{lo:,.0f}, {hi:,.0f}]); {w} días favorecen al modelo, {t} empatan.")
     a=df[df.arm=="oraculo_directo"].set_index("day").EF; b=df[df.arm=="oraculo_diario"].set_index("day").EF
     dif,lo,hi,w,t=paired(a,b)
-    text += [f"Actualización en el oráculo (directo − diario): {dif:,.0f} min/día, IC95 [{lo:,.0f}, {hi:,.0f}].", "", "## Diciembre y enero", ""]
-    for month in ("2025-12", "2026-01"):
+    text += [f"Actualización en el oráculo (directo − diario): {dif:,.0f} min/día, IC95 [{lo:,.0f}, {hi:,.0f}].", "", "## Diciembre", ""]
+    for month in ("2025-12",):
         m = df[df.day.str.startswith(month)]
         a = m[m.arm == fz["mejor_real"]].set_index("day").EF
         b = m[m.arm == "ecobici"].set_index("day").EF
@@ -752,35 +724,24 @@ def tablas():
         text.append(f"{month}: {100*(1-a.mean()/b.mean()):.1f}% menos E+F que Ecobici; IC95 de diferencia [{low:,.0f}, {high:,.0f}] min/día, gana {wins}/{len(a)} días, empata {ties}.")
     caps_month = pd.DataFrame(stats["meses"])
     caps_month = caps_month[caps_month.ventana == "05:00"]
-    text += ["", "## Topes: referencia y enero–agosto", "",
-             "Caso base 67 visitas/decisión y 14 bicis/visita (referencia sep–nov); hacia adelante 47 y 19 (p95 ene–ago). Sensibilidades p99 83/24 y 62/33, respectivamente.",
+    limit = cap()
+    text += ["", "## Topes: p95 de Ecobici en todo 2025", "",
+             f"Topes duros: {limit['visitas_por_decision']} visitas/decisión y {limit['bicis_por_visita']} bicis/visita (p95 de los días de 2025 con cobertura ≥90%, ventana 05:00). Sin sensibilidad de topes.",
              "", _md(caps_month[["mes","visitas_p95","bicis_p95","visitas_p99","bicis_p99"]]), "",
              "## Por mes y limitaciones", "", _md(table[table.brazo.isin(("ecobici",fz["mejor_real"]))][["mes","brazo","E+F","visitas","replay_neto"]]), "",
              "La variante de dañadas que sigue el feed aplica flujos externos distintos entre brazos tras recortes físicos: `damage_external` se publica junto a E+F; no aisla causalmente el efecto de dañadas.",
-             "Marzo de 2026: 23–31 excluidos como verdad. De los ocho días de abril de `prod_2026`, siete tienen por lo menos un rezago 7/14 días artificialmente a cero; el 6 de abril tiene ambos. `rezagos_abril.csv` cuenta los bloques-estación afectados; no imputa viajes ni cuantifica un contrafactual inexistente.",
              "", "## Comparación con runs anteriores", "", "Run 1 fijaba dañadas y run 2 permitía bodega neta y entrega simultánea; aquí dañadas cambian en sitio, cada decisión equilibra bicis y entrega a +60 min. Por ello los porcentajes de runs 1 y 2 no son directamente comparables; no se reemplazan sus cifras históricas.", ""]
     sensitivity = saved()
     sensitivity = sensitivity[sensitivity.tag.str.startswith("sens_")] if len(sensitivity) else pd.DataFrame()
     if len(sensitivity):
-        text += ["", "## Sensibilidades en los 32 días de curva", ""]
+        text += ["", "## Sensibilidades en los 121 días de prueba", ""]
         for arm in ("oraculo_directo", fz["mejor_real"]):
-            base = df[(df.arm == arm) & df.day.isin(days("curva"))].set_index("day")
-            for label in ("p99", "hacia_adelante", "entrega_45", "entrega_75", "danadas_feed"):
+            base = df[df.arm == arm].set_index("day")
+            for label in ("entrega_45", "entrega_75", "danadas_feed"):
                 g = sensitivity[(sensitivity.arm == arm) & (sensitivity.tag == "sens_"+label)].set_index("day")
                 if len(g):
                     dif, low, high, wins, ties = paired(g.EF, base.EF)
-                    text.append(f"{arm}, {label}: {g.EF.mean():,.0f} E+F/día; Δ vs 67/14 y entrega +60 = {dif:+,.0f} (IC95 [{low:,.0f}, {high:,.0f}]); flujo externo de dañadas {g.damage_external.mean():+,.1f} bicis/día.")
-    if len(prod):
-        text += ["", "## 2026: solo contra oráculos y sin rebalanceo", "",
-                 "El feed de 2026 no permite medir el esfuerzo/E+F de Ecobici; aquí no se simula ese brazo."]
-        for month, g in prod.groupby(prod.day.str[:7]):
-            for model, oracle in (("ma_diaria", "oraculo_diario"),
-                                  ("lgbm_diario", "oraculo_diario"),
-                                  ("lgbm_directo", "oraculo_directo")):
-                left = g[g.arm == model].set_index("day").EF
-                right = g[g.arm == oracle].set_index("day").EF
-                value, low, high, wins, ties = paired(left, right)
-                text.append(f"{month}, {model} − {oracle}: {value:,.0f} min/día (IC95 [{low:,.0f}, {high:,.0f}]); referencia 2025 en tablas.md.")
+                    text.append(f"{arm}, {label}: {g.EF.mean():,.0f} E+F/día; Δ vs entrega +60 = {dif:+,.0f} (IC95 [{low:,.0f}, {high:,.0f}]); flujo externo de dañadas {g.damage_external.mean():+,.1f} bicis/día.")
     (RESULTS / "CONCLUSIONES.md").write_text("\n".join(text)+"\n")
 
 
@@ -788,16 +749,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     group=parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--all", action="store_true")
-    group.add_argument("--paso", type=int, choices=range(0,7))
+    group.add_argument("--paso", type=int, choices=range(0,6))
     parser.add_argument("--procesos", type=int, default=2)
     parser.add_argument("--threads", type=int, default=1)
     args=parser.parse_args(argv)
-    if args.procesos < 1 or args.procesos > 2 or args.threads < 1 or args.procesos*args.threads > 8:
-        parser.error("máximo dos procesos; procesos × threads debe estar entre 1 y 8")
+    if args.procesos < 1 or args.procesos > 5 or args.threads < 1 or args.procesos*args.threads > 8:
+        parser.error("máximo cinco procesos; procesos × threads debe estar entre 1 y 8")
     RESULTS.mkdir(exist_ok=True)
     reconcile_benchmark()
-    steps=range(1,7) if args.all else [args.paso]
-    step_functions = {1: paso1, 2: paso2, 3: paso3, 4: paso4, 5: paso5, 6: paso6}
+    steps=range(1,6) if args.all else [args.paso]
+    step_functions = {1: paso1, 2: paso2, 3: paso3, 4: paso4, 5: paso5}
     for step in steps:
         if step == 0:
             print("Paso 0: resultados de run 2 archivados en ecosim/results/run2")

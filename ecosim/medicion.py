@@ -2,7 +2,8 @@
 
 Los tiempos del feed son commit − 30 s. Los movimientos (incluidos los pares)
 se conservan en parquet; para el esfuerzo principal se filtra ``~par``.
-Uso: uv run python -m ecosim.medicion
+Uso: uv run python -m ecosim.medicion          (todo: parquet, stats y REPORT.md)
+     uv run python -m ecosim.medicion topes    (solo `anual_2025` en ecobici_stats.json)
 """
 from __future__ import annotations
 
@@ -203,23 +204,77 @@ def damage_classification(iv: pd.DataFrame) -> pd.DataFrame:
     return x.groupby(["tipo", "total"], as_index=False).agg(bicis=("cambio", lambda s: int(s.abs().sum())))
 
 
-def visit_caps(iv: pd.DataFrame) -> dict:
-    """p95/p99 por foto, normalizado a 15 min; tamaño por visita sin normalizar."""
-    m = moves_from_intervals(iv)
-    m = main_moves(m)
+def _cap_samples(iv: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Visitas por foto normalizadas a 15 min, tamaño por visita y minutos entre fotos."""
+    m = main_moves(moves_from_intervals(iv))
     lengths = iv[~iv["blank_touch"]].groupby(["day", "t0"])["t1"].first().reset_index()
     lengths["minutes"] = (lengths["t1"] - lengths["t0"]) / pd.Timedelta(minutes=1)
     counts = m.groupby(["day", "t0"]).size().rename("visitas").reset_index()
     photos = lengths.merge(counts, on=["day", "t0"], how="left").fillna({"visitas": 0})
-    rate = photos["visitas"] * 15 / photos["minutes"]
+    rate = (photos["visitas"] * 15 / photos["minutes"]).to_numpy(float)
+    return rate, m["delta"].abs().to_numpy(), photos["minutes"].to_numpy(float)
+
+
+def _caps(rate, size, minutes, dias: int) -> dict:
     # El wiki muestra percentiles redondeados al entero más cercano (no techo):
     # en sus 15 días los cuantiles crudos de visitas son 67.1605 y 83.2370.
-    return {"dias": int(iv["day"].nunique()), "fotos": len(photos),
+    return {"dias": int(dias), "fotos": len(rate),
             "visitas_p95": int(round(np.percentile(rate, 95))),
             "visitas_p99": int(round(np.percentile(rate, 99))),
-            "bicis_p95": int(round(np.percentile(m["delta"].abs(), 95))),
-            "bicis_p99": int(round(np.percentile(m["delta"].abs(), 99))),
-            "mediana_min_entre_fotos": float(photos["minutes"].median())}
+            "bicis_p95": int(round(np.percentile(size, 95))),
+            "bicis_p99": int(round(np.percentile(size, 99))),
+            "mediana_min_entre_fotos": float(np.median(minutes))}
+
+
+def visit_caps(iv: pd.DataFrame) -> dict:
+    """p95/p99 por foto, normalizado a 15 min; tamaño por visita sin normalizar."""
+    return _caps(*_cap_samples(iv), iv["day"].nunique())
+
+
+def annual_days(year: int = 2025) -> list[str]:
+    """Días del año con cobertura ≥ C.COVERAGE_MIN y serie densa de fotos."""
+    out = []
+    for d in pd.date_range(f"{year}-01-01", f"{year}-12-31"):
+        d = d.date()
+        # Desde febrero de 2026 solo hay foto inicial y cambios de dañadas.
+        if d < date(2026, 2, 1) and data.coverage(d) >= C.COVERAGE_MIN:
+            out.append(d.isoformat())
+    return out
+
+
+def annual_caps(samples: dict[str, tuple], year: int = 2025) -> dict:
+    """Topes de la política: p95 de Ecobici en todo el año, ventana 05:00.
+
+    `samples` es día → `_cap_samples` de ese día. Cada día se mide por
+    separado; los percentiles son los de todas las fotos juntas, igual que
+    `visit_caps` sobre la unión de los días.
+    """
+    rate, size, minutes = (np.concatenate([samples[d][j] for d in sorted(samples)]) for j in range(3))
+    cap = _caps(rate, size, minutes, len(samples))
+    return {"p95": {"visitas_por_decision": cap["visitas_p95"], "bicis_por_visita": cap["bicis_p95"]},
+            "p99": {"visitas_por_decision": cap["visitas_p99"], "bicis_por_visita": cap["bicis_p99"]},
+            "poblacion": f"todos los días de {year} con cobertura ≥90% y serie densa",
+            "ventana": "05:00–00:30", "dias": cap["dias"], "fotos": cap["fotos"],
+            "primer_dia": min(samples), "ultimo_dia": max(samples),
+            "mediana_min_entre_fotos": cap["mediana_min_entre_fotos"]}
+
+
+def annual_day_samples(ds: str) -> tuple:
+    d = C.as_date(ds)
+    iv = intervals(state_time(data.snapshots(d)), _day_trips(d), d)
+    iv.insert(0, "day", ds)
+    return _cap_samples(iv)
+
+
+def update_annual_caps(year: int = 2025) -> dict:
+    """Recalcula solo `anual_{year}` en ecobici_stats.json (sin tocar los parquet)."""
+    caps = annual_caps({ds: annual_day_samples(ds) for ds in annual_days(year)}, year)
+    path = RESULTS / "ecobici_stats.json"
+    stats = json.loads(path.read_text()) if path.exists() else {}
+    stats = {f"anual_{year}": caps, **{k: v for k, v in stats.items()
+                                      if k not in (f"anual_{year}", "recalculados", "referencia_wiki", "referencia_reproducida")}}
+    path.write_text(json.dumps(stats, ensure_ascii=False, indent=2) + "\n")
+    return caps
 
 
 def pair_evidence(iv: pd.DataFrame, trips: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, list[dict]]:
@@ -330,10 +385,10 @@ def _selected_days() -> set[str]:
 def run() -> dict:
     RESULTS.mkdir(parents=True, exist_ok=True)
     selected = _selected_days()
-    eligible = {str(d.date()) for d in pd.date_range("2025-01-01", "2025-11-30")
-                if data.coverage(d.date()) >= C.COVERAGE_MIN}
+    eligible = set(annual_days(2025))
     days = sorted(selected | eligible | set(C.RUN1_EVAL_DAYS))
-    moves, damage, obs, caps_iv, eval_iv, eval_old = [], [], [], [], [], []
+    moves, damage, obs, eval_iv, eval_old = [], [], [], [], []
+    samples, neto = {}, {}  # topes y |A − R| de todos los días de 2025
     monthly, large_rows = [], []
     month_0500, month_0530, month = [], [], None
 
@@ -372,8 +427,9 @@ def run() -> dict:
             moves.append(moves_from_intervals(iv))
             damage.append(damage_events(iv))
             obs.append({"day": ds, **observed_ef(sn, d).iloc[0].to_dict()})
-        if "2025-01-01" <= ds <= "2025-08-31" and data.coverage(d) >= C.COVERAGE_MIN:
-            caps_iv.append(iv)
+        if ds in eligible:
+            samples[ds] = _cap_samples(iv)
+            neto[ds] = flow_stats(main_moves(moves_from_intervals(iv)))["neto"]
         if ds in C.RUN1_EVAL_DAYS:
             eval_iv.append(iv)
         print(ds, flush=True)
@@ -382,19 +438,12 @@ def run() -> dict:
     pd.concat(moves, ignore_index=True).to_parquet(MOVES_PARQUET, index=False)
     pd.concat(damage, ignore_index=True).to_parquet(DAMAGE_PARQUET, index=False)
     pd.DataFrame(obs).to_csv(RESULTS / "ecobici_observado.csv", index=False)
-    cap = visit_caps(pd.concat(caps_iv, ignore_index=True))
+    anual = annual_caps(samples, 2025)
     e = pd.concat(eval_iv, ignore_index=True)
     old = pd.concat(eval_old, ignore_index=True)
+    # Solo diagnóstico: la referencia del wiki (15 días, 05:30) ya no es tope.
     reference = visit_caps(old)
-    stats = {"recalculados": {"p95": {"visitas_por_decision": cap["visitas_p95"], "bicis_por_visita": cap["bicis_p95"]},
-                               "p99": {"visitas_por_decision": cap["visitas_p99"], "bicis_por_visita": cap["bicis_p99"]},
-                               "poblacion": "enero–agosto 2025, cobertura ≥90%", "ventana": "05:00–00:30",
-                               "dias": cap["dias"], "fotos": cap["fotos"]},
-             "referencia_wiki": {"p95": {"visitas_por_decision": 67, "bicis_por_visita": 14},
-                                 "p99": {"visitas_por_decision": 83, "bicis_por_visita": 24},
-                                 "poblacion": "15 RUN1_EVAL_DAYS septiembre–noviembre 2025", "ventana": "05:30–00:30",
-                                 "dias": reference["dias"], "fotos": reference["fotos"]},
-             "referencia_reproducida": reference, "meses": monthly}
+    stats = {"anual_2025": anual, "meses": monthly}
     (RESULTS / "ecobici_stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2) + "\n")
     impact = impact_table(old, 15)
     current = impact_table(e, 15)
@@ -402,14 +451,16 @@ def run() -> dict:
     rates, close, examples = pair_evidence(old, tr)
     size_rates = pair_rates_by_size(old)
     real = {"visitas_p95": 67, "bicis_p95": 14, "visitas_p99": 83, "bicis_p99": 24}
-    comparison = pd.DataFrame([{"tope": k, "recalculado": cap[k], "referencia": ref,
-                                 "diferencia": cap[k] - ref} for k, ref in real.items()])
+    cap = {"visitas_p95": anual["p95"]["visitas_por_decision"], "bicis_p95": anual["p95"]["bicis_por_visita"],
+           "visitas_p99": anual["p99"]["visitas_por_decision"], "bicis_p99": anual["p99"]["bicis_por_visita"]}
+    comparison = pd.DataFrame([{"tope": k, "anual_2025": cap[k], "referencia_wiki": ref,
+                                 "reproducida": reference[k], "diferencia": cap[k] - ref}
+                                for k, ref in real.items()])
     summary = pd.DataFrame([{"ventana": window, **flow_stats(main_moves(moves_from_intervals(frame)))}
                             for window, frame in (("05:30–00:30", old), ("05:00–00:30", e))])
     for col in ("visitas", "A", "R", "neto"):
         summary[col] /= 15
-    both = pd.concat(caps_iv, ignore_index=True)
-    caps_neto = both.groupby("day").apply(lambda x: flow_stats(main_moves(moves_from_intervals(x)))["neto"], include_groups=False)
+    caps_neto = pd.Series(neto)
     eval_neto = e.groupby("day").apply(lambda x: flow_stats(main_moves(moves_from_intervals(x)))["neto"], include_groups=False)
     monthly_df = pd.DataFrame(monthly)
     jan = monthly_df[(monthly_df['mes'] == '2025-01') & (monthly_df['ventana'] == '05:00')].iloc[0]
@@ -418,13 +469,13 @@ def run() -> dict:
 
 Regla: `delta = Δdisponibles + Δdañadas − (llegadas − salidas)` por estación y fotos consecutivas; hora de estado = commit −30 s. Pares opuestos inmediatos de **cualquier tamaño** se marcan `par`, se excluyen del esfuerzo y suman cero. `damage_events.parquet` contiene solo cambios observados `sube`/`baja` en t1. Las no rentables del feed no son necesariamente bicis averiadas.
 
-## Topes (enero–agosto 2025, cobertura ≥90%, {cap['dias']} días)
+## Topes (todo 2025, cobertura ≥90%, {anual['dias']} días)
 
-Visitas por foto normalizadas a 15 min (visitas × 15 / duración real); tamaño absoluto por visita, sin pares. {cap['fotos']} fotos, mediana de {cap['mediana_min_entre_fotos']:.1f} min entre fotos.
+Visitas por foto normalizadas a 15 min (visitas × 15 / duración real); tamaño absoluto por visita, sin pares. {anual['fotos']} fotos, mediana de {anual['mediana_min_entre_fotos']:.1f} min entre fotos. Los topes de la política son el p95 (`anual_2025` en `ecobici_stats.json`); el p99 queda como dato descriptivo.
 
 {_markdown(comparison, 0)}
 
-La referencia usa septiembre–noviembre y 05:30; el caso base usa enero–agosto y 05:00. La diferencia de población no se corrige ajustando la regla. El p95 de visitas de los 15 días de referencia sin redondear es 67.1605 y el p99 83.2370, ambos redondeados al entero más cercano.
+Diagnóstico, no tope: la referencia del wiki usa los 15 días de septiembre–noviembre y 05:30. El p95 de visitas de esos 15 días sin redondear es 67.1605 y el p99 83.2370, ambos redondeados al entero más cercano.
 
 ### Evolución mensual de los topes (días de cobertura ≥90%)
 
@@ -440,7 +491,7 @@ Los conteos de hueco, primera foto y blanco pueden traslaparse. Una visita de ta
 
 {_markdown(summary)}
 
-Referencias para 05:30: 2,482 visitas, 5,539 metidas, 5,560 sacadas, neto −21 bicis/día. Con pares incluidos el neto no cambia. En los 15 días de evaluación (05:00), |A − R| medio por día = {eval_neto.abs().mean():.1f} bicis (<60); en los 230 días de topes de enero–agosto es {caps_neto.abs().mean():.1f} bicis (ligeramente >60, no se oculta). La medición no infiere taller ni crea flota con ninguna regla.
+Referencias para 05:30: 2,482 visitas, 5,539 metidas, 5,560 sacadas, neto −21 bicis/día. Con pares incluidos el neto no cambia. En los 15 días de evaluación (05:00), |A − R| medio por día = {eval_neto.abs().mean():.1f} bicis (<60); en los {len(caps_neto)} días de topes de 2025 es {caps_neto.abs().mean():.1f} bicis. La medición no infiere taller ni crea flota con ninguna regla.
 
 ## Impacto de la regla, ventana 05:30–00:30 (media por día)
 
@@ -473,10 +524,14 @@ Cercanía del viaje a la foto intermedia (las otras fotos sirven de contraste):
                      f"bici {t['bike']} ({t['o']} → {t['d']}, salida {t['t_dep']}, llegada {t['t_arr']})" for t in ex["trips"]) + ".\n")
     text += "\n## Limitaciones\n\nSolo se ve el neto por estación e intervalo. Los pares explican desfase de relojes, no se prueba la causa individual. Desde febrero de 2026 el caché guarda solo primera foto y cambios de dañadas: hay eventos de etiqueta, pero **no** movimientos ni E/F diarios observables; no se imputan como ceros. E/F de días completos es un escalón del feed (blancos y tramos sin foto se contabilizan aparte).\n"
     (RESULTS / "REPORT.md").write_text(text)
-    return {**cap, "eval_0530": summary.iloc[0].to_dict(), "eval_0500": summary.iloc[1].to_dict(),
+    return {"anual_2025": anual, "eval_0530": summary.iloc[0].to_dict(), "eval_0500": summary.iloc[1].to_dict(),
             "mean_abs_neto_eval": float(eval_neto.abs().mean()),
             "mean_abs_neto_cap_days": float(caps_neto.abs().mean()), "examples": len(examples)}
 
 
 if __name__ == "__main__":
-    print(json.dumps(run(), ensure_ascii=False, indent=2))
+    import sys
+    if sys.argv[1:] == ["topes"]:
+        print(json.dumps(update_annual_caps(2025), ensure_ascii=False, indent=2))
+    else:
+        print(json.dumps(run(), ensure_ascii=False, indent=2))

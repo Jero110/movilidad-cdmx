@@ -51,7 +51,7 @@ function fixtureServer(port) {
     const pasos = tpl.pasos.slice(0, steps);
     let estado = s.estado;
     if (estado === 'corriendo' && steps >= Math.min(tpl.pasos.length, s.horas * 4)) estado = 'terminada';
-    return {estado, model: s.model, inicio: tpl.pasos[0].t, horas: s.horas, pasos,
+    return {estado, model: s.model, inicio: tpl.pasos[0].t, horas: s.horas, pasos, params: {alfa: s.alfa || 0},
       totales: {visitas: pasos.reduce((n, p) => n + p.visitas, 0), bicis_a_mover: pasos.reduce((n, p) => n + p.bicis_a_mover, 0)},
       siguiente_paso: tpl.pasos[steps]?.t ?? null};
   };
@@ -65,7 +65,7 @@ function fixtureServer(port) {
       if (p === '/favicon.ico') return send(res, 200, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#15212b"/></svg>', 'image/svg+xml');
       if (p === '/api/snapshot') return send(res, 200, read('snapshot.json'));
       if (p === '/api/replay/index') return send(res, 200, read('replay_index.json'));
-      let m = p.match(/^\/api\/replay\/(\d{4}-\d\d-\d\d)\/([a-z_]+)$/);
+      let m = p.match(/^\/api\/replay\/(\d{4}-\d\d-\d\d)\/([a-z_]+(?:@a\d+)?)$/);
       if (m) {
         const f = m[2] === 'dia' ? `replay_${m[1]}_dia.json` : `replay_${m[1]}_${m[2]}.json`;
         if (!fs.existsSync(path.join(FIX, f))) return send(res, 404, {detail: `${f} no existe en fixtures`});
@@ -91,8 +91,14 @@ function fixtureServer(port) {
         const fc = forecasts.get(u.searchParams.get('forecast_id'));
         if (!fc) return send(res, 404, {detail: 'Pronóstico no encontrado'});
         const id = `fx-sesion-${sessions.size + 1}`;
-        sessions.set(id, {t0: Date.now(), horas: +u.searchParams.get('horas') || 1, model: fc.model, estado: 'corriendo'});
+        sessions.set(id, {t0: Date.now(), horas: +u.searchParams.get('horas') || 1, model: fc.model, estado: 'corriendo', alfa: +u.searchParams.get('alfa') || 0});
         return send(res, 200, {session_id: id});
+      }
+      m = p.match(/^\/api\/live\/assign\/([\w-]+)\/alfa$/);
+      if (m && req.method === 'POST') {
+        if (!sessions.has(m[1])) return send(res, 404, {detail: 'Sesión no encontrada'});
+        sessions.get(m[1]).alfa = +u.searchParams.get('alfa');
+        return send(res, 200, {session_id: m[1], alfa: sessions.get(m[1]).alfa});
       }
       m = p.match(/^\/api\/live\/assign\/([\w-]+)(\/stop)?$/);
       if (m) {
@@ -298,7 +304,7 @@ async function run(base) {
   try {
     console.log(`Probando ${base}`);
     await page.send('Runtime.evaluate', {expression: 'localStorage.clear()'}).catch(() => {});
-    await page.goto(`${base}/#ahora`);
+    await page.goto(`${base}/${['lineas', 'paleta'].filter(k => opt('--' + k)).map((k, i) => `${i ? '&' : '?'}${k}=${opt('--' + k)}`).join('')}#ahora`);  // --lineas a|b|c: opción visual de las líneas de órdenes
     await page.waitFor('S.mapReady', 'mapa cargado', 60000);
     ok('Ahora carga con mapa');
 
@@ -408,6 +414,127 @@ async function run(base) {
     if (tr.now > tr.expected) throw new Error(`más líneas (${tr.now}) que viajes que llegaron en la foto (${tr.expected})`);
     ok(`viajes en el mapa: ${tr.now} que llegaron en la foto y ${tr.detour} desvíos; sin viajes de otras fotos`);
     await page.click('#showTrips');  // vuelve al valor por defecto (apagado) para las capturas
+    {  // "Cambios de dañadas": prendido por defecto; al apagarlo salen solo +N/−N; las etiquetas azules usan el mismo zoom que +N/−N
+      const on = await page.eval(`document.querySelector('#showDamaged').checked`);
+      const nL = () => page.eval(`S.map.getSource('st')._data.features.filter(f=>String(f.properties.dimg||'').split('|').some(p=>p[0]==='L')).length`);
+      const iconExpr = await page.eval(`JSON.stringify(S.map.getLayoutProperty('st-delta','icon-image'))`);
+      if (!on || iconExpr !== '["get","dimg"]') throw new Error(`cambios de dañadas: prendido=${on}, icon-image=${iconExpr}`);
+      const con = await nL();
+      await page.click('#showDamaged');
+      const sin = await nL();
+      const leg = await page.eval(`document.querySelector('#sideLegend').textContent`);
+      await page.click('#showDamaged');
+      if (!con || sin || /al acercar/.test(leg)) throw new Error(`cambios de dañadas: con=${con} sin=${sin} leyenda="${leg}"`);
+      ok(`Replay: "Cambios de dañadas" prendido por defecto (${con} etiquetas azules) y apagado (${sin}); mismo zoom que +N/−N, sin "al acercar"`);
+    }
+    // Órdenes emitidas / que llegaron: de dónde a dónde, apagadas por defecto e independientes entre sí.
+    if (!(await page.eval(`!!S.replay.arm.pares`))) {
+      skipped.push('órdenes del Replay (el replay precalculado no trae pares: hay que regenerarlo)');
+    } else {
+      const o0 = await page.eval(`(()=>({emit:document.querySelector('#showEmit').checked, arrive:document.querySelector('#showArrive').checked, n:S.map.getSource('orders')._data.features.filter(x=>x.geometry.type==='LineString').length}))()`);
+      if (o0.emit || o0.arrive || o0.n) throw new Error(`órdenes del Replay deberían arrancar apagadas y sin líneas: ${JSON.stringify(o0)}`);
+      // Foto con un paquete de 2 donantes (emitidas) y foto con una reubicación al destino cercano (llegaron).
+      const f = await page.eval(`(()=>{const a=S.replay.arm, n=S.replay.dayData.times.length; let two=-1, reloc=-1, both=-1;
+        for (let j=0;j<n;j++) { const t=replayPackages(a,j).some(g=>g.donors.length>=2), r=replayArrived(a,j).some(x=>x[4]===1);
+          if (t && two<0) two=j; if (r && reloc<0) reloc=j; if (t && r && both<0) both=j; }
+        return {two, reloc, both}})()`);
+      if (f.two < 0 || f.reloc < 0) throw new Error(`el día no trae un paquete con 2 donantes o una reubicación: ${JSON.stringify(f)}`);
+      const goK = k => page.eval(`(()=>{S.replay.k=${k}; document.querySelector('#rk').value=${k}; renderReplay(); return true})()`);
+      const feats = () => page.eval(`(()=>{const f=S.map.getSource('orders')._data.features.filter(x=>x.geometry.type==='LineString'); return {emit:f.filter(x=>x.properties.k==='emit').length, arrive:f.filter(x=>x.properties.k==='arrive').length, reloc:f.filter(x=>x.properties.k==='reloc').length, tip:!f.length || f.every(x=>x.properties.tip)}})()`);
+      const k2 = f.both >= 0 ? f.both : f.two;
+      await goK(k2);
+      await page.click('#showEmit');
+      const e1 = await feats();
+      const wantE = await page.eval(`replayPackages(S.replay.arm, ${k2}).reduce((n,g)=>n+g.donors.length,0)`);
+      if (e1.emit !== wantE || e1.arrive || e1.reloc || !e1.tip) throw new Error(`"Órdenes emitidas": ${JSON.stringify(e1)} (esperaba ${wantE} líneas)`);
+      await page.click('#showArrive');
+      const kr = f.reloc;
+      await goK(kr);
+      const e2 = await feats();
+      const wantA = await page.eval(`replayArrived(S.replay.arm, ${kr}).filter(x=>!x[4]).length`), wantR = await page.eval(`replayArrived(S.replay.arm, ${kr}).filter(x=>x[4]===1).length`);
+      if (e2.arrive !== wantA || e2.reloc !== wantR || !e2.tip) throw new Error(`"Órdenes que llegaron": ${JSON.stringify(e2)} (esperaba ${wantA} + ${wantR} reubicaciones)`);
+      await page.click('#showEmit');
+      const e3 = await feats();
+      if (e3.emit || e3.arrive !== wantA) throw new Error(`los interruptores de órdenes no son independientes: ${JSON.stringify(e3)}`);
+      const col = await page.eval(`(()=>({emit:C.emit, arrive:C.arrive, hl:!!S.map.getLayer('ord-hl') && !!S.map.getLayer('ord-hl-casing')}))()`);
+      if (!col.hl || col.emit === col.arrive || !/^#/.test(col.emit)) throw new Error(`colores o capa de resalte de las órdenes: ${JSON.stringify(col)}`);
+      const leg = await page.eval(`document.querySelector('#sideLegend').textContent`);
+      if (!/llegó/.test(leg) || !/no cupieron/.test(leg)) throw new Error(`leyenda de órdenes que llegaron: ${leg}`);
+      // Listas por paquete
+      await page.eval(`(()=>{S.replay.list='llegaron'; renderReplayList(); return true})()`);
+      const lr = await page.eval(`({pkg:document.querySelectorAll('#rpList li.pkg').length, rows:document.querySelectorAll('#rpList .row').length, txt:document.querySelector('#rpList').textContent})`);
+      if (!lr.pkg || !lr.rows || !/cupieron/.test(lr.txt)) throw new Error(`lista "Llegaron" del Replay: ${JSON.stringify(lr)}`);
+      await goK(k2);
+      await page.eval(`(()=>{S.replay.list='emitidas'; renderReplayList(); return true})()`);
+      const le = await page.eval(`({pkg:document.querySelectorAll('#rpList li.pkg').length, txt:document.querySelector('#rpList').textContent})`);
+      if (!le.pkg || !/Recoge en/.test(le.txt) || !/entrega en/.test(le.txt)) throw new Error(`lista "Emitidas" del Replay: ${JSON.stringify(le)}`);
+      ok(`Replay: "Órdenes emitidas" (${e1.emit} líneas en la foto con un paquete de 2 donantes) y "Órdenes que llegaron" (${e2.arrive} traslados + ${e2.reloc} reubicaciones al destino cercano) apagadas por defecto, independientes, con leyenda y listas por paquete`);
+      if (shots) {
+        const focus = (k, pick) => page.eval(`(()=>{const a=S.replay.arm, st=S.replay.dayData._stations; const g=${pick}; const i=g; S.map.jumpTo({center:[st[i].lon, st[i].lat], zoom:13.4}); return true})()`);
+        await page.click('#showDetours');   // sin desvíos, para ver bien las órdenes
+        await page.click('#showEmit'); await page.click('#showArrive');   // solo emitidas
+        await goK(f.two);
+        await focus(f.two, `replayPackages(a,${f.two}).find(g=>g.donors.length>=2).recv.id`);
+        await sleep(5000);
+        await page.shot('ord-01-replay-emitidas.png');
+        await page.click('#showEmit'); await page.click('#showArrive');   // solo llegaron
+        await goK(f.reloc);
+        await focus(f.reloc, `replayArrived(a,${f.reloc}).find(x=>x[4]===1)[1]`);
+        await sleep(5000);
+        await page.shot('ord-02-replay-llegaron.png');
+        await page.click('#showArrive');
+        await page.click('#showDetours');
+      } else {
+        await page.click('#showArrive');
+      }
+      await goK(24);
+    }
+    // Captura de comparación de colores (--colores <nombre>): 2025-09-01 11:00, ma_diaria, ambos interruptores de órdenes y los viajes prendidos.
+    if (opt('--colores')) {
+      await page.eval(`(()=>{S.replay.keys=['ma_diaria']; syncArmsUI(); S.replay.alfa=0; fillAlfa(); loadReplay(24); return true})()`);
+      await page.waitFor(`S.replay.sel.length === 1 && S.replay.arm.arm === 'ma_diaria' && S.replay.arm.alfa === 0 && S.replay.k === 24 && !document.querySelector('#rk').disabled`, 'ma_diaria 11:00', 60000);
+      for (const id of ['#showEmit', '#showArrive']) if (!(await page.eval(`document.querySelector('${id}').checked`))) await page.click(id);
+      for (const id of ['#showTrips', '#showDetours']) if (!(await page.eval(`document.querySelector('${id}').checked`))) await page.click(id);  // viajes de la foto y desviados prendidos
+      await page.eval(`(()=>{S.map.jumpTo({center:[-99.165,19.425], zoom:12.6}); return true})()`);
+      await sleep(5000);
+      await page.shot(`${opt('--colores')}.png`);
+      for (const id of ['#showEmit', '#showArrive', '#showTrips']) await page.click(id);
+    }
+    // Costo por km (α): el selector sale del índice; con α > 0 los brazos con asignador cargan su variante y bajan los km.
+    {
+      const al = await page.eval(`(()=>({field:!document.querySelector('#ralfaField').hidden, opts:[...document.querySelectorAll('#ralfa option')].map(o=>+o.value), now:S.replay.alfa}))()`);
+      if (!al.field) skipped.push('selector de α del Replay (el índice no trae variantes: corre `python -m ecosim.replay --alfas 1 3 5 7 10`)');
+      else {
+        if (al.now !== 0 || al.opts[0] !== 0 || al.opts.length < 2) throw new Error(`selector de α: ${JSON.stringify(al)}`);
+        await page.eval(`(()=>{const arm=Object.keys(S.replay.index.days[$('#rday').value].alfas)[0]; if (S.replay.arm.arm !== arm || S.replay.sel.length !== 1) { S.replay.keys=[arm]; syncArmsUI(); loadReplay(S.replay.k); } return true})()`);
+        await page.waitFor(`S.replay.sel.length === 1 && !document.querySelector('#rk').disabled && S.replay.arm.arm === Object.keys(S.replay.index.days[$('#rday').value].alfas)[0]`, 'brazo con variantes de α', 60000);
+        const kmDe = () => page.eval(`(()=>{const a=S.replay.arm, n=S.replay.dayData.times.length-1; return {alfa:a.alfa, km:snapVal(a,n,'km_tramos',true), kpb:snapVal(a,n,'km_por_bici',true), ef:a.snap[n].EF_acum, txt:document.querySelector('#rpTable tr[data-stat="km_tramos"]')?.textContent||''}})()`);
+        await page.eval(`(()=>{S.replay.k=S.replay.dayData.times.length-1; document.querySelector('#rk').value=S.replay.k; renderReplay(); return true})()`);
+        const a0 = await kmDe();
+        const hi = Math.max(...al.opts);
+        await page.eval(`(()=>{const s=document.querySelector('#ralfa'); s.value='${hi}'; s.dispatchEvent(new Event('change')); return true})()`);
+        await page.waitFor(`S.replay.arm?.alfa === ${hi} && !document.querySelector('#rk').disabled || (console.log(document.querySelector('#rerror').textContent), false)`, `variante α=${hi}`, 20000);
+        const a1 = await kmDe();
+        if (!(a0.km > 0 && a1.km > 0 && a1.km < a0.km && a1.kpb < a0.kpb)) throw new Error(`α=${hi} no baja los km: ${JSON.stringify({a0, a1})}`);
+        if (!/km de tramos/i.test(a1.txt)) throw new Error(`el panel no muestra los km de tramos: ${a1.txt}`);
+        if (!/α/.test(await page.eval(`document.querySelector('#rspec').textContent`))) throw new Error('la ficha del escenario no dice α');
+        if (shots) {
+          await page.eval(`(()=>{S.replay.k=${await page.eval(`S.replay.dayData.times.length`) > 40 ? 24 : 12}; document.querySelector('#rk').value=S.replay.k; renderReplay(); return true})()`);
+          await page.click('#showEmit');
+          await sleep(4000);
+          await page.shot('alfa-02-replay-a10.png');
+          await page.eval(`(()=>{const s=document.querySelector('#ralfa'); s.value='0'; s.dispatchEvent(new Event('change')); return true})()`);
+          await page.waitFor(`S.replay.arm.alfa === 0 && !document.querySelector('#rk').disabled`, 'vuelve a α=0', 60000);
+          await sleep(4000);
+          await page.shot('alfa-01-replay-a0.png');
+          await page.click('#showEmit');
+        }
+        await page.eval(`(()=>{const s=document.querySelector('#ralfa'); s.value='0'; s.dispatchEvent(new Event('change')); return true})()`);
+        await page.waitFor(`S.replay.arm.alfa === 0 && !document.querySelector('#rk').disabled`, 'α=0 de nuevo', 60000);
+        await page.eval(`(()=>{S.replay.k=24; document.querySelector('#rk').value=24; renderReplay(); return true})()`);
+        ok(`Replay α: selector con ${al.opts.join(', ')}; α=${hi} baja los km de tramos del día de ${a0.km.toFixed(0)} a ${a1.km.toFixed(0)} (km por bici ${a0.kpb.toFixed(2)} → ${a1.kpb.toFixed(2)}), E+F ${a0.ef} → ${a1.ef}`);
+      }
+    }
     if (shots) {
       // Foto con entregas, recogidas y cambios de etiqueta, centrada donde se juntan los tres.
       const focus = await page.eval(`(()=>{const a=S.replay.arm, st=S.replay.dayData._stations; let best=null;
@@ -574,6 +701,7 @@ async function run(base) {
     await page.click('#sub-asignacion');
     await page.waitFor(`!document.querySelector('#assignForm').hidden`, 'formulario de asignación');
     await page.eval(`document.querySelector('#ahours').value='1'`);
+    await page.eval(`(()=>{const s=document.querySelector('#aalfa'); if (!s || s.value!=='0') throw new Error('selector α de Asignación debe arrancar en 0'); s.value='1'; return true})()`);
     await page.click('#startAssign');
     await page.waitFor(`S.live.session && (S.live.session.pasos||[]).length >= 1 || !document.querySelector('#aerror').hidden`, 'primer paso de la asignación', 300000);
     const aerr = await page.eval(`document.querySelector('#aerror').hidden ? null : document.querySelector('#aerror').textContent`);
@@ -584,6 +712,67 @@ async function run(base) {
       await page.eval(`(()=>{const p=S.live.session.pasos.at(-1); const sn=p.emitidas[0]?.short_name; const s=S.snapshot.stations.find(x=>x.short_name===sn); if(s) S.map.jumpTo({center:[s.lon,s.lat], zoom:12.6}); return true})()`);
       await sleep(5000);
       await page.shot('ux-05-asignacion.png');
+    }
+    {  // α de la sesión: el que se eligió al iniciar y el cambio en caliente
+      const a0 = await page.eval(`S.live.session.params?.alfa`);
+      if (a0 !== 1) throw new Error(`la sesión debía iniciar con α=1: ${a0}`);
+      if (await page.eval(`S.live.session.estado === 'corriendo'`)) {
+        await page.eval(`(()=>{const s=document.querySelector('#salfa'); if (document.querySelector('#salfaField').hidden) throw new Error('el selector α de la sesión no está visible'); s.value='5'; s.dispatchEvent(new Event('change')); return true})()`);
+        await page.waitFor(`S.live.session.params?.alfa === 5`, 'α=5 en la sesión', 30000);
+        ok('Asignación: la sesión inicia con α=1 y el cambio a α=5 en caliente llega al servidor (aplica desde la siguiente decisión)');
+      } else ok('Asignación: la sesión inició con α=1');
+    }
+    // Órdenes en Asignación: emitidas del paso (siempre) y las que llegaron (cuando algún paso aplica una entrega).
+    {
+      const hasPq = await page.eval(`S.live.session.pasos.some(p => (p.emitidas || []).some(o => o.paquete))`);
+      if (!hasPq) skipped.push('órdenes de Asignación (la sesión no tiene órdenes con paquete en sus pasos)');
+      else {
+        const off = await page.eval(`(()=>({e:document.querySelector('#showEmitA').checked, a:document.querySelector('#showArriveA').checked}))()`);
+        if (off.e || off.a) throw new Error(`órdenes de Asignación deberían arrancar apagadas: ${JSON.stringify(off)}`);
+        const feats = () => page.eval(`(()=>{const f=S.map.getSource('orders')._data.features.filter(x=>x.geometry.type==='LineString'); return {emit:f.filter(x=>x.properties.k==='emit').length, arrive:f.filter(x=>x.properties.k==='arrive').length, tip:f.every(x=>x.properties.tip)}})()`);
+        if (shots && flag('--fixtures')) await page.waitFor(`S.live.session.pasos.some(p => liveArrived(p).length)`, 'un paso que aplique una entrega', 120000).catch(() => {});
+        const ks = await page.eval(`(()=>{const ps=S.live.session.pasos; return {two: ps.findIndex(p=>livePackages(p.emitidas).some(g=>g.donors.length>=2)), arr: ps.findIndex(p=>liveArrived(p).length>0)}})()`);
+        const goStep = j => page.eval(`(()=>{const el=document.querySelector('#astep'); el.value=${j}; el.dispatchEvent(new Event('change')); return true})()`);
+        const st = ks.two >= 0 ? ks.two : 0;
+        await goStep(st);
+        await page.click('#showEmitA');
+        const wantE = await page.eval(`livePackages(currentStep().emitidas).reduce((n,g)=>n+g.donors.length,0)`);
+        const e1 = await feats();
+        if (e1.emit !== wantE || e1.arrive || !e1.tip) throw new Error(`Asignación "Órdenes emitidas": ${JSON.stringify(e1)} (esperaba ${wantE})`);
+        const leg = await page.eval(`document.querySelector('#sideLegend').textContent`);
+        if (!/orden emitida/.test(leg)) throw new Error(`leyenda de Asignación: ${leg}`);
+        await page.eval(`(()=>{S.live.list='emitidas'; renderAssignList(); return true})()`);
+        const le = await page.eval(`({pkg:document.querySelectorAll('#apList li.pkg').length, txt:document.querySelector('#apList').textContent})`);
+        if (!le.pkg || !/Recoge en/.test(le.txt) || !/entrega en/.test(le.txt)) throw new Error(`lista "Emitidas" de Asignación: ${JSON.stringify(le)}`);
+        if (shots) {
+          await page.eval(`(()=>{const g=livePackages(currentStep().emitidas)[0]; const s=S.snapshot.stations.find(x=>x.short_name===g.recv.id); if(s) S.map.jumpTo({center:[s.lon,s.lat], zoom:13}); return true})()`);
+          await sleep(5000);
+          await page.shot('ord-03-prediccion-emitidas.png');
+        }
+        let msg = `Asignación: "Órdenes emitidas" dibuja ${e1.emit} líneas del paso ${st + 1} y la lista sale por paquete`;
+        if (ks.arr >= 0) {
+          await goStep(ks.arr);
+          await page.click('#showEmitA'); await page.click('#showArriveA');
+          const wantA = await page.eval(`liveArrived(currentStep()).reduce((n,g)=>n+g.donors.length,0)`);
+          const e2 = await feats();
+          if (e2.arrive !== wantA || e2.emit || !e2.tip) throw new Error(`Asignación "Órdenes que llegaron": ${JSON.stringify(e2)} (esperaba ${wantA})`);
+          await page.eval(`(()=>{S.live.list='llegaron'; renderAssignList(); return true})()`);
+          if (!await page.eval(`document.querySelectorAll('#apList li.pkg').length > 0`)) throw new Error('lista "Llegaron" de Asignación vacía');
+          if (shots) {
+            await page.eval(`(()=>{const g=liveArrived(currentStep())[0]; const s=S.snapshot.stations.find(x=>x.short_name===g.recv.id); if(s) S.map.jumpTo({center:[s.lon,s.lat], zoom:13}); return true})()`);
+            await sleep(5000);
+            await page.shot('ord-04-prediccion-llegaron.png');
+          }
+          await page.click('#showArriveA');
+          msg += `; "Órdenes que llegaron" dibuja ${e2.arrive} en el paso ${ks.arr + 1}`;
+        } else {
+          await page.click('#showEmitA');
+          msg += '; ningún paso aplicó aún una entrega (sin líneas de llegada que revisar)';
+        }
+        await goStep(0);
+        await page.eval(`(()=>{S.live.list='emitidas'; renderAssignList(); return true})()`);
+        ok(msg);
+      }
     }
     if (zonasOk) {
       const before = await page.eval(`document.querySelector('[data-zones="asignacion"] .zones-on').checked`);

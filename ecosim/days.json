@@ -1,7 +1,6 @@
 {
   "coverage_def": "fracción de 20 bloques (19 de 60 min y uno de 30 min) en [05:00, 00:30) con foto",
   "coverage_min": 0.9,
-  "selection_seed": 20261001,
   "curve_seed": 20261002,
   "seleccion": [
     {
@@ -11,16 +10,40 @@
       "open_offset_min": 6.816666666666666
     },
     {
+      "day": "2025-08-02",
+      "type": "weekend",
+      "coverage": 1.0,
+      "open_offset_min": 6.05
+    },
+    {
+      "day": "2025-08-03",
+      "type": "weekend",
+      "coverage": 1.0,
+      "open_offset_min": 7.033333333333333
+    },
+    {
       "day": "2025-08-04",
       "type": "weekday",
       "coverage": 1.0,
       "open_offset_min": 7.483333333333333
     },
     {
+      "day": "2025-08-05",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 7.25
+    },
+    {
       "day": "2025-08-06",
       "type": "weekday",
       "coverage": 1.0,
       "open_offset_min": 6.983333333333333
+    },
+    {
+      "day": "2025-08-07",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 7.3
     },
     {
       "day": "2025-08-08",
@@ -33,6 +56,12 @@
       "type": "weekend",
       "coverage": 1.0,
       "open_offset_min": 7.316666666666666
+    },
+    {
+      "day": "2025-08-10",
+      "type": "weekend",
+      "coverage": 1.0,
+      "open_offset_min": 6.9
     },
     {
       "day": "2025-08-11",
@@ -53,10 +82,28 @@
       "open_offset_min": 6.6
     },
     {
+      "day": "2025-08-14",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 6.483333333333333
+    },
+    {
+      "day": "2025-08-15",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 6.216666666666667
+    },
+    {
       "day": "2025-08-16",
       "type": "weekend",
       "coverage": 1.0,
       "open_offset_min": 5.883333333333334
+    },
+    {
+      "day": "2025-08-17",
+      "type": "weekend",
+      "coverage": 1.0,
+      "open_offset_min": 6.866666666666666
     },
     {
       "day": "2025-08-18",
@@ -65,10 +112,46 @@
       "open_offset_min": 6.65
     },
     {
+      "day": "2025-08-19",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 5.983333333333333
+    },
+    {
+      "day": "2025-08-20",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 6.216666666666667
+    },
+    {
+      "day": "2025-08-21",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 23.4
+    },
+    {
+      "day": "2025-08-22",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 5.95
+    },
+    {
       "day": "2025-08-23",
       "type": "weekend",
       "coverage": 1.0,
       "open_offset_min": 5.6
+    },
+    {
+      "day": "2025-08-24",
+      "type": "weekend",
+      "coverage": 1.0,
+      "open_offset_min": 5.766666666666667
+    },
+    {
+      "day": "2025-08-25",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 6.6
     },
     {
       "day": "2025-08-26",
@@ -87,6 +170,18 @@
       "type": "weekday",
       "coverage": 1.0,
       "open_offset_min": 23.066666666666666
+    },
+    {
+      "day": "2025-08-29",
+      "type": "weekday",
+      "coverage": 1.0,
+      "open_offset_min": 6.2
+    },
+    {
+      "day": "2025-08-30",
+      "type": "weekend",
+      "coverage": 1.0,
+      "open_offset_min": 5.566666666666666
     },
     {
       "day": "2025-08-31",

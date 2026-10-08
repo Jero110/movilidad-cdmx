@@ -1,0 +1,655 @@
+{
+ "dias16": [
+  "2025-09-01",
+  "2025-09-11",
+  "2025-09-20",
+  "2025-09-30",
+  "2025-10-01",
+  "2025-10-11",
+  "2025-10-21",
+  "2025-10-31",
+  "2025-11-01",
+  "2025-11-10",
+  "2025-11-20",
+  "2025-11-30",
+  "2025-12-01",
+  "2025-12-11",
+  "2025-12-21",
+  "2025-12-31"
+ ],
+ "brazos16": {
+  "sin_rebalanceo": {
+   "desvios_salida": 142486,
+   "desvios_llegada": 90075,
+   "salidas": 856176,
+   "pct": 27.16
+  },
+  "ecobici": {
+   "desvios_salida": 29197,
+   "desvios_llegada": 9628,
+   "salidas": 856176,
+   "pct": 4.53
+  },
+  "ma_diaria": {
+   "desvios_salida": 59327,
+   "desvios_llegada": 5279,
+   "salidas": 856176,
+   "pct": 7.55
+  },
+  "lgbm_diario": {
+   "desvios_salida": 58907,
+   "desvios_llegada": 5415,
+   "salidas": 856176,
+   "pct": 7.51
+  },
+  "lgbm_directo": {
+   "desvios_salida": 63200,
+   "desvios_llegada": 4876,
+   "salidas": 856176,
+   "pct": 7.95
+  },
+  "oraculo_diario": {
+   "desvios_salida": 42351,
+   "desvios_llegada": 4117,
+   "salidas": 856176,
+   "pct": 5.43
+  },
+  "oraculo_directo": {
+   "desvios_salida": 31097,
+   "desvios_llegada": 3671,
+   "salidas": 856176,
+   "pct": 4.06
+  }
+ },
+ "prueba": {
+  "dias": 121,
+  "salidas_dia": 52242.9,
+  "brazos": {
+   "sin_rebalanceo": {
+    "E": 169275.9,
+    "F": 50785.0,
+    "EF": 220060.9,
+    "desvios": 14118.2,
+    "pct": 27.02
+   },
+   "ecobici": {
+    "E": 84956.3,
+    "F": 17178.3,
+    "EF": 102134.6,
+    "desvios": 2298.1,
+    "pct": 4.4
+   },
+   "ma_diaria": {
+    "E": 53774.3,
+    "F": 4027.6,
+    "EF": 57801.8,
+    "desvios": 3706.4,
+    "pct": 7.09
+   },
+   "lgbm_diario": {
+    "E": 54120.3,
+    "F": 4066.8,
+    "EF": 58187.1,
+    "desvios": 3695.5,
+    "pct": 7.07
+   },
+   "lgbm_directo": {
+    "E": 53647.2,
+    "F": 3863.0,
+    "EF": 57510.2,
+    "desvios": 3917.3,
+    "pct": 7.5
+   },
+   "oraculo_diario": {
+    "E": 38078.2,
+    "F": 2793.6,
+    "EF": 40871.8,
+    "desvios": 2603.1,
+    "pct": 4.98
+   },
+   "oraculo_directo": {
+    "E": 30933.5,
+    "F": 2750.8,
+    "EF": 33684.4,
+    "desvios": 1903.4,
+    "pct": 3.64
+   }
+  },
+  "feed": {
+   "E": 87470.1,
+   "F": 17062.0,
+   "EF": 104532.1
+  }
+ },
+ "causa_resolucion": {
+  "sal": 29197,
+  "sal_ent": 6317,
+  "lle": 9628,
+  "lle_rec": 3370,
+  "tsal": 856176,
+  "tsal_ent": 39447,
+  "tlle": 854124,
+  "tlle_rec": 44856,
+  "pct_sal": 21.6,
+  "pct_lle": 35.0,
+  "pct_tsal": 4.6,
+  "pct_tlle": 5.3
+ },
+ "causa_cero": {
+  "por_dia": [
+   {
+    "dia": "2025-09-01",
+    "salidas": 60873,
+    "en_cero": 3697,
+    "pct": 6.07,
+    "pct_no_rentables": 90.7,
+    "edad_mediana_min": 13.0
+   },
+   {
+    "dia": "2025-09-11",
+    "salidas": 66137,
+    "en_cero": 3899,
+    "pct": 5.9,
+    "pct_no_rentables": 88.1,
+    "edad_mediana_min": 12.1
+   },
+   {
+    "dia": "2025-09-20",
+    "salidas": 40859,
+    "en_cero": 995,
+    "pct": 2.44,
+    "pct_no_rentables": 73.9,
+    "edad_mediana_min": 11.0
+   },
+   {
+    "dia": "2025-09-30",
+    "salidas": 68342,
+    "en_cero": 4541,
+    "pct": 6.64,
+    "pct_no_rentables": 82.7,
+    "edad_mediana_min": 13.3
+   },
+   {
+    "dia": "2025-10-01",
+    "salidas": 66997,
+    "en_cero": 4553,
+    "pct": 6.8,
+    "pct_no_rentables": 81.4,
+    "edad_mediana_min": 12.7
+   },
+   {
+    "dia": "2025-10-11",
+    "salidas": 39447,
+    "en_cero": 797,
+    "pct": 2.02,
+    "pct_no_rentables": 80.6,
+    "edad_mediana_min": 11.8
+   },
+   {
+    "dia": "2025-10-21",
+    "salidas": 71459,
+    "en_cero": 4588,
+    "pct": 6.42,
+    "pct_no_rentables": 85.6,
+    "edad_mediana_min": 12.1
+   },
+   {
+    "dia": "2025-10-31",
+    "salidas": 61829,
+    "en_cero": 3028,
+    "pct": 4.9,
+    "pct_no_rentables": 75.7,
+    "edad_mediana_min": 12.9
+   },
+   {
+    "dia": "2025-11-01",
+    "salidas": 40328,
+    "en_cero": 1026,
+    "pct": 2.54,
+    "pct_no_rentables": 90.4,
+    "edad_mediana_min": 11.2
+   },
+   {
+    "dia": "2025-11-10",
+    "salidas": 55105,
+    "en_cero": 3562,
+    "pct": 6.46,
+    "pct_no_rentables": 85.0,
+    "edad_mediana_min": 11.8
+   },
+   {
+    "dia": "2025-11-20",
+    "salidas": 65638,
+    "en_cero": 5363,
+    "pct": 8.17,
+    "pct_no_rentables": 90.2,
+    "edad_mediana_min": 11.5
+   },
+   {
+    "dia": "2025-11-30",
+    "salidas": 35189,
+    "en_cero": 868,
+    "pct": 2.47,
+    "pct_no_rentables": 86.3,
+    "edad_mediana_min": 11.9
+   },
+   {
+    "dia": "2025-12-01",
+    "salidas": 61387,
+    "en_cero": 3583,
+    "pct": 5.84,
+    "pct_no_rentables": 79.7,
+    "edad_mediana_min": 13.0
+   },
+   {
+    "dia": "2025-12-11",
+    "salidas": 64054,
+    "en_cero": 2717,
+    "pct": 4.24,
+    "pct_no_rentables": 64.2,
+    "edad_mediana_min": 12.8
+   },
+   {
+    "dia": "2025-12-21",
+    "salidas": 30235,
+    "en_cero": 583,
+    "pct": 1.93,
+    "pct_no_rentables": 86.8,
+    "edad_mediana_min": 12.0
+   },
+   {
+    "dia": "2025-12-31",
+    "salidas": 27988,
+    "en_cero": 372,
+    "pct": 1.33,
+    "pct_no_rentables": 55.1,
+    "edad_mediana_min": 11.0
+   }
+  ],
+  "salidas": 855867,
+  "en_cero": 44172,
+  "pct": 5.16,
+  "pct_min": 1.33,
+  "pct_max": 8.17,
+  "pct_no_rentables": 83.1,
+  "edad_mediana_min": 12.3
+ },
+ "causa_arrastre": {
+  "estaciones_media": 676.9,
+  "difieren_min": 7.0,
+  "difieren_max": 243.0,
+  "dif_media_min": 0.01,
+  "dif_media_max": 0.95,
+  "difieren_0600": 7.0,
+  "difieren_media": 161.0,
+  "dif_media_dia": 0.53,
+  "crudo_difieren_min": 84.0,
+  "crudo_difieren_max": 496.0,
+  "crudo_dif_media_min": 0.14,
+  "crudo_dif_media_max": 2.22,
+  "por_hora": [
+   {
+    "hora": "06:00",
+    "difieren": 6.6,
+    "dif_media": 0.01
+   },
+   {
+    "hora": "07:00",
+    "difieren": 22.2,
+    "dif_media": 0.04
+   },
+   {
+    "hora": "08:00",
+    "difieren": 42.4,
+    "dif_media": 0.116
+   },
+   {
+    "hora": "09:00",
+    "difieren": 86.4,
+    "dif_media": 0.28
+   },
+   {
+    "hora": "10:00",
+    "difieren": 124.5,
+    "dif_media": 0.393
+   },
+   {
+    "hora": "11:00",
+    "difieren": 133.9,
+    "dif_media": 0.403
+   },
+   {
+    "hora": "12:00",
+    "difieren": 148.8,
+    "dif_media": 0.426
+   },
+   {
+    "hora": "13:00",
+    "difieren": 160.1,
+    "dif_media": 0.436
+   },
+   {
+    "hora": "14:00",
+    "difieren": 163.8,
+    "dif_media": 0.44
+   },
+   {
+    "hora": "15:00",
+    "difieren": 175.4,
+    "dif_media": 0.458
+   },
+   {
+    "hora": "16:00",
+    "difieren": 168.9,
+    "dif_media": 0.426
+   },
+   {
+    "hora": "17:00",
+    "difieren": 184.0,
+    "dif_media": 0.454
+   },
+   {
+    "hora": "18:00",
+    "difieren": 184.8,
+    "dif_media": 0.474
+   },
+   {
+    "hora": "19:00",
+    "difieren": 213.8,
+    "dif_media": 0.8
+   },
+   {
+    "hora": "20:00",
+    "difieren": 222.3,
+    "dif_media": 0.904
+   },
+   {
+    "hora": "21:00",
+    "difieren": 233.1,
+    "dif_media": 0.936
+   },
+   {
+    "hora": "22:00",
+    "difieren": 242.2,
+    "dif_media": 0.917
+   },
+   {
+    "hora": "23:00",
+    "difieren": 231.8,
+    "dif_media": 0.875
+   },
+   {
+    "hora": "00:00",
+    "difieren": 224.5,
+    "dif_media": 0.846
+   }
+  ]
+ },
+ "demanda": {
+  "estaciones_top": 68,
+  "estaciones": 677,
+  "pct_viajes_top": 24.8,
+  "horas_pico": [
+   8,
+   14,
+   15,
+   16,
+   17,
+   18
+  ],
+  "pct_salidas_pico": 44.7,
+  "brazos": {
+   "sin_rebalanceo": {
+    "desvios_dia": 14535.1,
+    "desvios_top_dia": 4577.7,
+    "desvios_pico_dia": 5499.4,
+    "EF_top": 24548.4,
+    "EF_resto": 195405.9,
+    "E_top": 13821.6,
+    "E_resto": 155737.5,
+    "extra_dia": 12108.5,
+    "extra_pct_top": 31.1,
+    "extra_pct_pico": 36.0,
+    "pct_desvios_top": 31.5,
+    "pct_desvios_pico": 37.8
+   },
+   "ecobici": {
+    "desvios_dia": 2426.6,
+    "desvios_top_dia": 814.7,
+    "desvios_pico_dia": 1139.1,
+    "EF_top": 9150.9,
+    "EF_resto": 93900.9,
+    "E_top": 6780.0,
+    "E_resto": 78817.5,
+    "extra_dia": 0.0,
+    "extra_pct_top": null,
+    "extra_pct_pico": null,
+    "pct_desvios_top": 33.6,
+    "pct_desvios_pico": 46.9
+   },
+   "ma_diaria": {
+    "desvios_dia": 4037.9,
+    "desvios_top_dia": 1482.7,
+    "desvios_pico_dia": 2104.9,
+    "EF_top": 8278.1,
+    "EF_resto": 50340.0,
+    "E_top": 7488.8,
+    "E_resto": 47505.0,
+    "extra_dia": 1611.3,
+    "extra_pct_top": 41.5,
+    "extra_pct_pico": 59.9,
+    "pct_desvios_top": 36.7,
+    "pct_desvios_pico": 52.1
+   },
+   "lgbm_diario": {
+    "desvios_dia": 4020.1,
+    "desvios_top_dia": 1462.0,
+    "desvios_pico_dia": 2041.3,
+    "EF_top": 8065.3,
+    "EF_resto": 50463.8,
+    "E_top": 7251.6,
+    "E_resto": 47565.9,
+    "extra_dia": 1593.5,
+    "extra_pct_top": 40.6,
+    "extra_pct_pico": 56.6,
+    "pct_desvios_top": 36.4,
+    "pct_desvios_pico": 50.8
+   },
+   "lgbm_directo": {
+    "desvios_dia": 4254.8,
+    "desvios_top_dia": 1532.9,
+    "desvios_pico_dia": 2220.9,
+    "EF_top": 8354.1,
+    "EF_resto": 50106.6,
+    "E_top": 7598.4,
+    "E_resto": 47360.6,
+    "extra_dia": 1828.2,
+    "extra_pct_top": 39.3,
+    "extra_pct_pico": 59.2,
+    "pct_desvios_top": 36.0,
+    "pct_desvios_pico": 52.2
+   },
+   "oraculo_diario": {
+    "desvios_dia": 2904.2,
+    "desvios_top_dia": 1268.7,
+    "desvios_pico_dia": 1578.6,
+    "EF_top": 6649.7,
+    "EF_resto": 36229.7,
+    "E_top": 6078.8,
+    "E_resto": 34110.0,
+    "extra_dia": 477.6,
+    "extra_pct_top": 95.1,
+    "extra_pct_pico": 92.0,
+    "pct_desvios_top": 43.7,
+    "pct_desvios_pico": 54.4
+   },
+   "oraculo_directo": {
+    "desvios_dia": 2173.0,
+    "desvios_top_dia": 1009.6,
+    "desvios_pico_dia": 1199.4,
+    "EF_top": 5550.0,
+    "EF_resto": 30038.4,
+    "E_top": 4973.4,
+    "E_resto": 28042.5,
+    "extra_dia": -253.6,
+    "extra_pct_top": null,
+    "extra_pct_pico": null,
+    "pct_desvios_top": 46.5,
+    "pct_desvios_pico": 55.2
+   }
+  }
+ },
+ "ejemplo": {
+  "dia": "2025-09-01",
+  "estacion": "273-274",
+  "nombre": "CE-273-274 Luis Donaldo Colosio - Av. Jesús García",
+  "desde": "08:45",
+  "hasta": "09:00",
+  "fotos": [
+   {
+    "hora": "08:36",
+    "disponibles": 1,
+    "no_rentables": 14
+   },
+   {
+    "hora": "08:48",
+    "disponibles": 0,
+    "no_rentables": 12
+   },
+   {
+    "hora": "09:06",
+    "disponibles": 30,
+    "no_rentables": 8
+   }
+  ],
+  "movimientos": [
+   {
+    "estacion": "271-272",
+    "hora": "08:36",
+    "delta": -1
+   },
+   {
+    "estacion": "273-274",
+    "hora": "08:36",
+    "delta": 19
+   },
+   {
+    "estacion": "555",
+    "hora": "08:36",
+    "delta": 2
+   },
+   {
+    "estacion": "273-274",
+    "hora": "08:48",
+    "delta": -2
+   },
+   {
+    "estacion": "547",
+    "hora": "08:48",
+    "delta": 11
+   },
+   {
+    "estacion": "554",
+    "hora": "08:48",
+    "delta": 10
+   },
+   {
+    "estacion": "555",
+    "hora": "08:48",
+    "delta": 6
+   },
+   {
+    "estacion": "273-274",
+    "hora": "09:06",
+    "delta": 79
+   },
+   {
+    "estacion": "547",
+    "hora": "09:06",
+    "delta": -1
+   },
+   {
+    "estacion": "548",
+    "hora": "09:06",
+    "delta": 10
+   }
+  ],
+  "salidas_reales": 40,
+  "desvios": 41,
+  "sim_bicis_inicio": 1,
+  "cadena": [
+   {
+    "estacion": "268-269",
+    "metros": 139,
+    "desvios": 2
+   },
+   {
+    "estacion": "265",
+    "metros": 220,
+    "desvios": 9
+   },
+   {
+    "estacion": "266-267",
+    "metros": 168,
+    "desvios": 2
+   },
+   {
+    "estacion": "554",
+    "metros": 301,
+    "desvios": 6
+   },
+   {
+    "estacion": "555",
+    "metros": 436,
+    "desvios": 4
+   },
+   {
+    "estacion": "547",
+    "metros": 591,
+    "desvios": 3
+   },
+   {
+    "estacion": "270",
+    "metros": 668,
+    "desvios": 3
+   },
+   {
+    "estacion": "041",
+    "metros": 856,
+    "desvios": 1
+   },
+   {
+    "estacion": "029",
+    "metros": 907,
+    "desvios": 7
+   },
+   {
+    "estacion": "260",
+    "metros": 985,
+    "desvios": 1
+   },
+   {
+    "estacion": "259",
+    "metros": 599,
+    "desvios": 1
+   },
+   {
+    "estacion": "271-272",
+    "metros": 120,
+    "desvios": 1
+   },
+   {
+    "estacion": "548",
+    "metros": 501,
+    "desvios": 1
+   }
+  ],
+  "v265_bicis_inicio": 21,
+  "v265_bicis_fin": 0,
+  "v265_metros": 220,
+  "entregas_vecinas": {
+   "554": 10,
+   "547": 11
+  }
+ }
+}

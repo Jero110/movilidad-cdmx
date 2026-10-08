@@ -25,6 +25,8 @@
   --relabel: #2563c9;        /* ±N rentable ↔ no rentable */
   --detour: #7a46c4;         /* viajes desviados */
   --trip: #7c8791;
+  --emit: #2b95e8;           /* órdenes emitidas: azul cielo (plan), claro */
+  --arrive: #0b3a6e;         /* órdenes que llegaron: azul marino (ejecutado), oscuro; se distingue por luminosidad, no por rojo/verde */
   --trip-now: #1b9e8f;       /* viajes de la foto: verde azulado, translúcido en el mapa; distinto del +N */
 
   /* estado de estación */
@@ -468,6 +470,12 @@ input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
 .chip.gray { background: #fff; color: #5b6670; border: 1px solid #c3cbd2; }
 .chip.gray.st-ink { color: #166b3c; border-color: rgba(31, 138, 82, .7); }
 .line-sw { width: 22px; height: 0; border-top: 2px solid var(--trip-now); opacity: .55; }
+.line-sw.emit { border-top: 3px solid var(--emit); opacity: .8; }
+.line-sw.arrive { border-top: 3px solid var(--arrive); opacity: .9; }
+/* Estilo con degradado (?lineas=a): la muestra de la leyenda va de tenue (origen) a intensa (destino). */
+.lg-grad .line-sw.emit { border-top: 0; height: 3px; border-radius: 2px; opacity: 1; background: linear-gradient(90deg, var(--emit-fade), var(--emit)); }
+.lg-grad .line-sw.arrive { border-top: 0; height: 3px; border-radius: 2px; opacity: 1; background: linear-gradient(90deg, var(--arrive-fade), var(--arrive)); }
+.line-sw.reloc { border-top: 3px dotted var(--arrive); opacity: .95; }
 .line-sw.detour { border-top: 2px dashed var(--detour); opacity: .75; }
 .legend-zones { display: grid; gap: 4px; padding-top: 8px; margin-top: 2px; border-top: 1px solid var(--line); }
 
@@ -583,6 +591,10 @@ input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
 .act.vacia { background: var(--st-vacia); } .act.llena { background: var(--st-llena); }
 .act .ico { width: 13px; height: 13px; stroke-width: 2.4; }
 .rows .none { padding: 18px 6px; color: var(--ink-3); font-size: 13px; text-align: center; }
+.rows li.pkg { padding: 10px 6px 4px; font-size: 12px; font-weight: 700; color: var(--ink-2); border-bottom: 1px solid var(--line); letter-spacing: .02em; }
+.rows li.pkg small { font-weight: 500; color: var(--ink-3); }
+.row .act.reloc { background: #6b7782; }
+.maplibregl-popup.ord .maplibregl-popup-content { max-width: 260px; }
 .rows .more { padding: 10px 6px; color: var(--ink-3); font-size: 12.5px; }
 
 /* aviso flotante */

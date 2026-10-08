@@ -1,0 +1,502 @@
+{
+ "dBaseE": {
+  "valor": "229,597",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, sin_rebalanceo, E"
+ },
+ "dBaseF": {
+  "valor": "59,285",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, sin_rebalanceo, F"
+ },
+ "dBaseEF": {
+  "valor": "288,882",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, sin_rebalanceo, EF"
+ },
+ "dBaseDesv": {
+  "valor": "20,452",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, sin_rebalanceo, desvios_salida + desvios_llegada"
+ },
+ "dBaseKm": {
+  "valor": "426",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, sin_rebalanceo, km_desvio_medio × 1000 (m)"
+ },
+ "dBaseVis": {
+  "valor": "0",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, sin_rebalanceo, visitas"
+ },
+ "dBaseBicis": {
+  "valor": "0",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, sin_rebalanceo, bicis_movidas"
+ },
+ "dEcoE": {
+  "valor": "106,451",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ecobici, E"
+ },
+ "dEcoF": {
+  "valor": "12,316",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ecobici, F"
+ },
+ "dEcoEF": {
+  "valor": "118,767",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ecobici, EF"
+ },
+ "dEcoDesv": {
+  "valor": "3,343",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ecobici, desvios_salida + desvios_llegada"
+ },
+ "dEcoKm": {
+  "valor": "279",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ecobici, km_desvio_medio × 1000 (m)"
+ },
+ "dEcoVis": {
+  "valor": "2,567",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ecobici, visitas"
+ },
+ "dEcoBicis": {
+  "valor": "13,829",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ecobici, bicis_movidas"
+ },
+ "dLgbmE": {
+  "valor": "69,037",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, lgbm_directo, E"
+ },
+ "dLgbmF": {
+  "valor": "2,125",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, lgbm_directo, F"
+ },
+ "dLgbmEF": {
+  "valor": "71,162",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, lgbm_directo, EF"
+ },
+ "dLgbmDesv": {
+  "valor": "5,517",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, lgbm_directo, desvios_salida + desvios_llegada"
+ },
+ "dLgbmKm": {
+  "valor": "263",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, lgbm_directo, km_desvio_medio × 1000 (m)"
+ },
+ "dLgbmVis": {
+  "valor": "2,692",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, lgbm_directo, visitas"
+ },
+ "dLgbmBicis": {
+  "valor": "14,265",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, lgbm_directo, bicis_movidas"
+ },
+ "dMaE": {
+  "valor": "68,644",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ma_diaria, E"
+ },
+ "dMaF": {
+  "valor": "1,787",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ma_diaria, F"
+ },
+ "dMaEF": {
+  "valor": "70,431",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ma_diaria, EF"
+ },
+ "dMaDesv": {
+  "valor": "5,469",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ma_diaria, desvios_salida + desvios_llegada"
+ },
+ "dMaKm": {
+  "valor": "260",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ma_diaria, km_desvio_medio × 1000 (m)"
+ },
+ "dMaVis": {
+  "valor": "2,705",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ma_diaria, visitas"
+ },
+ "dMaBicis": {
+  "valor": "13,988",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, ma_diaria, bicis_movidas"
+ },
+ "dOrE": {
+  "valor": "36,227",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, oraculo_directo, E"
+ },
+ "dOrF": {
+  "valor": "851",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, oraculo_directo, F"
+ },
+ "dOrEF": {
+  "valor": "37,078",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, oraculo_directo, EF"
+ },
+ "dOrDesv": {
+  "valor": "2,922",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, oraculo_directo, desvios_salida + desvios_llegada"
+ },
+ "dOrKm": {
+  "valor": "257",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, oraculo_directo, km_desvio_medio × 1000 (m)"
+ },
+ "dOrVis": {
+  "valor": "2,797",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, oraculo_directo, visitas"
+ },
+ "dOrBicis": {
+  "valor": "12,430",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, oraculo_directo, bicis_movidas"
+ },
+ "dLgbmPct": {
+  "valor": "40.1",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, 1 − EF lgbm_directo / EF ecobici"
+ },
+ "dEcoPct": {
+  "valor": "58.9",
+  "origen": "ecosim/results/resultados.csv, tag prueba, 2025-09-01, 1 − EF ecobici / EF sin_rebalanceo"
+ },
+ "oRecogidas": {
+  "valor": "5,053",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, ma_diaria, recogidas_aplicadas"
+ },
+ "oFalta": {
+  "valor": "196",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, ma_diaria, recortes.entrega_sin_recogida (bicis pedidas que no había al recoger)"
+ },
+ "oFaltaPct": {
+  "valor": "3.7",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, ma_diaria, entrega_sin_recogida / (recogidas + entrega_sin_recogida)"
+ },
+ "oDevueltas": {
+  "valor": "22",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, ma_diaria, reubicaciones_destino (no cupieron en su destino)"
+ },
+ "oDevueltasPct": {
+  "valor": "0.43",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, ma_diaria, reubicaciones_destino / recogidas_aplicadas"
+ },
+ "mBaseKm": {
+  "valor": "383",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, sin_rebalanceo, media de km_desvio_medio × 1000 (m)"
+ },
+ "mBaseDesv": {
+  "valor": "14,118",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, sin_rebalanceo, media de desvíos por día"
+ },
+ "mEcoKm": {
+  "valor": "259",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, ecobici, media de km_desvio_medio × 1000 (m)"
+ },
+ "mEcoDesv": {
+  "valor": "2,298",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, ecobici, media de desvíos por día"
+ },
+ "mLgbmKm": {
+  "valor": "248",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, lgbm_directo, media de km_desvio_medio × 1000 (m)"
+ },
+ "mLgbmDesv": {
+  "valor": "3,917",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, lgbm_directo, media de desvíos por día"
+ },
+ "mMaKm": {
+  "valor": "246",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, ma_diaria, media de km_desvio_medio × 1000 (m)"
+ },
+ "mMaDesv": {
+  "valor": "3,706",
+  "origen": "ecosim/results/resultados.csv, tag prueba, días de prueba, ma_diaria, media de desvíos por día"
+ },
+ "sBaseNueveEF": {
+  "valor": "4,136",
+  "origen": "data/derived/ecosim/replay/2025-09-01/sin_rebalanceo.json, snap[16], EF del cuarto de hora"
+ },
+ "sBaseNueveDesv": {
+  "valor": "513",
+  "origen": "data/derived/ecosim/replay/2025-09-01/sin_rebalanceo.json, snap[16], desvíos del cuarto de hora"
+ },
+ "sBaseNueveAcum": {
+  "valor": "23,744",
+  "origen": "data/derived/ecosim/replay/2025-09-01/sin_rebalanceo.json, snap[16], EF acumulado desde 05:00"
+ },
+ "sBaseVeintiunoEF": {
+  "valor": "4,797",
+  "origen": "data/derived/ecosim/replay/2025-09-01/sin_rebalanceo.json, snap[64], EF del cuarto de hora"
+ },
+ "sBaseVeintiunoDesv": {
+  "valor": "318",
+  "origen": "data/derived/ecosim/replay/2025-09-01/sin_rebalanceo.json, snap[64], desvíos del cuarto de hora"
+ },
+ "sBaseVeintiunoAcum": {
+  "valor": "214,940",
+  "origen": "data/derived/ecosim/replay/2025-09-01/sin_rebalanceo.json, snap[64], EF acumulado desde 05:00"
+ },
+ "sEcoNueveEF": {
+  "valor": "2,880",
+  "origen": "data/derived/ecosim/replay/2025-09-01/ecobici.json, snap[16], EF del cuarto de hora"
+ },
+ "sEcoNueveDesv": {
+  "valor": "121",
+  "origen": "data/derived/ecosim/replay/2025-09-01/ecobici.json, snap[16], desvíos del cuarto de hora"
+ },
+ "sEcoNueveAcum": {
+  "valor": "20,667",
+  "origen": "data/derived/ecosim/replay/2025-09-01/ecobici.json, snap[16], EF acumulado desde 05:00"
+ },
+ "sEcoVeintiunoEF": {
+  "valor": "2,140",
+  "origen": "data/derived/ecosim/replay/2025-09-01/ecobici.json, snap[64], EF del cuarto de hora"
+ },
+ "sEcoVeintiunoDesv": {
+  "valor": "54",
+  "origen": "data/derived/ecosim/replay/2025-09-01/ecobici.json, snap[64], desvíos del cuarto de hora"
+ },
+ "sEcoVeintiunoAcum": {
+  "valor": "95,824",
+  "origen": "data/derived/ecosim/replay/2025-09-01/ecobici.json, snap[64], EF acumulado desde 05:00"
+ },
+ "sLgbmNueveEF": {
+  "valor": "1,812",
+  "origen": "data/derived/ecosim/replay/2025-09-01/lgbm_directo.json, snap[16], EF del cuarto de hora"
+ },
+ "sLgbmNueveDesv": {
+  "valor": "228",
+  "origen": "data/derived/ecosim/replay/2025-09-01/lgbm_directo.json, snap[16], desvíos del cuarto de hora"
+ },
+ "sLgbmNueveAcum": {
+  "valor": "14,386",
+  "origen": "data/derived/ecosim/replay/2025-09-01/lgbm_directo.json, snap[16], EF acumulado desde 05:00"
+ },
+ "sLgbmVeintiunoEF": {
+  "valor": "848",
+  "origen": "data/derived/ecosim/replay/2025-09-01/lgbm_directo.json, snap[64], EF del cuarto de hora"
+ },
+ "sLgbmVeintiunoDesv": {
+  "valor": "53",
+  "origen": "data/derived/ecosim/replay/2025-09-01/lgbm_directo.json, snap[64], desvíos del cuarto de hora"
+ },
+ "sLgbmVeintiunoAcum": {
+  "valor": "58,335",
+  "origen": "data/derived/ecosim/replay/2025-09-01/lgbm_directo.json, snap[64], EF acumulado desde 05:00"
+ },
+ "vDiasVeinticinco": {
+  "valor": "365",
+  "origen": "ecosim/days.json, coverage_by_month, 2025, días"
+ },
+ "vOkVeinticinco": {
+  "valor": "351",
+  "origen": "ecosim/days.json, coverage_by_month, 2025, eligible_90"
+ },
+ "vExcVeinticinco": {
+  "valor": "14",
+  "origen": "ecosim/days.json, coverage_by_month, 2025, días − eligible_90"
+ },
+ "vExcJul": {
+  "valor": "12",
+  "origen": "ecosim/days.json, coverage_by_month, 2025-07, días − eligible_90"
+ },
+ "vDiasPrueba": {
+  "valor": "122",
+  "origen": "ecosim.run.days('prueba') y ecosim/days.json, coverage_by_month, 2025-09 a 2025-12, días del calendario"
+ },
+ "vOkPrueba": {
+  "valor": "121",
+  "origen": "ecosim.run.days('prueba') y ecosim/days.json, coverage_by_month, 2025-09 a 2025-12, días de prueba (eligible_90)"
+ },
+ "vDifPrueba": {
+  "valor": "1",
+  "origen": "ecosim.run.days('prueba') y ecosim/days.json, coverage_by_month, 2025-09 a 2025-12, días − días de prueba"
+ },
+ "vDiaExcl": {
+  "valor": "10 de septiembre",
+  "origen": "ecosim.run.days('prueba') y ecosim/days.json, coverage_by_month, 2025-09 a 2025-12: día del calendario fuera de la prueba"
+ },
+ "topeVis": {
+  "valor": "55",
+  "origen": "ecosim/results/medicion/ecobici_stats.json, anual_2025, p95 visitas_por_decision"
+ },
+ "topeBicis": {
+  "valor": "17",
+  "origen": "ecosim/results/medicion/ecobici_stats.json, anual_2025, p95 bicis_por_visita"
+ },
+ "topeDias": {
+  "valor": "351",
+  "origen": "ecosim/results/medicion/ecobici_stats.json, anual_2025, dias (todos los días de 2025 con cobertura ≥90% y serie densa)"
+ },
+ "topePeriodo": {
+  "valor": "2025",
+  "origen": "ecosim/results/medicion/ecobici_stats.json, anual_2025, primer_dia y ultimo_dia"
+ },
+ "figVisitas": {
+  "valor": "630,433",
+  "origen": "ecosim.medicion.annual_day_samples, 351 días válidos de 2025, sin pares, visitas"
+ },
+ "figIntervalos": {
+  "valor": "23,336",
+  "origen": "ecosim.medicion.annual_day_samples, 351 días válidos de 2025, sin pares, fotos (incluye las que no tienen visitas)"
+ },
+ "figSinVisita": {
+  "valor": "2.1",
+  "origen": "ecosim.medicion.annual_day_samples, 351 días válidos de 2025, sin pares, % de fotos sin visitas"
+ },
+ "figBajoTope": {
+  "valor": "95.2",
+  "origen": "ecosim.medicion.annual_day_samples, 351 días válidos de 2025, sin pares, % de visitas con |delta| ≤ 17"
+ },
+ "figVisBajoTope": {
+  "valor": "94.9",
+  "origen": "ecosim.medicion.annual_day_samples, 351 días válidos de 2025, sin pares, % de fotos con visitas por 15 min ≤ 55"
+ },
+ "figVisPNoventaCinco": {
+  "valor": "55.16",
+  "origen": "ecosim.medicion.annual_day_samples, 351 días válidos de 2025, sin pares, p95 sin redondear de visitas por 15 min"
+ },
+ "figMedBicis": {
+  "valor": "4",
+  "origen": "ecosim.medicion.annual_day_samples, 351 días válidos de 2025, sin pares, mediana de |delta|"
+ },
+ "figUnaDos": {
+  "valor": "40",
+  "origen": "ecosim.medicion.annual_day_samples, 351 días válidos de 2025, sin pares, % de visitas con |delta| ≤ 2"
+ },
+ "figMedVis": {
+  "valor": "20",
+  "origen": "ecosim.medicion.annual_day_samples, 351 días válidos de 2025, sin pares, mediana de visitas por 15 min (todas las fotos)"
+ },
+ "hBicisDia": {
+  "valor": "10,276",
+  "origen": "data/derived/ecosim/ecobici_moves.parquet, sin pares, días de prueba, bicis movidas (entregadas + recogidas) por día"
+ },
+ "hVisDia": {
+  "valor": "2,263",
+  "origen": "data/derived/ecosim/ecobici_moves.parquet, sin pares, días de prueba, visitas por día"
+ },
+ "hPorQuince": {
+  "valor": "132",
+  "origen": "data/derived/ecosim/ecobici_moves.parquet, sin pares, días de prueba, bicis movidas por día / 78 cuartos de hora"
+ },
+ "hVisQuince": {
+  "valor": "29",
+  "origen": "data/derived/ecosim/ecobici_moves.parquet, sin pares, días de prueba, visitas por día / 78 cuartos de hora"
+ },
+ "hPicoHora": {
+  "valor": "09:00",
+  "origen": "data/derived/ecosim/ecobici_moves.parquet, sin pares, días de prueba, hora de reloj (t1) con más bicis movidas"
+ },
+ "hPicoBicis": {
+  "valor": "1,009",
+  "origen": "data/derived/ecosim/ecobici_moves.parquet, sin pares, días de prueba, bicis movidas en esa hora por día"
+ },
+ "hMananaPct": {
+  "valor": "23",
+  "origen": "data/derived/ecosim/ecobici_moves.parquet, sin pares, días de prueba, % de bicis movidas con t1 en [6:00, 10:00)"
+ },
+ "hTardePct": {
+  "valor": "34",
+  "origen": "data/derived/ecosim/ecobici_moves.parquet, sin pares, días de prueba, % de bicis movidas con t1 en [16:00, 21:00)"
+ },
+ "nDias": {
+  "valor": "121",
+  "origen": "días distintos de ecobici_moves en los días de prueba de resultados.csv"
+ },
+ "hViajesPico": {
+  "valor": "18:00",
+  "origen": "trips parquet, días de prueba, hora con más salidas"
+ },
+ "bDias": {
+  "valor": "122",
+  "origen": "ecosim/results/flota/stock_0445.csv (tot_c, commit más cercano a 04:45), pares de días consecutivos, días"
+ },
+ "bPares": {
+  "valor": "121",
+  "origen": "ecosim/results/flota/stock_0445.csv (tot_c, commit más cercano a 04:45), pares de días consecutivos, pares"
+ },
+ "bMedia": {
+  "valor": "-3",
+  "origen": "ecosim/results/flota/stock_0445.csv (tot_c, commit más cercano a 04:45), pares de días consecutivos, media de la diferencia día a día"
+ },
+ "bLo": {
+  "valor": "-27",
+  "origen": "ecosim/results/flota/stock_0445.csv (tot_c, commit más cercano a 04:45), pares de días consecutivos, IC95 t inferior"
+ },
+ "bHi": {
+  "valor": "21",
+  "origen": "ecosim/results/flota/stock_0445.csv (tot_c, commit más cercano a 04:45), pares de días consecutivos, IC95 t superior"
+ },
+ "bTotMed": {
+  "valor": "7,004",
+  "origen": "ecosim/results/flota/stock_0445.csv (tot_c, commit más cercano a 04:45), pares de días consecutivos, mediana del total"
+ },
+ "bActivasSep": {
+  "valor": "6,069",
+  "origen": "ecosim/results/flota/ids_por_dia.csv, media de activas por día, 2025-09"
+ },
+ "bActivasOct": {
+  "valor": "6,119",
+  "origen": "ecosim/results/flota/ids_por_dia.csv, media de activas por día, 2025-10"
+ },
+ "bActivasNov": {
+  "valor": "5,970",
+  "origen": "ecosim/results/flota/ids_por_dia.csv, media de activas por día, 2025-11"
+ },
+ "bIdsNuevos": {
+  "valor": "3",
+  "origen": "ecosim/results/flota/ids_por_dia.csv, suma de nuevas, sep–nov 2025"
+ },
+ "fDifDPri": {
+  "valor": "1.2",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, lgbm_diario contra ma_diaria, k=0, neto, |MAE/MAE_MA − 1| × 100"
+ },
+ "fDifDirPri": {
+  "valor": "22.7",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, lgbm_directo contra ma_diaria, k=0, neto, |MAE/MAE_MA − 1| × 100"
+ },
+ "fDifDUlt": {
+  "valor": "1.1",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, lgbm_diario contra ma_diaria, k=3, neto, |MAE/MAE_MA − 1| × 100"
+ },
+ "fDifDirUlt": {
+  "valor": "22.1",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, lgbm_directo contra ma_diaria, k=3, neto, |MAE/MAE_MA − 1| × 100"
+ },
+ "fMejorD": {
+  "valor": "si",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, lgbm_diario menor MAE que ma_diaria en las seis celdas de la tabla"
+ },
+ "fMejorDir": {
+  "valor": "no",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, lgbm_directo menor MAE que ma_diaria en las seis celdas de la tabla"
+ },
+ "fMeses": {
+  "valor": "4",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, meses de prueba"
+ },
+ "fMaeMaPri": {
+  "valor": "1.6",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, ma_diaria, k=0, neto, MAE"
+ },
+ "fWapeMaSal": {
+  "valor": "40",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, ma_diaria, k=0, salidas, WAPE × 100"
+ },
+ "xEco": {
+  "valor": "102,135",
+  "origen": "ecosim/results/tablas.md, Sensibilidad frente al mismo brazo, mismos 32 días, sens_pares_sin_regla ecobici EF (no cambia con ninguna variante)"
+ },
+ "xMa": {
+  "valor": "57,802",
+  "origen": "ecosim/results/tablas.md, Sensibilidad frente al mismo brazo, mismos 32 días, sens_pares_sin_regla ma_diaria EF (caso base)"
+ },
+ "xMaPct": {
+  "valor": "43.4",
+  "origen": "ecosim/results/tablas.md, Sensibilidad frente al mismo brazo, mismos 32 días, 1 − EF ma_diaria base / EF ecobici"
+ },
+ "xDias": {
+  "valor": "121",
+  "origen": "ecosim/results/corridas_run3.csv, días distintos por variante de sensibilidad"
+ },
+ "xCortaPct": {
+  "valor": "49.8",
+  "origen": "ecosim/results/tablas.md, Sensibilidad frente al mismo brazo, mismos 32 días, sens_entrega_45, 1 − EF ma_diaria / EF ecobici base"
+ },
+ "xLargaPct": {
+  "valor": "36.6",
+  "origen": "ecosim/results/tablas.md, Sensibilidad frente al mismo brazo, mismos 32 días, sens_entrega_75, 1 − EF ma_diaria / EF ecobici base"
+ },
+ "xDanPct": {
+  "valor": "42.2",
+  "origen": "ecosim/results/tablas.md, Sensibilidad frente al mismo brazo, mismos 32 días, sens_danadas_feed, 1 − EF ma_diaria / EF ecobici base"
+ }
+}

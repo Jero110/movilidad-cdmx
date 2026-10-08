@@ -188,17 +188,26 @@ def validate_state(df: pd.DataFrame) -> pd.DataFrame:
 
 @dataclass(frozen=True)
 class Order:
-    """Una visita: delta negativo sale en pickup_at; positivo llega en delivery_at."""
+    """Una visita: delta negativo sale en pickup_at; positivo llega en delivery_at.
+
+    `paquete` (1..P) agrupa, dentro de una decisión de política, un receptor
+    con sus donantes: las bicis de esos donantes solo van a ese receptor.
+    0 = sin paquete (replay de Ecobici y órdenes sin agrupar).
+    """
     issued_at: datetime
     pickup_at: datetime
     delivery_at: datetime
     short_name: str
     delta: int
+    paquete: int = 0
 
     def __post_init__(self):
         if not isinstance(self.delta, numbers.Integral) or isinstance(self.delta, bool):
             raise ValueError(f"Order.delta debe ser entero, llegó {type(self.delta).__name__}")
+        if not _is_int(self.paquete) or self.paquete < 0:
+            raise ValueError(f"Order.paquete debe ser entero ≥ 0, llegó {self.paquete!r}")
         object.__setattr__(self, "delta", int(self.delta))
+        object.__setattr__(self, "paquete", int(self.paquete))
         object.__setattr__(self, "short_name", str(self.short_name))
         if self.delta == 0:
             raise ValueError("Order.delta no puede ser 0")
@@ -207,23 +216,27 @@ class Order:
 
 
 def orders_to_frame(orders: list[Order]) -> pd.DataFrame:
+    """`ORDER_COLUMNS` más la columna extra `paquete`."""
     df = pd.DataFrame(
-        [(o.issued_at, o.pickup_at, o.delivery_at, o.short_name, o.delta) for o in orders],
-        columns=ORDER_COLUMNS,
+        [(o.issued_at, o.pickup_at, o.delivery_at, o.short_name, o.delta, o.paquete) for o in orders],
+        columns=ORDER_COLUMNS + ["paquete"],
     )
     df["issued_at"] = pd.to_datetime(df["issued_at"])
     df["pickup_at"] = pd.to_datetime(df["pickup_at"])
     df["delivery_at"] = pd.to_datetime(df["delivery_at"])
     df["short_name"] = df["short_name"].astype(str)
     df["delta"] = df["delta"].astype("int64")
+    df["paquete"] = df["paquete"].astype("int64")
     return df
 
 
 def frame_to_orders(df: pd.DataFrame) -> list[Order]:
+    """Lee `paquete` si viene; si no, 0."""
     validate_orders(df)
     return [
         Order(r.issued_at.to_pydatetime(), r.pickup_at.to_pydatetime(),
-              r.delivery_at.to_pydatetime(), str(r.short_name), int(r.delta))
+              r.delivery_at.to_pydatetime(), str(r.short_name), int(r.delta),
+              int(getattr(r, "paquete", 0)))
         for r in df.itertuples(index=False)
     ]
 
@@ -260,6 +273,7 @@ class PolicyParams:
     pickup_min: int = C.PICKUP_MIN
     delivery_min: int = C.DELIVERY_MIN
     retiro: float = 0.0
+    alfa: float = 0.0  # costo por km de cada tramo donante → receptor (minutos-estación por km); 0 = sin costo por distancia
 
     def __post_init__(self):
         for key in ("n_hours", "visits_per_decision", "max_bikes_per_visit", "pickup_min", "delivery_min"):
@@ -269,8 +283,8 @@ class PolicyParams:
             setattr(self, key, int(value))
         if self.delivery_min <= self.pickup_min:
             raise ValueError("PolicyParams.delivery_min debe superar pickup_min")
-        if self.lam < 0 or self.retiro < 0:
-            raise ValueError("PolicyParams: lam y retiro deben ser no negativos")
+        if self.lam < 0 or self.retiro < 0 or self.alfa < 0:
+            raise ValueError("PolicyParams: lam, retiro y alfa deben ser no negativos")
 
 
 @runtime_checkable

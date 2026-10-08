@@ -1,40 +1,20 @@
 {
-  "recalculados": {
+  "anual_2025": {
     "p95": {
-      "visitas_por_decision": 47,
-      "bicis_por_visita": 19
+      "visitas_por_decision": 55,
+      "bicis_por_visita": 17
     },
     "p99": {
-      "visitas_por_decision": 62,
-      "bicis_por_visita": 33
+      "visitas_por_decision": 73,
+      "bicis_por_visita": 28
     },
-    "poblacion": "enero–agosto 2025, cobertura ≥90%",
+    "poblacion": "todos los días de 2025 con cobertura ≥90% y serie densa",
     "ventana": "05:00–00:30",
-    "dias": 230,
-    "fotos": 15237
-  },
-  "referencia_wiki": {
-    "p95": {
-      "visitas_por_decision": 67,
-      "bicis_por_visita": 14
-    },
-    "p99": {
-      "visitas_por_decision": 83,
-      "bicis_por_visita": 24
-    },
-    "poblacion": "15 RUN1_EVAL_DAYS septiembre–noviembre 2025",
-    "ventana": "05:30–00:30",
-    "dias": 15,
-    "fotos": 987
-  },
-  "referencia_reproducida": {
-    "dias": 15,
-    "fotos": 987,
-    "visitas_p95": 67,
-    "visitas_p99": 83,
-    "bicis_p95": 14,
-    "bicis_p99": 24,
-    "mediana_min_entre_fotos": 15.933333333333334
+    "dias": 351,
+    "fotos": 23336,
+    "primer_dia": "2025-01-01",
+    "ultimo_dia": "2025-12-31",
+    "mediana_min_entre_fotos": 16.033333333333335
   },
   "meses": [
     {

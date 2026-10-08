@@ -5,7 +5,8 @@
 
 Entradas (solo lectura): `ecosim/results/` (resultados.csv, frozen.json,
 tablas.md, medicion/REPORT.md, flota/rutas_osm_resumen.csv),
-`report/figs/checks_datos.json`, las constantes de `ecosim/config.py` y
+`report/figs/checks_datos.json`, `report/figs/fidelidad_ecobici.json` (de
+`fidelidad_ecobici.py`: Ecobici real contra Ecobici simulado), las constantes de `ecosim/config.py` y
 `ecosim/pronostico.py`, y dos cachés derivados del checkout principal
 (`data/derived/ecosim/ecobici_moves.parquet` y `damage_events.parquet`).
 
@@ -118,7 +119,8 @@ def results_macros(b: Book):
     by = {a: [r for r in test if r['arm'] == a] for a in ARMS}
     eco = by['ecobici']
     n = len(eco)
-    assert n == 152 and all(len(v) == n for v in by.values())
+    from ecosim import run
+    assert n == len(run.days('prueba')) and all(len(v) == n for v in by.values())
     e = mean(eco, 'EF')
     b.add('dias', n, RESULTS_SRC + '; número de días')
     for arm, key in [('ecobici', 'eco'), ('sin_rebalanceo', 'base'), ('ma_diaria', 'ma')]:
@@ -159,7 +161,7 @@ def results_macros(b: Book):
           RESULTS_SRC + '; arm=ecobici, desvios_salida + desvios_llegada')
     b.add('ecoKm', f'{mean(eco, "km_desvio_medio"):.2f}', RESULTS_SRC + '; arm=ecobici, km_desvio_medio')
     b.add('ecoNeto', f'{mean(eco, "replay_neto"):.1f}', RESULTS_SRC + '; arm=ecobici, replay_neto')
-    for month, key in [('2025-12', 'dic'), ('2026-01', 'ene')]:
+    for month, key in [(max(r['day'] for r in eco)[:7], 'dic')]:  # último mes de prueba
         m_ = [r for r in ma if r['day'].startswith(month)]
         e_ = [r for r in eco if r['day'].startswith(month)]
         b.add(key + 'Pct', f'{(1 - mean(m_, "EF") / mean(e_, "EF")) * 100:.1f}',
@@ -169,24 +171,23 @@ def results_macros(b: Book):
     policy = [r for r in test if r['arm'] in ARMS[2:]]
     b.add('decTot', fmt(sum(int(r['decisiones']) for r in policy)),
           RESULTS_SRC + '; suma de decisiones de los cinco brazos con asignador')
-    b.add('decLim', fmt(sum(int(r['decisiones_limite_10s']) for r in policy)),
-          RESULTS_SRC + '; suma de decisiones_limite_10s')
-    b.add('decFallback', fmt(sum(int(r['fallbacks']) for r in policy)), RESULTS_SRC + '; suma de fallbacks')
     b.add('decPNoventaCinco', f'{max(float(r["decision_p95_s"]) for r in policy):.1f}',
           RESULTS_SRC + '; máximo por día de decision_p95_s')
     return by, pct, e
 
 
-def table_main(by, pct):
-    lines = [r'\begin{tabular}{@{}lrrrr@{}}', r'\toprule',
-             r'Brazo & E+F & Visitas & Bicis & Menos E+F, \% \\', r'\midrule']
+def table_main(by, pct, fid):
+    desv = fid['prueba']['brazos']
+    lines = [r'\begin{tabular}{@{}lrrrrr@{}}', r'\toprule',
+             r'Brazo & E+F & Visitas & Bicis & Desv., \% & Menos E+F, \% \\', r'\midrule']
     for arm in ARMS:
         rs = by[arm]
+        assert abs(desv[arm]['EF'] - mean(rs, 'EF')) < .1
         cell = '---' if arm not in pct else f'{pct[arm][0]:.1f} [{pct[arm][1]:.1f}, {pct[arm][2]:.1f}]'
         if arm == 'oraculo_diario':
             lines.append(r'\midrule')
         lines.append(f'{LABELS[arm]} & {fmt(mean(rs, "EF"))} & {fmt(mean(rs, "visitas"))} & '
-                     f'{fmt(mean(rs, "bicis_movidas"))} & {cell} \\\\')
+                     f'{fmt(mean(rs, "bicis_movidas"))} & {desv[arm]["pct"]:.1f} & {cell} \\\\')
     return '\n'.join(lines + [r'\bottomrule', r'\end{tabular}']) + '\n'
 
 
@@ -199,16 +200,20 @@ def frozen_macros(b: Book, frozen):
     for arm, key in [('ma_diaria', 'lamMa'), ('lgbm_diario', 'lamLgbmD'), ('lgbm_directo', 'lamLgbmDir'),
                      ('oraculo_diario', 'lamOrD'), ('oraculo_directo', 'lamOrDir')]:
         b.add(key, f'{lam[arm]["lambda"]:.1f}', src + f' lambda_por_brazo.{arm}.lambda')
-    b.add('lamExtrap', sum(v['tipo_ajuste'].startswith('extrapol') for v in lam.values()),
-          src + ' lambda_por_brazo.*.tipo_ajuste = extrapolación (ver CONCLUSIONES.md)')
+    b.add('lamDifMax', f"{max(abs(v['diferencia_pct']) for v in lam.values()):.2f}",
+          src + ' lambda_por_brazo.*.diferencia_pct (máximo en valor absoluto)')
+    b.add('lamRondasMax', max(v['rondas'] for v in lam.values()), src + ' lambda_por_brazo.*.rondas (máximo)')
+    b.add('lamExtension', sum(bool(v['extension_rejilla']) for v in lam.values()),
+          src + ' lambda_por_brazo.*.extension_rejilla (brazos con rejilla extendida)')
+    grid = frozen['configuracion']['lambda_rejilla']
+    b.add('lamGridMin', min(grid), src + ' configuracion.lambda_rejilla (mínimo)')
+    b.add('lamGridMax', max(grid), src + ' configuracion.lambda_rejilla (máximo)')
+    b.add('lamGrid', ', '.join(str(x) for x in grid), src + ' configuracion.lambda_rejilla')
+    b.add('mejorReal', LABELS[frozen['mejor_real']].lower(), src + ' mejor_real')
     b.add('selEcoVis', fmt(lam['ma_diaria']['visitas_ecobici'], 1), src + ' lambda_por_brazo.ma_diaria.visitas_ecobici')
     b.add('selMaVis', fmt(lam['ma_diaria']['visitas_confirmadas'], 1), src + ' lambda_por_brazo.ma_diaria.visitas_confirmadas')
     for key, path in [('topeVis', ('topes_base', 'visitas_por_decision')),
-                      ('topeBicis', ('topes_base', 'bicis_por_visita')),
-                      ('topeVisNN', ('topes_p99', 'visitas_por_decision')),
-                      ('topeBicisNN', ('topes_p99', 'bicis_por_visita')),
-                      ('topeVisAnt', ('topes_hacia_adelante', 'visitas_por_decision')),
-                      ('topeBicisAnt', ('topes_hacia_adelante', 'bicis_por_visita'))]:
+                      ('topeBicis', ('topes_base', 'bicis_por_visita'))]:
         b.add(key, frozen[path[0]][path[1]], src + ' ' + '.'.join(path))
 
 
@@ -221,8 +226,6 @@ def code_macros(b: Book):
     b.add('stepMin', C.STEP_MIN, src + ' STEP_MIN')
     b.add('lagS', C.GBFS_COMMIT_LAG_S, src + ' GBFS_COMMIT_LAG_S')
     b.add('covMin', int(C.COVERAGE_MIN * 100), src + ' COVERAGE_MIN')
-    b.add('selLab', C.N_SEL_WEEKDAY, src + ' N_SEL_WEEKDAY')
-    b.add('selFin', C.N_SEL_WEEKEND, src + ' N_SEL_WEEKEND')
     b.add('transMin', C.DELIVERY_MIN - C.PICKUP_MIN, src + ' DELIVERY_MIN − PICKUP_MIN')
     b.add('entregaCorta', min(C.DELIVERY_SENS_MIN), src + ' DELIVERY_SENS_MIN (mínimo)')
     b.add('entregaLarga', max(C.DELIVERY_SENS_MIN), src + ' DELIVERY_SENS_MIN (máximo)')
@@ -234,19 +237,14 @@ def code_macros(b: Book):
     fold = next(f for f in C.FOLDS if f['name'] == 'prueba_1')
     months = (fold['train_end'].year - fold['train_start'].year) * 12 + fold['train_end'].month - fold['train_start'].month + 1
     b.add('trainMeses', months, src + ' FOLDS prueba_1 (meses de train_start a train_end)')
-    run = (ROOT / 'ecosim/run.py').read_text()
-    b.add('limiteS', re.search(r'Asignador\(.*time_limit=(\d+)\)', run).group(1), 'ecosim/run.py, Asignador(time_limit=...)')
-    days = json.loads((ROOT / 'ecosim/days.json').read_text())
-    b.add('curvaDias', len(days['curva']), 'ecosim/days.json curva (días de las sensibilidades)')
+    corr = rows('corridas_run3.csv')
+    sens = {r['day'] for r in corr if r['tag'] == 'sens_pares_sin_regla'}
+    b.add('curvaDias', len(sens), 'ecosim/results/corridas_run3.csv, días de tag=sens_pares_sin_regla (sensibilidades)')
     pron = (ROOT / 'ecosim/pronostico.py').read_text()
     hist_days = {int(x) for x in re.findall(r'range\(max\(0, (?:self\.)?i - (\d+)\)', pron)}
     assert len(hist_days) == 1 and next(iter(hist_days)) % 7 == 0, hist_days
     b.add('semanasHist', next(iter(hist_days)) // 7, 'ecosim/pronostico.py, range(max(0, i − 28), i) / 7 días')
     b.add('cadaTicks', re.search(r'\.days % (\d+)', pron).group(1), 'ecosim/pronostico.py `_ticks` (fase módulo 12)')
-    asg = (ROOT / 'ecosim/asignador.py').read_text()
-    gap = float(re.search(r'mip_rel_gap=([0-9.e-]+)\)', asg).group(1))
-    import math
-    b.add('brechaExp', int(round(math.log10(gap))), 'ecosim/asignador.py Asignador(mip_rel_gap=1e-4), exponente')
     src = 'ecosim/pronostico.py LGB_PARAMS'
     b.add('lgbArboles', LGB_PARAMS['n_estimators'], src + ' n_estimators')
     b.add('lgbTasa', LGB_PARAMS['learning_rate'], src + ' learning_rate')
@@ -284,6 +282,8 @@ def tables_md_macros(b: Book):
     t = (R / 'tablas.md').read_text()
     v1 = md_table(t, '## V1')[0]
     src = 'ecosim/results/tablas.md, sección V1'
+    v1days = {r['day'] for r in rows('v1_run3.csv')}
+    b.add('vDias', len(v1days), 'ecosim/results/v1_run3.csv, días (el encabezado de tablas.md dice 15, pero la tabla promedia estos días)')
     for key, col in [('vEobs', 'E_obs'), ('vFobs', 'F_obs'), ('vErep', 'E_replay'), ('vFrep', 'F_replay')]:
         b.add(key, fmt(num(v1[col])), src + ', ' + col)
     b.add('vRel', f'{(1 - num(v1["E_replay"]) / num(v1["E_obs"])) * 100:.0f}', src + ', 1 − E_replay/E_obs')
@@ -291,7 +291,7 @@ def tables_md_macros(b: Book):
     sens = {(r['variante'], r['brazo']): r for r in md_table(t, '### Sensibilidad frente al mismo brazo')}
     src = 'ecosim/results/tablas.md, Sensibilidad frente al mismo brazo, '
     for var, key in [('sens_entrega_45', 'sCuarenta'), ('sens_entrega_75', 'sSetenta'),
-                     ('sens_p99', 'sNN'), ('sens_hacia_adelante', 'sAnt'), ('sens_danadas_feed', 'sDan')]:
+                     ('sens_danadas_feed', 'sDan')]:
         r = sens[(var, 'ma_diaria')]
         b.add(key, sgn(num(r['delta_EF_base'])), src + var + ' ma_diaria delta_EF_base')
         b.add(key + 'Lo', sgn(num(r['IC95_inf'])), src + var + ' ma_diaria IC95_inf')
@@ -457,36 +457,185 @@ def table_arms(b: Book):
     return '\n'.join(lines) + '\n'
 
 
+FID_SRC = 'report/figs/fidelidad_ecobici.json '
+
+
+def fecha(ds):
+    """'2025-09-01' → '1 de septiembre de 2025'."""
+    return f'{int(ds[8:])} de {mes(ds[:7])}'
+
+
+def fidelidad_macros(b: Book, fid):
+    """Ecobici real contra simulado: cifras de report/figs/fidelidad_ecobici.py."""
+    pr, br16 = fid['prueba'], fid['brazos16']
+    src = FID_SRC + 'prueba ('
+    b.add('fdFeedE', fmt(pr['feed']['E']), src + 'E observado en las fotos; ecosim/results/medicion/ecobici_observado.csv)')
+    b.add('fdFeedF', fmt(pr['feed']['F']), src + 'F observado en las fotos)')
+    b.add('fdFeedEF', fmt(pr['feed']['EF']), src + 'E+F observado en las fotos)')
+    b.add('fdSalidasDia', fmt(pr['salidas_dia']), src + 'salidas por día, data.trips en 05:00–00:30)')
+    for arm, key in [('ecobici', 'eco'), ('ma_diaria', 'ma'), ('oraculo_directo', 'orDir'),
+                     ('lgbm_directo', 'lgbmDir'), ('sin_rebalanceo', 'base')]:
+        b.add(key + 'DesvPct', f"{pr['brazos'][arm]['pct']:.1f}",
+              src + f'arm={arm}: (desvios_salida + desvios_llegada) / salidas, %)')
+    b.add('fdEcoDesv', fmt(pr['brazos']['ecobici']['desvios']), src + 'arm=ecobici, desvíos por día)')
+    src = FID_SRC + 'brazos16 ('
+    b.add('cfDias', len(fid['dias16']), FID_SRC + 'dias16 (días con los siete brazos simulados)')
+    b.add('cfPrimero', fecha(fid['dias16'][0]), FID_SRC + 'dias16 (primer día)')
+    b.add('cfUltimo', fecha(fid['dias16'][-1]), FID_SRC + 'dias16 (último día)')
+    e16 = br16['ecobici']
+    b.add('cfSalidas', fmt(e16['salidas']), src + 'Σ snap[k].salidas)')
+    b.add('cfEcoDesv', fmt(e16['desvios_salida'] + e16['desvios_llegada']), src + 'ecobici, Σ desvíos)')
+    b.add('cfEcoPct', f"{e16['pct']:.2f}", src + 'ecobici, desvíos / salidas, %)')
+    c1 = fid['causa_resolucion']
+    src = FID_SRC + 'causa_resolucion ('
+    b.add('cUnoSal', f"{c1['pct_sal']:.0f}", src + 'salidas desviadas en estación con entrega de Ecobici en el mismo cuarto, %)')
+    b.add('cUnoLle', f"{c1['pct_lle']:.0f}", src + 'llegadas desviadas en estación con recogida de Ecobici en el mismo cuarto, %)')
+    b.add('cUnoTSal', f"{c1['pct_tsal']:.1f}", src + 'todas las salidas en estación con entrega en el mismo cuarto, %)')
+    b.add('cUnoTLle', f"{c1['pct_tlle']:.1f}", src + 'todas las llegadas en estación con recogida en el mismo cuarto, %)')
+    c2 = fid['causa_cero']
+    src = FID_SRC + 'causa_cero ('
+    b.add('cDosPct', f"{c2['pct']:.1f}", src + 'salidas reales desde estación con 0 disponibles en la última foto previa, %)')
+    b.add('cDosMin', f"{c2['pct_min']:.1f}", src + 'mínimo por día, %)')
+    b.add('cDosMax', f"{c2['pct_max']:.1f}", src + 'máximo por día, %)')
+    b.add('cDosNR', f"{c2['pct_no_rentables']:.0f}", src + 'de esas salidas, estación con no rentables > 0, %)')
+    b.add('cDosEdad', f"{c2['edad_mediana_min']:.1f}", src + 'antigüedad mediana de la foto, min)')
+    b.add('cDosSalidas', fmt(c2['salidas']), src + 'salidas reales con foto previa)')
+    c3 = fid['causa_arrastre']
+    hora = {x['hora']: x for x in c3['por_hora']}
+    peak = max(c3['por_hora'], key=lambda x: x['difieren'])
+    src = FID_SRC + 'causa_arrastre ('
+    b.add('cTresEst', fmt(c3['estaciones_media']), src + 'estaciones comparadas por cuarto, media)')
+    b.add('cTresSiete', fmt(hora['07:00']['difieren']), src + 'por_hora 07:00, estaciones que difieren)')
+    b.add('cTresDoce', fmt(hora['12:00']['difieren']), src + 'por_hora 12:00, estaciones que difieren)')
+    b.add('cTresPico', fmt(peak['difieren']), src + 'por_hora, máximo de estaciones que difieren)')
+    b.add('cTresPicoHora', peak['hora'], src + 'por_hora, hora del máximo)')
+    b.add('cTresPicoDif', f"{peak['dif_media']:.1f}", src + 'por_hora, diferencia media en la hora del máximo, bicis por estación)')
+    b.add('cTresCrudoMin', fmt(c3['crudo_difieren_min']), src + 'sin corregir la antigüedad de la foto, mínimo desde 06:00)')
+    b.add('cTresCrudoMax', fmt(c3['crudo_difieren_max']), src + 'sin corregir, máximo)')
+    b.add('cTresCrudoDifMax', f"{c3['crudo_dif_media_max']:.1f}", src + 'sin corregir, diferencia media máxima)')
+    dm = fid['demanda']
+    eco, ma = dm['brazos']['ecobici'], dm['brazos']['ma_diaria']
+    src = FID_SRC + 'demanda ('
+    b.add('dTop', dm['estaciones_top'], src + 'estaciones del decil con más viajes)')
+    b.add('dEst', dm['estaciones'], src + 'estaciones)')
+    b.add('dTopViajes', f"{dm['pct_viajes_top']:.0f}", src + 'salidas + llegadas en ese decil, %)')
+    h = dm['horas_pico']
+    blocks, run = [], [h[0]]
+    for x in h[1:]:
+        if x == run[-1] + 1:
+            run.append(x)
+        else:
+            blocks.append(run)
+            run = [x]
+    blocks.append(run)
+    b.add('dPicoHoras', ' y '.join(f'{r[0]:02d}:00--{r[-1]:02d}:59' for r in blocks), src + 'horas_pico, las seis horas con más salidas)')
+    b.add('dPicoSal', f"{dm['pct_salidas_pico']:.0f}", src + 'salidas en horas pico, %)')
+    for key, arm_v, field in [('dEFTopEco', eco, 'EF_top'), ('dEFTopMa', ma, 'EF_top'),
+                              ('dEFRestoEco', eco, 'EF_resto'), ('dEFRestoMa', ma, 'EF_resto'),
+                              ('dETopEco', eco, 'E_top'), ('dETopMa', ma, 'E_top')]:
+        who = 'ecobici' if arm_v is eco else 'ma_diaria'
+        b.add(key, fmt(arm_v[field]), src + f'{who}, {field}, minutos por día muestreados cada 15 min)')
+    b.add('dEFTopRed', f"{(1 - ma['EF_top'] / eco['EF_top']) * 100:.0f}", src + '1 − EF_top(ma_diaria)/EF_top(ecobici), %)')
+    b.add('dEFRestoRed', f"{(1 - ma['EF_resto'] / eco['EF_resto']) * 100:.0f}", src + '1 − EF_resto(ma_diaria)/EF_resto(ecobici), %)')
+    b.add('dMaExtra', fmt(ma['extra_dia']), src + 'ma_diaria, desvíos por día menos los de ecobici)')
+    b.add('dMaExtraTop', f"{ma['extra_pct_top']:.0f}", src + 'ma_diaria, % de los desvíos extra en el decil)')
+    b.add('dMaExtraPico', f"{ma['extra_pct_pico']:.0f}", src + 'ma_diaria, % de los desvíos extra en horas pico)')
+    b.add('dEcoPico', f"{eco['pct_desvios_pico']:.0f}", src + 'ecobici, % de sus desvíos en horas pico)')
+    lg = [dm['brazos'][a]['extra_pct_top'] for a in ('lgbm_diario', 'lgbm_directo')]
+    b.add('dLgbmExtraTopMin', f'{min(lg):.0f}', src + 'lgbm_diario y lgbm_directo, % de desvíos extra en el decil, mínimo)')
+    b.add('dLgbmExtraTopMax', f'{max(lg):.0f}', src + 'lgbm_diario y lgbm_directo, % de desvíos extra en el decil, máximo)')
+    ej = fid['ejemplo']
+    src = FID_SRC + 'ejemplo ('
+    b.add('ejEst', ej['estacion'], src + 'estación)')
+    b.add('ejNombre', ej['nombre'].removeprefix(f"CE-{ej['estacion']} ").replace(' - ', ' -- ').replace('Av. ', ''),
+          src + 'nombre en station_information)')
+    b.add('ejDia', fecha(ej['dia']), src + 'día)')
+    b.add('ejDesde', ej['desde'], src + 'inicio del cuarto)')
+    b.add('ejHasta', ej['hasta'], src + 'fin del cuarto)')
+    fotos = ej['fotos']
+    for key, f in zip(['ejFotoA', 'ejFotoB', 'ejFotoC'], fotos):
+        b.add(key, f['disponibles'], src + f"foto de las {f['hora']}, disponibles)")
+        b.add(key + 'Hora', f['hora'], src + 'hora del estado de la foto)')
+    assert len(fotos) == 3
+    mv = [m for m in ej['movimientos'] if m['estacion'] == ej['estacion'] and m['delta'] > 0]
+    assert len(mv) == 2
+    for key, m in zip(['ejMovA', 'ejMovB'], mv):
+        b.add(key, m['delta'], src + f"movimiento de Ecobici en {ej['estacion']}, ecobici_moves.parquet)")
+        b.add(key + 'Hora', m['hora'], src + 'hora del movimiento (t1))')
+    vec = {m['estacion']: m for m in ej['movimientos'] if m['delta'] > 0}
+    assert vec['554']['hora'] == vec['547']['hora']
+    b.add('ejMovCincuenta', vec['554']['delta'], src + 'movimiento de Ecobici en 554)')
+    b.add('ejMovCuarenta', vec['547']['delta'], src + 'movimiento de Ecobici en 547)')
+    b.add('ejMovVecHora', vec['554']['hora'], src + 'hora de esos movimientos)')
+    b.add('ejSal', ej['salidas_reales'], src + 'salidas reales del cuarto desde la estación)')
+    b.add('ejDesv', ej['desvios'], src + 'salidas desviadas en el simulador en ese cuarto)')
+    cad = {c['estacion']: c for c in ej['cadena']}
+    for st, key in [('265', 'Dos'), ('554', 'Cinco'), ('547', 'Cuatro'), ('029', 'Cero')]:
+        b.add('ej' + key + 'N', cad[st]['desvios'], src + f'cadena, desvíos a la {st})')
+        b.add('ej' + key + 'M', cad[st]['metros'], src + f'cadena, distancia en línea recta a la {st}, m)')
+    b.add('ejVecIni', ej['v265_bicis_inicio'], src + 'bicis simuladas en 265 al inicio del cuarto)')
+    b.add('ejVecFin', ej['v265_bicis_fin'], src + 'bicis simuladas en 265 al final del cuarto)')
+    b.add('ejNVec', len(ej['cadena']), src + 'cadena, estaciones distintas que reciben desvíos)')
+
+
+def table_fidelidad(fid):
+    pr = fid['prueba']
+    lines = [r'\begin{tabular}{@{}lrrrr@{}}', r'\toprule',
+             r' & E & F & E+F & Desvíos \\', r'\midrule',
+             f"Feed real (fotos) & {fmt(pr['feed']['E'])} & {fmt(pr['feed']['F'])} & {fmt(pr['feed']['EF'])} & 0 \\\\"]
+    for arm, name in [('ecobici', 'Ecobici simulado'), ('ma_diaria', 'Media móvil')]:
+        v = pr['brazos'][arm]
+        lines.append(f"{name} & {fmt(v['E'])} & {fmt(v['F'])} & {fmt(v['EF'])} & "
+                     f"{fmt(v['desvios'])} ({v['pct']:.1f}\\%) \\\\")
+    return '\n'.join(lines + [r'\bottomrule', r'\end{tabular}']) + '\n'
+
+
+def table_causa_cero(fid):
+    lines = [r'\begin{tabular}{@{}lrrrr@{}}', r'\toprule',
+             r'Día & Salidas & En 0, \% & Con no rent., \% & Antig., min \\', r'\midrule']
+    for x in fid['causa_cero']['por_dia']:
+        lines.append(f"{x['dia']} & {fmt(x['salidas'])} & {x['pct']:.1f} & {x['pct_no_rentables']:.0f} & "
+                     f"{x['edad_mediana_min']:.1f} \\\\")
+    c = fid['causa_cero']
+    lines += [r'\midrule', f"Total & {fmt(c['salidas'])} & {c['pct']:.1f} & {c['pct_no_rentables']:.0f} & "
+                            f"{c['edad_mediana_min']:.1f} \\\\"]
+    return '\n'.join(lines + [r'\bottomrule', r'\end{tabular}']) + '\n'
+
+
+def table_brazos16(fid):
+    lines = [r'\begin{tabular}{@{}lrrr@{}}', r'\toprule',
+             r'Brazo & Desvíos & Salidas & \% \\', r'\midrule']
+    for arm in ARMS:
+        v = fid['brazos16'][arm]
+        lines.append(f"{LABELS[arm]} & {fmt(v['desvios_salida'] + v['desvios_llegada'])} & "
+                     f"{fmt(v['salidas'])} & {v['pct']:.2f} \\\\")
+    return '\n'.join(lines + [r'\bottomrule', r'\end{tabular}']) + '\n'
+
+
 PROSE = [
-    ('1,990 de 4,139 (48.1%) eligen "no siempre hay bicis disponibles" como principal desventaja; '
+    ('1,990 de 4,139 respuestas eligen "no siempre hay bicis disponibles" como principal desventaja; '
      '114 eligen "no siempre hay espacios para anclar"',
      'Encuesta ECOBICI 2025, pregunta 18, `encuesta2025` en referencias.bib '
-     '(https://ecobici.cdmx.gob.mx/wp-content/uploads/2026/02/Encuesta-ECOBICI-2025-1.pdf); '
-     'leído de la gráfica de dona, la suma de las seis respuestas da 4,139'),
-    ('1,425 de 4,139 (34.4%) encuentran bici cerca de su origen 6 o menos de cada 10 veces '
-     '(1,037 "difícil" + 388 "muy difícil"); 2,652 (64.1%) encuentran anclaje 8 o más de cada 10 '
-     'veces (1,750 + 902)',
-     'Encuesta ECOBICI 2025, preguntas 13 y 14, misma URL'),
-    ('05:00 a 00:30 y devolución las 24 h', 'Términos y condiciones de Ecobici, `ecobici_horario`'),
-    ('13.5 km/h en hora pico; 34 min 29 s por 10 km', 'TomTom Traffic Index 2025, `tomtom2025`'),
-    ('hasta 42 bicis por camioneta con remolque; unas 9,300 bicicletas en 687 estaciones',
-     'Expansión Política 2026-08-31, `expansion2026` (título y cuerpo de la nota)'),
-    ('un traslado de 15 minutos se duplica o triplica en hora pico', 'Expansión Política 2026-08-31, `expansion2026`'),
-    ('a las 8:30 doce personas esperan bici en Buenavista y diez minutos después dieciocho',
-     'Expansión Política 2026-02-13, `expansion2026cronica`'),
-    ('estaciones sin bicis entre las 18:00 y las 19:00', 'El Universal 2026-08-19, `eluniversal2026`'),
-    ('campo `ttl` = 10 s del feed en vivo', 'https://gbfs.mex.lyftbikes.com/gbfs/gbfs.json, consultado el 2026-10-05'),
-    ('total de bicis ancladas a las 04:45 sin crecimiento sostenido',
-     'ecosim/results/flota/stock_0445.csv (sin cifra en el texto)'),
-    ('11:48:28, 12:08:14, 12:07:09, bici 4201141, estación 002 (ejemplo de par)',
+     '(https://ecobici.cdmx.gob.mx/wp-content/uploads/2026/02/Encuesta-ECOBICI-2025-1.pdf)'),
+    ('34.56 millones de viajes en un día entre semana', 'EOD 2017 del INEGI, `inegi2017`'),
+    ('9,308 bicicletas; BikeSantiago y BikeItaú, 3,500 cada uno', 'El Universal 2025-07-23 con cifras de Semovi, `eluniversal2025semovi`'),
+    ('unas 687 estaciones', 'Expansión Política 2026-08-31, `expansion2026`'),
+    ('más de 19.4 millones de viajes y 284,289 personas usuarias en 2025', 'Ecobici 2025-12-22, `ecobici2025balance`'),
+    ('05:00 a 00:30', 'Términos y condiciones de Ecobici, `ecobici_horario`'),
+    ('13.5 km/h en hora pico', 'TomTom Traffic Index 2025, `tomtom2025`'),
+    ('trayectos de hasta unos 70 minutos en hora pico', 'consulta en Waze (sin fuente archivada; cifra de contexto)'),
+    ('el feed se actualiza cada diez segundos', 'campo `ttl` = 10 s de https://gbfs.mex.lyftbikes.com/gbfs/gbfs.json'),
+    ('12:07:09, bici 4201141, estación 002 (ejemplo de par)',
      'ecosim/results/medicion/REPORT.md, Ejemplos con viajes exactos'),
-    ('Ejemplos de 5/2, 4/3, 8/2 bicis en la sección de no rentables', 'ejemplo ilustrativo, no es dato medido'),
+    ('estación con cinco disponibles y dos no rentables (Tabla de etiquetas)', 'ejemplo ilustrativo, no es dato medido'),
 ]
 
 
 def manifest(b: Book):
-    lines = ['# Procedencia de cada cifra del reporte final', '',
-             'Regenerar: `uv run python3 report/figs/numeros_run3.py`.',
+    lines = ['# Procedencia de cada cifra del reporte (reporte-caso.tex)', '',
+             'Regenerar: `uv run python3 report/figs/fidelidad_ecobici.py` (lee las simulaciones guardadas y las fotos; '
+             'escribe `figs/fidelidad_ecobici.json`) y después `uv run python3 report/figs/numeros_run3.py`. '
+             'Los dos aceptan `--check`.',
              'Comprobar sin escribir: `uv run python3 report/figs/numeros_run3.py --check` '
              '(recalcula todo desde las fuentes y exige que macros, tablas, figuras y este archivo no cambien).',
              '', '## Macros (`report/numeros-run3.tex`)', '', '| macro | valor | origen |', '|---|---:|---|']
@@ -496,6 +645,9 @@ def manifest(b: Book):
               '| `tablas/principal-run3.tex` | resultados.csv (tag=prueba), IC95 t pareado por día |',
               '| `tablas/brazos-run3.tex` | frozen.json lambda_por_brazo |',
               '| `tablas/pares-run3.tex` | medicion/REPORT.md, Impacto, ventana 05:00–00:30 |',
+              '| `tablas/fidelidad-run3.tex` | fidelidad_ecobici.json `prueba` (días de prueba): E y F de ecobici_observado.csv y resultados.csv; desvíos de resultados.csv / salidas de data.trips |',
+              '| `tablas/causa-cero-run3.tex` | fidelidad_ecobici.json `causa_cero.por_dia` (16 días) |',
+              '| `tablas/desvios16-run3.tex` | fidelidad_ecobici.json `brazos16` (16 días, Σ snap[k]) |',
               '| `figs/tamanos-run3.pdf` | ecobici_moves.parquet, sep–nov 2025, sin pares; tope de frozen.json |',
               '| `figs/visitas-tope-run3.pdf` | ecobici_moves.parquet, sep–nov 2025, visitas por intervalo × 15 / minutos del intervalo |',
               '| `figs/ef-brazos-run3.pdf` | resultados.csv (tag=prueba), media de EF por brazo |',
@@ -516,7 +668,6 @@ def generate():
     code_macros(b)
     data_macros(b)
     tables_md_macros(b)
-    asignador_macros(b)
     pares = medicion_tables(b)
     test_days = sorted({r['day'] for r in by['ecobici']})
     b.add('pruebaPeriodo', periodo(test_days[0][:7], test_days[-1][:7]),
@@ -528,9 +679,15 @@ def generate():
     ref = sorted(C.RUN1_EVAL_DAYS)
     b.add('refPeriodo', periodo(ref[0][:7], ref[-1][:7]), 'ecosim/config.py RUN1_EVAL_DAYS (primer y último día)')
     onsite_macros(b, test_days)
+    fid = json.loads((OUT / 'figs/fidelidad_ecobici.json').read_text())
+    assert fid['prueba']['dias'] == len(test_days)
+    fidelidad_macros(b, fid)
     files = figures(b)
     files.update(figure_ef(by))
-    files[OUT / 'tablas/principal-run3.tex'] = table_main(by, pct).encode()
+    files[OUT / 'tablas/principal-run3.tex'] = table_main(by, pct, fid).encode()
+    files[OUT / 'tablas/fidelidad-run3.tex'] = table_fidelidad(fid).encode()
+    files[OUT / 'tablas/causa-cero-run3.tex'] = table_causa_cero(fid).encode()
+    files[OUT / 'tablas/desvios16-run3.tex'] = table_brazos16(fid).encode()
     files[OUT / 'tablas/brazos-run3.tex'] = table_arms(b).encode()
     files[OUT / 'tablas/pares-run3.tex'] = pares.encode()
     files[OUT / 'numeros-run3.tex'] = macros_tex(b).encode()
@@ -540,11 +697,11 @@ def generate():
 
 def check_prose():
     """Las cifras externas citadas en prosa siguen escritas igual en el texto."""
-    tex = (OUT / 'reporte-final.tex').read_text()
-    for literal in ('1,990', '4,139', '1,425', '2,652', '13.5', '05:00', '00:30', '42'):
+    tex = (OUT / 'reporte-caso.tex').read_text()
+    for literal in ('1,990', '4,139', '114', '34.56', '9,308', '3,500', '687', '19.4', '284,289', '13.5', '05:00', '00:30'):
         assert literal in tex, f'Falta en el texto la cifra externa {literal}'
     med = (R / 'medicion/REPORT.md').read_text()
-    for literal in ('12:08:14', '4201141', '12:07:09'):
+    for literal in ('4201141', '12:07:09'):
         assert literal in med and literal in tex, f'Ejemplo de par no coincide: {literal}'
 
 
@@ -557,8 +714,8 @@ def main():
         bad = [str(path.relative_to(ROOT)) for path, content in files.items()
                if not path.exists() or path.read_bytes() != content]
         assert not bad, f'Desactualizado o distinto de su origen: {bad}'
-        tex = (OUT / 'reporte-final.tex').read_text()
-        latex = {'ef', 'aggedbottom', 'aggedright', 'enewcommand', 'floor'}
+        tex = (OUT / 'reporte-caso.tex').read_text()
+        latex = {'ef', 'aggedbottom', 'aggedright', 'enewcommand', 'floor', 'ho'}  # \ref, \raggedbottom, \renewcommand, \rfloor, \rho
         used = set(re.findall(r'\\r([A-Za-z]+)', tex)) - latex
         missing = sorted(u for u in used if u not in b.vals)
         assert not missing, f'Macros usadas sin origen: {missing}'

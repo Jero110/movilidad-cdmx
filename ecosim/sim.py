@@ -1,9 +1,13 @@
 """Simulación conservativa de Ecobici, ventana [05:00, 00:30).
 
 Las decisiones equilibradas recogen en pickup_at y entregan en delivery_at.
-Cada decisión tiene su propia carga: si faltan bicis al recoger, las entregas
-se reducen por resto mayor, ordenadas por estación (y orden original en empates).
-El remanente tras entregas sin anclaje vuelve al origen con anclaje más cercano.
+Cada lote (decisión, paquete) tiene su propia carga y equilibra recogidas y
+entregas: las bicis de los donantes de un paquete solo van a su receptor. Al
+recoger se lleva solo lo que haya; si faltan bicis, las entregas del lote se
+reducen por resto mayor, ordenadas por estación (y orden original en empates).
+Lo que no cabe en un destino (o todo, si está fuera de servicio) se deja en la
+estación con anclaje libre más cercana a ese destino; nunca vuelve al origen.
+Una orden de política a una estación que no existe en el día es un error.
 El replay es una medición, no una política: sus movimientos pueden tener neto
 no nulo; ese neto se contabiliza explícitamente como flujo externo observado.
 """
@@ -24,6 +28,14 @@ from ecosim import contracts as K
 DAMAGE_EVENTS_FILE = C.DERIVED / "damage_events.parquet"
 MOVES_FILE = C.DERIVED / "ecobici_moves.parquet"
 _NS_MIN = 60_000_000_000
+# Registro de órdenes aplicadas (`res.extra["orders_applied"]`): `applied` es lo
+# que ocurrió en la estación (negativo al recoger).
+APPLIED_COLUMNS = K.ORDER_COLUMNS[:3] + ["short_name", "delta", "applied", "paquete"]
+# Registro de reubicaciones (`res.extra["reubicaciones"]`): bicis que no cupieron
+# en `destino` y se dejaron en `estacion`, la libre más cercana a ese destino.
+RELOCATION_COLUMNS = ["issued_at", "delivery_at", "paquete", "destino", "estacion", "bicis", "dist_m"]
+# Pares ejecutados (`pares_ejecutados`).
+PAIR_COLUMNS = ["issued_at", "pickup_at", "delivery_at", "paquete", "origen", "destino", "bicis", "tipo", "dist_m"]
 
 
 def _spread(total: int, caps: list[int]) -> list[int]:
@@ -126,7 +138,7 @@ def simulate(init, trips, nbrs, start, end, orders=None, policy=None, forecast=N
         for j in range(n):
             if j != i and predicate(j):
                 return j, float("nan")
-        raise ValueError("No hay estación apta para desvío o devolución; imposible atender sin crear bicis")
+        raise ValueError("No hay estación apta para desvío o reubicación; imposible atender sin crear bicis")
 
     heap = []
     seq = 0
@@ -174,7 +186,7 @@ def simulate(init, trips, nbrs, start, end, orders=None, policy=None, forecast=N
 
     is_policy = policy is not None
     params = params or K.PolicyParams()
-    batches = {}  # decision id → pickups, deliveries, carga
+    batches = {}  # lote (decisión, paquete) → recogidas, entregas, carga
     observed_moves = {}  # (t1, estación) → delta TOTAL del feed (sin depender del brazo)
     if feed_moves is not None:
         K.validate_ecobici_moves(feed_moves)
@@ -188,30 +200,35 @@ def simulate(init, trips, nbrs, start, end, orders=None, policy=None, forecast=N
     applied = []
     visited = set()
     cut = {"fisico": 0, "tope": 0, "fuera_servicio": 0, "entrega_sin_recogida": 0,
-           "devolucion_origen": 0, "visitas": 0}
+           "reubicacion_destino": 0, "visitas": 0}
     truck = 0
     truck_max = 0
     replay_external = 0
     damage_external = 0
-    return_log = []
+    relocation_log = []  # (issued_at, delivery_at, paquete, destino, estación, bicis, dist_m)
     order_log = []
     def register(group):
         nonlocal seq
         if not group:
             return
         if is_policy:
-            picks = [o for o in group if o.delta < 0]
-            gives = [o for o in group if o.delta > 0]
-            if sum(-o.delta for o in picks) != sum(o.delta for o in gives):
-                raise ValueError("cada decisión debe equilibrar recogidas y entregas")
             if len(group) > params.visits_per_decision:
                 raise ValueError("visitas por decisión exceden tope")
             if len({(o.pickup_at, o.delivery_at) for o in group}) != 1:
                 raise ValueError("tiempos distintos dentro de una decisión")
-            key = seq
-            batches[key] = {"picks": picks, "gives": gives, "picked": [], "load": 0}
-            push(ns(picks[0].pickup_at), 1, "pickup", key)
-            push(ns(gives[0].delivery_at), 1, "delivery", key)
+            missing = sorted({o.short_name for o in group if o.short_name not in ix})
+            if missing:
+                raise ValueError(f"orden de política a estación que no existe en el día: {missing}")
+            # Un lote por paquete; paquete 0 = todas las órdenes sin paquete juntas.
+            for number in sorted({o.paquete for o in group}):
+                picks = [o for o in group if o.delta < 0 and o.paquete == number]
+                gives = [o for o in group if o.delta > 0 and o.paquete == number]
+                if not picks or sum(-o.delta for o in picks) != sum(o.delta for o in gives):
+                    raise ValueError("cada decisión debe equilibrar recogidas y entregas en cada paquete")
+                key = seq
+                batches[key] = {"picks": picks, "gives": gives, "load": 0}
+                push(ns(picks[0].pickup_at), 1, "pickup", key)
+                push(ns(gives[0].delivery_at), 1, "delivery", key)
         else:
             for o in group:
                 if 0 <= ns(o.pickup_at if o.delta < 0 else o.delivery_at) < end_ns:
@@ -308,7 +325,7 @@ def simulate(init, trips, nbrs, start, end, orders=None, policy=None, forecast=N
                 moves_give += int(v > 0)
                 moves_pick += int(v < 0)
                 bikes_moved += abs(v)
-            order_log.append((o.issued_at, o.pickup_at, o.delivery_at, o.short_name, req, v))
+            order_log.append((o.issued_at, o.pickup_at, o.delivery_at, o.short_name, req, v, o.paquete))
         elif kind == "neutralize":
             # Contrafactual únicamente: redistribuye el exceso neto de cada
             # foto entre estaciones, sin flujo externo. Primero revierte en
@@ -347,13 +364,12 @@ def simulate(init, trips, nbrs, start, end, orders=None, policy=None, forecast=N
                     bikes[i] -= v
                 cut["fisico"] += limit - v if i is not None and not oos[i] else 0
                 if v:
-                    b["picked"].append((i, v))
                     truck += v
                     b["load"] += v
                     moves_pick += 1
                     bikes_moved += v
                     visited.add(o.short_name)
-                order_log.append((o.issued_at, o.pickup_at, o.delivery_at, o.short_name, o.delta, -v))
+                order_log.append((o.issued_at, o.pickup_at, o.delivery_at, o.short_name, o.delta, -v, o.paquete))
             truck_max = max(truck_max, truck)
             pending = [o for o in pending if o not in b["picks"]]
         elif kind == "delivery":
@@ -368,35 +384,48 @@ def simulate(init, trips, nbrs, start, end, orders=None, policy=None, forecast=N
             allocation = _spread(min(b["load"], sum(caps)), caps)
             quotas = dict(zip(order_idx, allocation))
             cut["entrega_sin_recogida"] += sum(limits) - sum(allocation)
+            leftover = []  # (destino, bicis que no se pudieron dejar ahí)
+            delivered = 0
             for j, o in enumerate(gives):
                 limit = quotas[j]
-                i = ix.get(o.short_name)
-                if i is None or oos[i]:
+                i = ix[o.short_name]
+                if oos[i]:
                     cut["fuera_servicio"] += limit
                     v = 0
                 else:
                     v = min(limit, int(room[i] - bikes[i]))
                     bikes[i] += v
-                cut["fisico"] += limit - v if i is not None and not oos[i] else 0
+                    cut["fisico"] += limit - v
+                if limit - v:
+                    leftover.append((i, limit - v))
                 truck -= v
+                delivered += v
                 if v:
                     moves_give += 1
                     bikes_moved += v
                     visited.add(o.short_name)
-                order_log.append((o.issued_at, o.pickup_at, o.delivery_at, o.short_name, o.delta, v))
-            remainder = b["load"] - sum(max(0, row[-1]) for row in order_log[-len(gives):])
-            for origin, quantity in b["picked"]:
+                order_log.append((o.issued_at, o.pickup_at, o.delivery_at, o.short_name, o.delta, v, o.paquete))
+            # Carga por encima de los topes de entrega (órdenes que exceden el
+            # tope por visita): también se queda junto al primer destino.
+            excess = b["load"] - sum(allocation)
+            if excess:
+                leftover.append((ix[gives[order_idx[0]].short_name], excess))
+            remainder = b["load"] - delivered
+            # La camioneta está en el destino: lo que no cupo se deja en la estación
+            # con anclaje libre más cercana a ese destino.
+            for dest, quantity in leftover:
                 while quantity and remainder:
-                    j, dist = nearest(origin, lambda z: bikes[z] < room[z], allow_self=True)
+                    j, dist = nearest(dest, lambda z: bikes[z] < room[z])
                     v = min(quantity, remainder, int(room[j] - bikes[j]))
                     bikes[j] += v
                     truck -= v
                     quantity -= v
                     remainder -= v
-                    cut["devolucion_origen"] += v
-                    return_log.append((names[origin], names[j], v, dist))
+                    cut["reubicacion_destino"] += v
+                    relocation_log.append((gives[0].issued_at, gives[0].delivery_at, gives[0].paquete,
+                                           names[dest], names[j], v, dist))
             if remainder:
-                raise AssertionError("quedaron bicis en camioneta sin anclaje de devolución")
+                raise AssertionError("quedaron bicis en camioneta sin anclaje cerca del destino")
             pending = [o for o in pending if o not in gives]
             del batches[p]
         elif kind == "decide":
@@ -459,7 +488,7 @@ def simulate(init, trips, nbrs, start, end, orders=None, policy=None, forecast=N
     paired = set()
     if is_policy:
         by_station = {}
-        for j, (issued, pick, deliver, s, requested, applied_n) in enumerate(order_log):
+        for j, (issued, pick, deliver, s, requested, applied_n, _) in enumerate(order_log):
             if applied_n:
                 at = pick if applied_n < 0 else deliver
                 by_station.setdefault(s, []).append((pd.Timestamp(at), j, applied_n))
@@ -468,7 +497,7 @@ def simulate(init, trips, nbrs, start, end, orders=None, policy=None, forecast=N
             for a, b in zip(visits, visits[1:]):
                 if a[1] not in paired and b[1] not in paired and b[0] - a[0] == pd.Timedelta(minutes=C.STEP_MIN) and a[2] == -b[2]:
                     paired.update((a[1], b[1]))
-    paired_picks = sum(order_log[j][-1] < 0 for j in paired)
+    paired_picks = sum(order_log[j][5] < 0 for j in paired)
     paired_gives = len(paired) - paired_picks
     metrics = dict(E=int(empty.sum()), F=int(full.sum()), visitas=moves_pick + moves_give - len(paired),
                    visitas_recoger=moves_pick - paired_picks, visitas_entregar=moves_give - paired_gives,
@@ -485,9 +514,10 @@ def simulate(init, trips, nbrs, start, end, orders=None, policy=None, forecast=N
                  "bikes_record": record, "disabled_record": record_dis,
                  "detours": det, "desvios_gt500": int((det.dist_m > 500).sum()),
                  "desvios_gt500_fraccion": float((det.dist_m > 500).sum() / len(det)) if len(det) else 0.,
-                 "orders_applied": pd.DataFrame(order_log, columns=K.ORDER_COLUMNS[:3] + ["short_name", "delta", "applied"]),
+                 "orders_applied": pd.DataFrame(order_log, columns=APPLIED_COLUMNS),
                  "damage_applied": pd.DataFrame(damage_log, columns=["t", "short_name", "kind", "n", "applied"]),
-                 "returns": return_log, "truck_end": truck, "transit_start": transit_initial,
+                 "reubicaciones": pd.DataFrame(relocation_log, columns=RELOCATION_COLUMNS),
+                 "truck_end": truck, "transit_start": transit_initial,
                  "transit_end": transit, "unknown_in": unknown_in, "unknown_out": unknown_out,
                  "replay_external": replay_external, "damage_external": damage_external,
                  "replay_neto": replay_external, "neto_externo": replay_external + damage_external,
@@ -496,6 +526,49 @@ def simulate(init, trips, nbrs, start, end, orders=None, policy=None, forecast=N
                  "initial_total": initial_total + transit_initial,
                  "visitas_sin_regla": moves_pick + moves_give, "pares_visitas": len(paired)}
     return K.validate_day_result(res)
+
+
+def pares_ejecutados(res: K.DayResult) -> pd.DataFrame:
+    """Lo que el simulador movió de dónde a dónde, por (decisión, paquete).
+
+    Una fila por recogida aplicada: `origen` = donante, `destino` = receptor de
+    su lote, `bicis` = las que se recogieron ahí (`tipo = "traslado"`), y una
+    fila por reubicación: `origen` = receptor que no tenía lugar, `destino` =
+    estación libre más cercana a él, con su distancia (`tipo = "reubicacion"`).
+    Las bicis entregadas en el receptor son traslados − reubicaciones desde él.
+
+    Con paquetes (un receptor por lote) los pares son exactos. En un lote de
+    paquete 0 con varios receptores las bicis son intercambiables: los
+    traslados se asignan llenando receptores en orden de registro con
+    donantes en orden de registro. El replay de Ecobici (órdenes sin
+    camioneta) no tiene pares: devuelve una tabla vacía.
+    """
+    oa = res.extra["orders_applied"]
+    rows = []
+    if len(oa) and (oa.pickup_at != oa.delivery_at).any():
+        for (issued, number), g in oa.groupby(["issued_at", "paquete"], sort=True):
+            picks = g[g.applied < 0]
+            gives = g[g.delta > 0]
+            moved = res.extra["reubicaciones"]
+            moved = moved[(moved.issued_at == issued) & (moved.paquete == number)]
+            # Lo que llegó a cada receptor: entregado ahí + dejado junto a él.
+            want = [[r.short_name, int(max(r.applied, 0)) + int(moved.loc[moved.destino == r.short_name, "bicis"].sum())]
+                    for r in gives.itertuples(index=False)]
+            for r in picks.itertuples(index=False):
+                left = -int(r.applied)
+                for w in want:
+                    if not left:
+                        break
+                    k = min(left, w[1]) if w is not want[-1] else left
+                    if k:
+                        rows.append((issued, r.pickup_at, r.delivery_at, int(number), r.short_name, w[0], k, "traslado", np.nan))
+                        w[1] -= k
+                        left -= k
+            for r in moved.itertuples(index=False):
+                rows.append((issued, picks.pickup_at.iloc[0] if len(picks) else r.delivery_at, r.delivery_at,
+                             int(number), r.destino, r.estacion, int(r.bicis), "reubicacion", r.dist_m))
+    out = pd.DataFrame(rows, columns=PAIR_COLUMNS)
+    return out.astype({"paquete": "int64", "bicis": "int64", "dist_m": "float64"})
 
 
 def run_day(day, orders=None, policy=None, forecast=None, params=None, record_at=None,

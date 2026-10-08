@@ -10,6 +10,10 @@ Son datos de prueba para desarrollar y probar la UI sin el backend nuevo, no res
   ~700 m alrededor de las estaciones, NO AGEB reales del INEGI; `cvegeo` empieza con "PRUEBA-" para que
   no se confunda.
 
+Nota (ecosim-greedy): `decision`, `applied` y `pares` de `replay_2025-09-01_ma_diaria.json` vienen de un replay
+generado con el código nuevo (greedy con paquetes); la plantilla en vivo trae `paquete` en cada orden, agrupada a mano
+(un receptor con sus donantes). Este script no los regenera.
+
 Uso (desde la raíz del repo):  uv run python3 scripts/ecobici_mapa/fixtures/generar_fixtures.py
 """
 from __future__ import annotations

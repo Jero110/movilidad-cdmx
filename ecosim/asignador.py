@@ -1,45 +1,26 @@
 """Asignador del run 3: bodega estricta, recogida a t+15 y entrega a t+60.
 
-Cada decisión es un MILP independiente. El pronóstico sólo se consulta mediante
+Cada decisión es independiente. El pronóstico sólo se consulta mediante
 ForecastTable.table(t, n_hours); las órdenes pendientes son su única memoria.
-El costo de cada alternativa se calcula con flujo fluido recortado minuto a
-minuto y se aproxima con su envolvente convexa inferior, como en el run 2.
+El costo de cada alternativa (recoger k o entregar x bicis en una estación)
+se calcula con flujo fluido recortado minuto a minuto, como en el run 2, y
+`greedy.greedy` elige con esas tablas qué estaciones recogen y entregan.
 """
 from __future__ import annotations
 
 import sys
 import time
-import warnings
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
-import highspy
 import numpy as np
 import pandas as pd
-from scipy import sparse
 from scipy.stats import spearmanr
 
 from ecosim import config as C
 from ecosim.contracts import Order, PolicyParams, SimState, validate_forecast_table
-
-
-def lower_hull(cost):
-    """Índices de los vértices de la envolvente convexa inferior."""
-    hull = []
-    for y in range(len(cost)):
-        while len(hull) >= 2:
-            a, b = hull[-2:]
-            if (cost[b] - cost[a]) * (y - a) >= (cost[y] - cost[a]) * (b - a):
-                hull.pop()
-            else:
-                break
-        hull.append(y)
-    return hull
-
-
-def hull_value(cost, hull, x):
-    return float(np.interp(x, hull, np.asarray(cost)[hull]))
+from ecosim.greedy import greedy
 
 
 def fluid_project(b0, K, net, m0, m1, adds=None):
@@ -96,59 +77,75 @@ class Plan:
     u: np.ndarray
     pickup_cost: np.ndarray
     delivery_cost: np.ndarray
-    pickup_hulls: list
-    delivery_hulls: list
     pickup: np.ndarray
     delivery: np.ndarray
+    # (receptor, x, [(donante, k), ...]) con índices de `names`, en el orden del greedy.
+    paquetes: list
     status: str
-    objective: float
-    solve_s: float
     total_s: float
 
     @property
     def x(self):
         return self.delivery - self.pickup
 
-    def surrogate(self, pickup=None, delivery=None, hull=True):
+    def surrogate(self, pickup=None, delivery=None):
         """Costo incremental del sustituto (sin precio por visita)."""
         pickup = self.pickup if pickup is None else pickup
         delivery = self.delivery if delivery is None else delivery
         result = 0.0
         for i in range(len(self.names)):
             if pickup[i]:
-                c = self.pickup_cost[i, : self.r[i] + 1]
-                result += hull_value(c, self.pickup_hulls[i], pickup[i]) if hull else c[pickup[i]]
+                result += self.pickup_cost[i, pickup[i]]
             if delivery[i]:
-                c = self.delivery_cost[i, : self.u[i] + 1]
-                result += hull_value(c, self.delivery_hulls[i], delivery[i]) if hull else c[delivery[i]]
+                result += self.delivery_cost[i, delivery[i]]
         return float(result)
 
 
 class Asignador:
-    """Política MILP; ninguna agenda histórica ni acceso a viajes futuros."""
+    """Política greedy; ninguna agenda histórica ni acceso a viajes futuros."""
 
-    def __init__(self, time_limit=10.0, threads=4, mip_rel_gap=1e-4):
-        self.time_limit = float(time_limit)
-        self.threads = int(threads)
-        self.mip_rel_gap = float(mip_rel_gap)
+    def __init__(self, coords: dict | None = None):
+        """`coords`: {short_name: (lat, lon)}, solo para alfa > 0. Sin ella se usan las
+        coordenadas de `data.stations(día)`; en vivo, las del feed."""
         self.last_plan: Plan | None = None
-        self.fallbacks: list[tuple] = []
-        self.timeouts: list[tuple] = []
+        self.coords = coords
+        self._D = None
+
+    def _distancias(self, names, t) -> np.ndarray:
+        """Matriz de km en línea recta (haversine) entre estaciones; NaN si falta una coordenada."""
+        key = (C.window_day(t), tuple(names))
+        if self._D is not None and self._D[0] == key:
+            return self._D[1]
+        if self.coords is not None:
+            xy = [self.coords.get(str(nm), (np.nan, np.nan)) for nm in names]
+        else:
+            from ecosim import data
+            st = data.stations(key[0]).drop_duplicates("short_name")
+            st = st.assign(short_name=st.short_name.astype(str)).set_index("short_name")
+            xy = [(st.lat.get(str(nm), np.nan), st.lon.get(str(nm), np.nan)) for nm in names]
+        c = np.radians(np.array(xy, float))
+        lat, lon = c[:, 0][:, None], c[:, 1][:, None]
+        h = np.sin((lat - lat.T) / 2) ** 2 + np.cos(lat) * np.cos(lat.T) * np.sin((lon - lon.T) / 2) ** 2
+        D = 2 * 6371.0 * np.arcsin(np.sqrt(h))
+        self._D = (key, D)
+        return D
 
     def decide(self, t, state: SimState, pending_orders, forecast, params: PolicyParams) -> list[Order]:
+        """Una orden por estación visitada; `paquete` = 1..P dentro de la decisión."""
         t = pd.Timestamp(t).to_pydatetime()
         plan = self.plan(t, state, pending_orders, forecast, params)
         self.last_plan = plan
         if plan is None:
             return []
-        if plan.status.startswith("fallback"):
-            self.fallbacks.append((t, plan.status))
-        if "Time limit" in plan.status:
-            self.timeouts.append((t, plan.status))
+        number = {}
+        for p, (receptor, _, donors) in enumerate(plan.paquetes, start=1):
+            number[receptor] = p
+            for j, _ in donors:
+                number[j] = p
         pickup_at = t + timedelta(minutes=params.pickup_min)
         delivery_at = t + timedelta(minutes=params.delivery_min)
-        return [Order(t, pickup_at, delivery_at, str(name), int(delta))
-                for name, delta in zip(plan.names, plan.x) if delta]
+        return [Order(t, pickup_at, delivery_at, str(name), int(delta), number[i])
+                for i, (name, delta) in enumerate(zip(plan.names, plan.x)) if delta]
 
     def plan(self, t, state: SimState, pending_orders, forecast, params: PolicyParams) -> Plan | None:
         started = time.perf_counter()
@@ -199,95 +196,15 @@ class Asignador:
         dc = _option_costs(d, K, net, delivery_min, horizon, rd, cap, 1)
         pc -= pc[:, :1]
         dc -= dc[:, :1]
-        ph = [lower_hull(pc[i, : r[i] + 1]) for i in range(len(names))]
-        dh = [lower_hull(dc[i, : u[i] + 1]) for i in range(len(names))]
         pickup = np.zeros(len(names), int)
         delivery = np.zeros(len(names), int)
-        status, obj, solve_s = "noop", 0.0, 0.0
+        paquetes, status = [], "noop"
         if params.visits_per_decision >= 2 and r.any() and u.any():
-            remaining = self.time_limit - (time.perf_counter() - started)
-            if remaining <= 0:
-                status = "fallback: Time limit (preparación)"
-            else:
-                pickup, delivery, status, obj, solve_s = self._solve(r, u, pc, dc, ph, dh, params, remaining)
-        return Plan(names, K, p, d, r, u, pc, dc, ph, dh, pickup, delivery,
-                    status, obj, solve_s, time.perf_counter() - started)
-
-    def _solve(self, r, u, pc, dc, ph, dh, params, remaining):
-        build_start = time.perf_counter()
-        n = len(r)
-        # Seis bloques: q_recoger, q_entregar, visita_recoger,
-        # visita_entregar, costo_recoger, costo_entregar.
-        ir, iu, ivr, ivu, izr, izu = (j * n for j in range(6))
-        lo = np.r_[np.zeros(4 * n), np.full(2 * n, -np.inf)]
-        hi = np.r_[r, u, (r > 0).astype(int), (u > 0).astype(int),
-                   np.full(2 * n, np.inf)].astype(float)
-        obj = np.r_[np.zeros(2 * n), np.full(2 * n, params.lam), np.ones(2 * n)]
-        integrality = [highspy.HighsVarType.kInteger] * (4 * n) + [highspy.HighsVarType.kContinuous] * (2 * n)
-        rows, cols, vals, low, high = [], [], [], [], []
-
-        def row(indices, values, a=-np.inf, z=np.inf):
-            j = len(low)
-            rows.extend([j] * len(indices))
-            cols.extend(indices)
-            vals.extend(values)
-            low.append(a)
-            high.append(z)
-
-        for i in range(n):
-            row([ir + i, ivr + i], [1, -float(r[i])], z=0)
-            row([iu + i, ivu + i], [1, -float(u[i])], z=0)
-            row([ivr + i, ivu + i], [1, 1], z=1)
-            for q, v, z, c, h in ((ir, ivr, izr, pc[i], ph[i]),
-                                   (iu, ivu, izu, dc[i], dh[i])):
-                if len(h) == 1:
-                    row([z + i], [1], a=0)
-                for a, b in zip(h[:-1], h[1:]):
-                    slope = (c[b] - c[a]) / (b - a)
-                    intercept = c[a] - slope * a
-                    # z >= slope*q + intercept*visita; visita=0 fija z>=0.
-                    row([z + i, q + i, v + i], [1, -slope, -intercept], a=0)
-        row(list(range(ir, ir + n)) + list(range(iu, iu + n)),
-            [-1.0] * n + [1.0] * n, a=0, z=0)
-        row(list(range(ivr, ivr + n)) + list(range(ivu, ivu + n)),
-            [1.0] * (2 * n), z=params.visits_per_decision)
-        A = sparse.csc_matrix((vals, (rows, cols)), shape=(len(low), 6 * n))
-        lp = highspy.HighsLp()
-        lp.num_col_, lp.num_row_ = 6 * n, len(low)
-        lp.col_cost_, lp.col_lower_, lp.col_upper_ = obj, lo, hi
-        lp.row_lower_, lp.row_upper_ = np.asarray(low), np.asarray(high)
-        lp.a_matrix_.format_ = highspy.MatrixFormat.kColwise
-        lp.a_matrix_.start_, lp.a_matrix_.index_, lp.a_matrix_.value_ = A.indptr, A.indices, A.data
-        lp.integrality_ = integrality
-        # HiGHS conserva un scheduler global; puede venir de otro brazo con
-        # distinto número de threads en el mismo proceso.
-        highspy.Highs.resetGlobalScheduler(True)
-        h = highspy.Highs()
-        h.setOptionValue("output_flag", False)
-        h.setOptionValue("threads", self.threads)
-        h.setOptionValue("mip_rel_gap", self.mip_rel_gap)
-        h.passModel(lp)
-        remaining -= time.perf_counter() - build_start
-        if remaining <= 0:
-            return np.zeros(n, int), np.zeros(n, int), "fallback: Time limit (preparación MILP)", 0.0, 0.0
-        h.setOptionValue("time_limit", remaining)
-        begin = time.perf_counter()
-        h.run()
-        elapsed = time.perf_counter() - begin
-        status = h.modelStatusToString(h.getModelStatus())
-        sol = np.asarray(h.getSolution().col_value)
-        if int(h.getInfo().primal_solution_status) != 2 or len(sol) != 6 * n or not np.isfinite(sol[:2*n]).all():
-            warnings.warn(f"asignador: HiGHS sin solución factible ({status}); no se mueve nada")
-            return np.zeros(n, int), np.zeros(n, int), f"fallback: {status}", 0.0, elapsed
-        pick, deliver = np.rint(sol[:n]).astype(int), np.rint(sol[n:2*n]).astype(int)
-        # No convertir silenciosamente una solución fraccionaria en órdenes.
-        if (np.abs(sol[:2*n] - np.r_[pick, deliver]) > 1e-5).any() or (
-            pick.sum() != deliver.sum() or (pick > r).any() or (deliver > u).any() or
-            ((pick > 0) & (deliver > 0)).any() or
-            (np.count_nonzero(pick) + np.count_nonzero(deliver) > params.visits_per_decision)):
-            warnings.warn("asignador: incumbente no respeta restricciones; no se mueve nada")
-            return np.zeros(n, int), np.zeros(n, int), "fallback: incumbente inválido", 0.0, elapsed
-        return pick, deliver, status, float(h.getInfo().objective_function_value), elapsed
+            D = self._distancias(names, t) if params.alfa > 0 else None
+            pickup, delivery, paquetes = greedy(r, u, pc, dc, params.lam, params.visits_per_decision, params.alfa, D)
+            status = "greedy"
+        return Plan(names, K, p, d, r, u, pc, dc, pickup, delivery, paquetes,
+                    status, time.perf_counter() - started)
 
 
 def flow_sim(b0, K, dep, arr, m0, m1, orders=None, count_from=None):
@@ -356,8 +273,8 @@ def validate(out_dir=None):
                 a = Asignador()
                 plan = a.plan(t, state, [], fc, p)
                 rows.append({"n": n, "lam": lam, "t": t.strftime("%H:%M"),
-                             "seconds": plan.total_s, "solve_s": plan.solve_s,
-                             "status": plan.status, "visits": int(np.count_nonzero(plan.x))})
+                             "seconds": plan.total_s, "status": plan.status,
+                             "visits": int(np.count_nonzero(plan.x))})
                 if lam == 10:
                     # Cada propuesta factible se evalúa en el flujo real desde t;
                     # costo sustituto y E+F se comparan como mejoras frente a noop.
@@ -396,27 +313,21 @@ def validate(out_dir=None):
     lines = ["# Validación del asignador — run 3", "",
              "Fixture reproducible: 700 estaciones, flujo Poisson independiente del pronóstico; "
              "el simulador de flujo recorta a [0, K] y aplica las dos piernas en t+15 y t+60. "
-             "Se comparan planes MILP, sin movimiento, fracciones y alternativas aleatorias "
+             "Se comparan planes greedy, sin movimiento, fracciones y alternativas aleatorias "
              "(estas últimas sólo para validar el costo, no son decisiones factibles).", "",
              f"Spearman entre costo incremental pronosticado y E+F real: mediana "
              f"{np.median(valid):.3f} en {len(valid)} grupos definidos.",
              "", "| n | mediana Spearman |", "|---:|---:|"]
     lines += [f"| {n} | {np.nanmedian(groups[n]):.3f} |" for n in (2, 4, 6)]
-    lines += ["", "| n | λ | decisiones | visitas mediana | mediana s | p95 s | máximo s | límite 10 s | fallback |",
-              "|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    lines += ["", "| n | λ | decisiones | visitas mediana | mediana s | p95 s | máximo s |",
+              "|---:|---:|---:|---:|---:|---:|---:|"]
     for n in (2, 4, 6):
         for lam in (10, 30, 60):
             subset = [r for r in rows if r["n"] == n and r["lam"] == lam]
             secs = np.array([r["seconds"] for r in subset])
-            nt = sum("Time limit" in r["status"] for r in subset)
-            nf = sum(r["status"].startswith("fallback") for r in subset)
             lines.append(f"| {n} | {lam} | {len(subset)} | {np.median([r['visits'] for r in subset]):.1f} | {np.median(secs):.3f} | "
-                         f"{np.quantile(secs, .95):.3f} | {secs.max():.3f} | {nt} | {nf} |")
-    low = [r for r in rows if r["lam"] == 10]
-    count = sum("Time limit" in r["status"] for r in low)
-    lines += ["", f"λ=10: {count}/{len(low)} decisiones ({100*count/len(low):.1f}%) "
-              "llegaron al límite. No se aumentó el límite de 10 s.", "",
-              "Supuesto: las dañadas presentes en t ocupan anclajes durante la proyección; "
+                         f"{np.quantile(secs, .95):.3f} | {secs.max():.3f} |")
+    lines += ["", "Supuesto: las dañadas presentes en t ocupan anclajes durante la proyección; "
               "eventos futuros no son visibles. Las órdenes pendientes se aplican en su hora "
               "y se recortan en la proyección; no se presupone capacidad de bodega.", ""]
     path = out / "REPORT.md"

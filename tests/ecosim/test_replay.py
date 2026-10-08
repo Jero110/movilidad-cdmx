@@ -46,7 +46,38 @@ def test_brazos_run3(fz):
     assert fz["mejor_real"] == "ma_diaria"
 
 
+def test_replay_cuadra_cada_foto(fz):
+    """Cuadre por foto con el simulador actual (greedy y reubicación junto al destino)."""
+    day = replay.default_days()[0]
+    for arm in ("sin_rebalanceo", "ecobici", "ma_diaria"):
+        res, rec, _ = replay.run_real(day, arm, fz)
+        out = replay.frames(res, rec)
+        assert all(s["cuadre_ok"] for s in out["snap"])
+        for key in ("bikes", "dis", "decision", "applied", "snap", "est", "desvios"):
+            assert len(out[key]) == replay.N_FRAMES, key
+        assert all(SNAP_KEYS <= set(s) for s in out["snap"])
+        assert out["snap"][-1]["EF_acum"] == res.EF
+        assert len(out["pares"]) == replay.N_FRAMES
+        if arm != "ma_diaria":
+            assert not any(out["pares"])  # sin camioneta no hay pares
+        if arm == "ma_diaria":
+            # Cada orden emitida trae su paquete; los pares ejecutados cuadran con lo recogido y con las reubicaciones.
+            assert all(len(o) == 3 and o[2] > 0 for d in out["decision"] if d for o in d["orders"])
+            pares = [p for fr in out["pares"] for p in fr]
+            assert pares and all(len(p) == 9 for p in pares)
+            assert sum(p[3] for p in pares if not p[4]) == sum(s["recogidas"] for s in out["snap"])
+            assert sum(p[3] for p in pares if p[4]) == sum(s["devueltas"] for s in out["snap"])
+            assert any(d and d["orders"] for d in out["decision"])
+            assert all(d["plan"]["status"] == "greedy" for d in out["decision"] if d and d["orders"])
+            # `devueltas` = bicis dejadas junto al destino cuando no cupieron.
+            assert sum(s["recogidas"] for s in out["snap"]) == sum(s["entregadas"] + s["devueltas"] for s in out["snap"])
+            assert sum(s["devueltas"] for s in out["snap"]) == res.recortes["reubicacion_destino"]
+
+
 def test_replay_day_arm_ef_igual_resultados_y_cuadre(fz):
+    from ecosim import run
+    if fz["topes_base"] != run.cap():
+        pytest.skip("resultados.csv y frozen.json son de una corrida anterior (otros topes); los regenera `runs`")
     day = replay.default_days()[0]
     for arm in ("sin_rebalanceo", "ecobici", "ma_diaria"):
         out = replay.replay_day_arm(day, arm, fz, write=False)
@@ -55,13 +86,7 @@ def test_replay_day_arm_ef_igual_resultados_y_cuadre(fz):
         assert out["final"]["EF"] == int(row["EF"])
         assert out["check"]["igual"] is True
         assert out["check"]["cuadre_todas_las_fotos"] is True
-        for key in ("bikes", "dis", "decision", "applied", "snap", "est", "desvios"):
-            assert len(out[key]) == replay.N_FRAMES, key
-        assert all(SNAP_KEYS <= set(s) for s in out["snap"])
         assert out["snap"][-1]["EF_acum"] == out["final"]["EF"]
-        if arm == "ma_diaria":
-            assert any(d and d["orders"] for d in out["decision"])
-            assert sum(s["recogidas"] for s in out["snap"]) == sum(s["entregadas"] + s["devueltas"] for s in out["snap"])
 
 
 def test_default_days_four_per_month():
@@ -156,3 +181,40 @@ def test_desvios_por_foto_suman_los_del_dia():
             for tid, kind, i0, i1, metros in rows:
                 assert tid in ids and kind in ("salida", "llegada") and i0 != i1 and i1 >= 0, (day, arm, k)
                 assert metros is None or metros >= 0
+
+
+def _km_traslados(out, dia):
+    """(km de tramos, bici-km) de los traslados ejecutados de un replay, con las coordenadas del día."""
+    st = dia["stations"]
+    lat, lon = np.radians(np.array(st["lat"], float)), np.radians(np.array(st["lon"], float))
+    km = bkm = 0.0
+    for fr in out["pares"]:
+        for _, o, d, bicis, tipo, *_ in fr:
+            if tipo:
+                continue
+            h = np.sin((lat[d] - lat[o]) / 2) ** 2 + np.cos(lat[o]) * np.cos(lat[d]) * np.sin((lon[d] - lon[o]) / 2) ** 2
+            x = 2 * 6371 * np.arcsin(np.sqrt(h))
+            km += x
+            bkm += x * bicis
+    return km, bkm
+
+
+def test_variante_de_alfa_cuadra_y_baja_los_km(fz, tmp_path):
+    """α > 0: sin comparar con resultados.csv (es de α = 0), cuadra cada foto y los tramos son más cortos."""
+    day = replay.default_days()[0]
+    assert replay.arm_file("ma_diaria") == "ma_diaria.json" and replay.arm_file("ma_diaria", 10) == "ma_diaria@a10.json"
+    with pytest.raises(ValueError):
+        replay.replay_day_arm(day, "ecobici", fz, out_dir=tmp_path, alfa=5)
+    base = replay.replay_day_arm(day, "ma_diaria", fz, out_dir=tmp_path)
+    alto = replay.replay_day_arm(day, "ma_diaria", fz, out_dir=tmp_path, alfa=10)
+    assert (tmp_path / day / "ma_diaria.json").exists() and (tmp_path / day / "ma_diaria@a10.json").exists()
+    assert base["alfa"] == 0.0 and alto["alfa"] == 10.0 and alto["spec"]["alfa"] == 10.0
+    assert alto["check"]["cuadre_todas_las_fotos"] and alto["check"]["igual"] is None and base["check"]["igual"] is True
+    dia = json.loads((tmp_path / day / "dia.json").read_text())
+    km0, bkm0 = _km_traslados(base, dia)
+    km1, bkm1 = _km_traslados(alto, dia)
+    assert 0 < km1 < km0 and 0 < bkm1 < bkm0
+    # El índice lista las variantes sin tocar el brazo de α = 0.
+    ix = replay.write_index(tmp_path)
+    assert ix["alfas"] == [0, 10] and list(ix["days"][day]["alfas"]["ma_diaria"]) == ["10"]
+    assert ix["days"][day]["arms"]["ma_diaria"]["final"]["EF"] == base["final"]["EF"]

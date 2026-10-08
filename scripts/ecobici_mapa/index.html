@@ -94,6 +94,11 @@
         <div class="arm-list" id="rarms" aria-describedby="rarmsHint"><span class="skeleton block"></span></div>
         <p class="hint" id="rarmsHint" aria-live="polite"></p>
       </fieldset>
+      <div class="field" id="ralfaField" hidden>
+        <label for="ralfa">Costo por km (α)</label>
+        <select id="ralfa"></select>
+        <p class="hint" id="ralfaHint">Minutos-estación que cuesta cada km del tramo donante → receptor. Con α más alto el asignador elige donantes más cercanos: menos km y algo más de E+F.</p>
+      </div>
       <div class="scenario" id="rspec" aria-live="polite"></div>
       <div class="note error" id="rerror" role="alert" hidden></div>
       <label class="toggle">
@@ -110,6 +115,21 @@
         <input type="checkbox" id="showDetours" checked>
         <span class="toggle-track" aria-hidden="true"></span>
         <span>Viajes desviados</span>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="showDamaged" checked>
+        <span class="toggle-track" aria-hidden="true"></span>
+        <span>Cambios de dañadas</span>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="showEmit">
+        <span class="toggle-track" aria-hidden="true"></span>
+        <span>Órdenes emitidas</span>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="showArrive">
+        <span class="toggle-track" aria-hidden="true"></span>
+        <span>Órdenes que llegaron</span>
       </label>
       <div class="zones-ctl" data-zones="replay">
         <label class="toggle">
@@ -179,6 +199,11 @@
               <option value="3">3 horas</option><option value="4">4 horas</option>
             </select>
           </div>
+          <div class="field">
+            <label for="aalfa">Costo por km (α)</label>
+            <select id="aalfa"></select>
+            <p class="hint">Minutos-estación por km de cada tramo donante → receptor. Con α más alto, donantes más cercanos: menos km y algo más de E+F. 0 = sin costo por km.</p>
+          </div>
           <button class="btn primary block" id="startAssign"><span class="btn-label">Iniciar</span></button>
         </div>
         <div class="session" id="session" hidden>
@@ -187,6 +212,11 @@
             <button class="btn danger sm" id="stopAssign"><svg class="ico"><use href="#i-stop"/></svg><span class="btn-label">Detener</span></button>
           </div>
           <dl class="provenance" id="sessInfo"></dl>
+          <div class="field" id="salfaField" hidden>
+            <label for="salfa">Costo por km (α)</label>
+            <select id="salfa"></select>
+            <p class="hint">El cambio aplica desde la siguiente decisión; las órdenes ya emitidas no cambian.</p>
+          </div>
           <div class="field" id="stepPick" hidden>
             <label for="astep">Paso</label>
             <select id="astep"></select>
@@ -195,6 +225,16 @@
         </div>
         <div class="note error" id="aerror" role="alert" hidden></div>
         <div class="zones-ctl" data-zones="asignacion">
+        <label class="toggle">
+          <input type="checkbox" id="showEmitA">
+          <span class="toggle-track" aria-hidden="true"></span>
+          <span>Órdenes emitidas</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="showArriveA">
+          <span class="toggle-track" aria-hidden="true"></span>
+          <span>Órdenes que llegaron</span>
+        </label>
           <label class="toggle">
             <input type="checkbox" id="showNumsA" data-nums="asignacion">
             <span class="toggle-track" aria-hidden="true"></span>
@@ -270,6 +310,7 @@
       <div class="segmented small" role="tablist" aria-label="Listas de la foto" id="rpTabs">
         <button role="tab" data-list="emitidas" aria-selected="true">Órdenes emitidas</button>
         <button role="tab" data-list="aplicadas" aria-selected="false" tabindex="-1">Aplicadas</button>
+        <button role="tab" data-list="llegaron" aria-selected="false" tabindex="-1">Llegaron</button>
         <button role="tab" data-list="desvios" aria-selected="false" tabindex="-1">Desviados</button>
       </div>
       <ul class="rows" id="rpList"></ul>
@@ -292,6 +333,7 @@
       <div class="segmented small" role="tablist" aria-label="Listas del paso" id="apTabs">
         <button role="tab" data-list="emitidas" aria-selected="true">Emitidas</button>
         <button role="tab" data-list="aplicadas" aria-selected="false" tabindex="-1">Aplicadas</button>
+        <button role="tab" data-list="llegaron" aria-selected="false" tabindex="-1">Llegaron</button>
         <button role="tab" data-list="viajes" aria-selected="false" tabindex="-1">Viajes</button>
       </div>
       <ul class="rows" id="apList"></ul>

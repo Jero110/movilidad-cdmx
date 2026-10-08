@@ -1,0 +1,16 @@
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{Salidas} & \multicolumn{2}{c}{Llegadas} & \multicolumn{2}{c}{Neto} \\
+Pronóstico & MAE & WAPE, \% & MAE & WAPE, \% & MAE & WAPE, \% \\
+\midrule
+\multicolumn{7}{@{}l}{\emph{Primera hora}} \\
+Media móvil & 1.59 & 40 & 1.53 & 39 & 1.62 & 82 \\
+LightGBM diario & 1.57 & 40 & 1.50 & 38 & 1.60 & 81 \\
+LightGBM directo & 1.79 & 45 & 1.69 & 43 & 1.99 & 88 \\
+\midrule
+\multicolumn{7}{@{}l}{\emph{Hora 4 hacia adelante}} \\
+Media móvil & 1.67 & 40 & 1.62 & 39 & 1.68 & 86 \\
+LightGBM diario & 1.64 & 40 & 1.59 & 38 & 1.66 & 85 \\
+LightGBM directo & 1.89 & 46 & 1.83 & 43 & 2.05 & 91 \\
+\bottomrule
+\end{tabular}

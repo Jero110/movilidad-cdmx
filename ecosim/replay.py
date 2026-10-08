@@ -8,10 +8,10 @@ motor coincidan exactamente con `ecosim/results/resultados.csv`.
 
 Cada archivo trae, por foto (cada 15 min de 05:00 a 00:15 y el cierre de
 00:30), lo ocurrido desde la foto anterior (`snap`, `est`, `desvios`) y el
-cuadre: bicis por estación y del sistema contra viajes, órdenes, devoluciones
-y cambios de etiqueta. Los eventos se reconstruyen desde lo que devuelve el
-simulador (`res.extra`), sin tocar `sim.py`. Contrato en
-`scripts/ecobici_mapa/README.md`.
+cuadre: bicis por estación y del sistema contra viajes, órdenes, reubicaciones
+junto al destino (columna `devueltas`) y cambios de etiqueta. Los eventos se
+reconstruyen desde lo que devuelve el simulador (`res.extra`), sin tocar
+`sim.py`. Contrato en `scripts/ecobici_mapa/README.md`.
 """
 from __future__ import annotations
 
@@ -39,6 +39,14 @@ STEP = C.STEP_MIN
 N_FRAMES = C.WINDOW_MIN // STEP + 1  # 05:00, 05:15, …, 00:15 y la foto de cierre 00:30
 ARMS = ("sin_rebalanceo", "ecobici", "oraculo_diario", "ma_diaria", "lgbm_diario", "oraculo_directo", "lgbm_directo")
 POLICIES = set(RUN.POLICIES)
+# Costo por km (α, min-estación por km de cada tramo donante → receptor) precalculado además de α = 0.
+ALFAS = (1, 3, 5, 7, 10)
+ALFA_RE = re.compile(r"(?P<arm>[a-z_]+)(?:@a(?P<alfa>\d+))?")
+
+
+def arm_file(arm: str, alfa: float = 0) -> str:
+    """Nombre del archivo de un brazo: `<brazo>.json` con α = 0, `<brazo>@a<α>.json` con α > 0."""
+    return f"{arm}.json" if not alfa else f"{arm}@a{int(alfa)}.json"
 ARM_LABEL = {
     "sin_rebalanceo": "Sin rebalanceo",
     "ecobici": "Ecobici medido",
@@ -134,14 +142,10 @@ class RecordingPolicy:
         plan = self.inner.last_plan
         self.log[pd.Timestamp(t).isoformat()] = {
             "status": None if plan is None else plan.status,
-            "solve_s": None if plan is None else round(float(plan.solve_s), 4),
-            "orders": [(o.short_name, int(o.delta)) for o in orders],
+            "segundos": None if plan is None else round(float(plan.total_s), 4),
+            "orders": [(o.short_name, int(o.delta), o.paquete) for o in orders],
         }
         return orders
-
-    @property
-    def fallbacks(self):
-        return self.inner.fallbacks
 
 
 def _params_from_spec(s: dict) -> K.PolicyParams:
@@ -150,7 +154,7 @@ def _params_from_spec(s: dict) -> K.PolicyParams:
         n_hours=int(s["n"]), lam=float(s["lam"]),
         visits_per_decision=int(limit["visitas_por_decision"]),
         max_bikes_per_visit=int(limit["bicis_por_visita"]),
-        delivery_min=int(s["delivery"]), retiro=RUN.RETIRO,
+        delivery_min=int(s["delivery"]), retiro=RUN.RETIRO, alfa=float(s.get("alfa", 0.0)),
     )
 
 
@@ -164,8 +168,10 @@ def record_times(day) -> list:
     return [start + pd.Timedelta(minutes=STEP * k) for k in range(N_FRAMES - 1)] + [end - pd.Timedelta(1, "ns")]
 
 
-def run_real(day: str, arm: str, fz: dict):
+def run_real(day: str, arm: str, fz: dict, alfa: float = 0.0):
     s = spec(fz, arm, day)
+    if alfa:
+        s = s | {"alfa": float(alfa)}
     record_at = record_times(day)
     rec_policy = None
     if arm == "sin_rebalanceo":
@@ -174,7 +180,7 @@ def run_real(day: str, arm: str, fz: dict):
         res = sim.run_day(day, arm=arm, record_at=record_at, orders=sim.ecobici_orders(day), damage_variant=s["damage"])
     elif arm in POLICIES:
         params = _params_from_spec(s)
-        rec_policy = RecordingPolicy(Asignador(threads=int(os.environ.get("ECOSIM_THREADS", "1")), time_limit=10))
+        rec_policy = RecordingPolicy(Asignador())
         res = sim.run_day(day, arm=arm, record_at=record_at, policy=rec_policy,
                           forecast=RUN._forecast(arm, day), params=params, damage_variant=s["damage"])
     else:
@@ -320,34 +326,23 @@ def trip_events(trips: pd.DataFrame, names: list[str], start, end, detours: pd.D
             "transit_start": int(((dep < 0) & (arr >= 0) & o_known).sum())}
 
 
-def _returns_by_delivery(oa: pd.DataFrame, returns: list) -> list[tuple]:
-    """(instante de entrega, estación destino, bicis) de cada devolución al origen.
+def _relocations_by_delivery(oa: pd.DataFrame, moved: pd.DataFrame) -> list[tuple]:
+    """(instante de entrega, estación donde se dejó, bicis) de cada reubicación.
 
-    El motor no guarda la hora de `returns`; se reconstruye porque cada
-    decisión tiene una sola entrega y las devoluciones se registran en orden
-    cronológico, por un remanente = cargadas − entregadas de esa decisión.
+    El motor registra cada reubicación con su decisión y paquete; aquí solo se
+    comprueba que cada lote cierre: cargadas = entregadas + reubicadas.
     """
-    out = []
-    pos = 0
     if not len(oa):
-        if returns:
-            raise AssertionError("devoluciones sin órdenes")
-        return out
-    for issued, g in oa.groupby("issued_at", sort=True):
+        if len(moved):
+            raise AssertionError("reubicaciones sin órdenes")
+        return []
+    for (issued, number), g in oa.groupby(["issued_at", "paquete"], sort=True):
         load = int(-g.loc[g.applied < 0, "applied"].sum())
         given = int(g.loc[g.applied > 0, "applied"].sum())
-        remainder = load - given
-        when = pd.Timestamp(g.delivery_at.iloc[0])
-        while remainder > 0:
-            origin, to, v, _dist = returns[pos]
-            out.append((when, str(to), int(v)))
-            remainder -= int(v)
-            pos += 1
-        if remainder < 0:
-            raise AssertionError(f"devolución mayor al remanente en {issued}")
-    if pos != len(returns):
-        raise AssertionError("devoluciones sin decisión")
-    return out
+        left = int(moved.loc[(moved.issued_at == issued) & (moved.paquete == number), "bicis"].sum())
+        if load != given + left:
+            raise AssertionError(f"lote {issued} paquete {number}: cargadas {load} != entregadas {given} + reubicadas {left}")
+    return [(pd.Timestamp(r.delivery_at), str(r.estacion), int(r.bicis)) for r in moved.itertuples(index=False)]
 
 
 def frames(res: K.DayResult, rec_policy: RecordingPolicy | None, trips: pd.DataFrame | None = None,
@@ -434,7 +429,7 @@ def frames(res: K.DayResult, rec_policy: RecordingPolicy | None, trips: pd.DataF
             # Cada renglón es una visita (recoger o entregar) emitida en ki.
             if 0 <= ki < N_FRAMES:
                 dec = decision[ki] or {"orders": [], "plan": None}
-                dec["orders"].append([i, int(r.delta)])
+                dec["orders"].append([i, int(r.delta), int(r.paquete)])
                 decision[ki] = dec
                 emit_n[ki] += 1
                 emit_b[ki] += abs(int(r.delta))
@@ -451,15 +446,27 @@ def frames(res: K.DayResult, rec_policy: RecordingPolicy | None, trips: pd.DataF
                     ext_eco[ke] += v
                 else:
                     camioneta_d[ke] -= v
-        for when, to, v in ([] if ecobici else _returns_by_delivery(oa, x["returns"])):
+        for when, to, v in ([] if ecobici else _relocations_by_delivery(oa, x["reubicaciones"])):
             k = int(_frame_of(_ns([when], start))[0])
             dev[k, pos[to]] += v
             camioneta_d[k] -= v
+    # Pares ejecutados (de dónde a dónde se movieron bicis), en la foto de su entrega:
+    # [paquete, origen, destino, bicis, tipo (0 traslado, 1 reubicación), dist_m, foto emitida, foto de recogida, foto de entrega].
+    pares = [[] for _ in range(N_FRAMES)]
+    if not ecobici:
+        pe = sim.pares_ejecutados(res)
+        for r in pe.itertuples(index=False):
+            o, d = pos.get(str(r.origen), -1), pos.get(str(r.destino), -1)
+            ks = [int(_frame_of(_ns([t], start))[0]) for t in (r.issued_at, r.pickup_at, r.delivery_at)]
+            if o < 0 or d < 0 or not 0 <= ks[2] < N_FRAMES:
+                continue
+            pares[ks[2]].append([int(r.paquete), o, d, int(r.bicis), int(r.tipo == "reubicacion"),
+                                 None if not np.isfinite(r.dist_m) else round(float(r.dist_m)), *ks])
     if rec_policy is not None:
         for iso, info in rec_policy.log.items():
             k = int(_frame_of(_ns([iso], start))[0])
             if 0 <= k < N_FRAMES and decision[k] is not None:
-                decision[k]["plan"] = {"status": info["status"], "solve_s": info["solve_s"]}
+                decision[k]["plan"] = {"status": info["status"], "segundos": info["segundos"]}
 
     # --- cuadre: por estación y del sistema ---
     prev_b = np.vstack([init.bikes.to_numpy(np.int64)[None, :], bm[:-1]])
@@ -518,6 +525,7 @@ def frames(res: K.DayResult, rec_policy: RecordingPolicy | None, trips: pd.DataF
                 "bikes_moved": np.cumsum(bk_k).astype(int).tolist()},
         "applied": applied,
         "decision": decision,
+        "pares": pares,
         "snap": snap,
         "est_cols": list(EST_COLS),
         "est": est,
@@ -527,13 +535,17 @@ def frames(res: K.DayResult, rec_policy: RecordingPolicy | None, trips: pd.DataF
     }
 
 
-def replay_day_arm(day: str, arm: str, fz: dict, rdir=None, out_dir: Path = OUT_DIR, write=True) -> dict:
+def replay_day_arm(day: str, arm: str, fz: dict, rdir=None, out_dir: Path = OUT_DIR, write=True, alfa: float = 0.0) -> dict:
+    """Un día de un brazo. Con `alfa > 0` (solo brazos con asignador) es una variante con costo por km:
+    no se compara con resultados.csv (que es de α = 0); basta el cuadre por foto."""
     started = time.perf_counter()
-    res, rec_policy, s = run_real(day, arm, fz)
-    row = resultados_row(s, rdir)
-    if row is None:
+    if alfa and arm not in POLICIES:
+        raise ValueError(f"{arm} no usa asignador: no tiene variantes de α")
+    res, rec_policy, s = run_real(day, arm, fz, alfa)
+    row = resultados_row(s, rdir) if not alfa else None
+    if not alfa and row is None:
         raise ValueError(f"sin renglón en resultados.csv para {RUN.key(s)}")
-    for col in ("E", "F", "EF"):
+    for col in ("E", "F", "EF") if not alfa else ():
         if int(getattr(res, col)) != int(row[col]):
             raise AssertionError(f"{day} {arm}: {col} motor={getattr(res, col)} resultados={row[col]}")
     if s["damage"] != "onsite":
@@ -549,7 +561,7 @@ def replay_day_arm(day: str, arm: str, fz: dict, rdir=None, out_dir: Path = OUT_
         raise AssertionError("desvíos por foto no suman los del motor")
     fold = _fold(day, fz)
     out = {
-        "day": day, "arm": arm, "label": ARM_LABEL.get(arm, arm), "frozen_sha": frozen_sha(rdir),
+        "day": day, "arm": arm, "alfa": float(alfa), "label": ARM_LABEL.get(arm, arm), "frozen_sha": frozen_sha(rdir),
         "spec": s | {"forma": _forma(arm), "train_start": None if fold is None else fold.get("train_start"),
                       "train_end": None if fold is None else fold.get("train_end")},
         "final": {"E": int(res.E), "F": int(res.F), "EF": int(res.EF), "visitas": int(res.visitas),
@@ -562,15 +574,16 @@ def replay_day_arm(day: str, arm: str, fz: dict, rdir=None, out_dir: Path = OUT_
                   "pares_visitas": int(res.extra["pares_visitas"]),
                   "bicis_sistema_inicio": fr["inicial"]["bicis_sistema"],
                   "bicis_sistema_cierre": sn[-1]["bicis_sistema"]},
-        "check": {"resultados_csv": rel(results_dir(rdir) / "resultados.csv"), "EF_resultados": int(row["EF"]),
-                  "E_resultados": int(row["E"]), "F_resultados": int(row["F"]), "igual": True,
+        "check": ({"resultados_csv": None, "igual": None} if alfa else
+                  {"resultados_csv": rel(results_dir(rdir) / "resultados.csv"), "EF_resultados": int(row["EF"]),
+                   "E_resultados": int(row["E"]), "F_resultados": int(row["F"]), "igual": True}) | {
                   "cuadre_todas_las_fotos": all(x["cuadre_ok"] for x in sn),
                   "fotos_sin_cuadre": [k for k, x in enumerate(sn) if not x["cuadre_ok"]]},
         "seconds": round(time.perf_counter() - started, 1),
         **fr,
     }
     if write:
-        _dump(out, out_dir / day / f"{arm}.json")
+        _dump(out, out_dir / day / arm_file(arm, alfa))
         ensure_day_payload(day, out_dir, list(res.extra["stations"]))
     return out
 
@@ -580,23 +593,32 @@ def write_index(out_dir: Path = OUT_DIR, rdir=None) -> dict:
     days = {}
     sha = frozen_sha(rdir)
     for p in sorted(out_dir.glob("*/*.json")):
-        # Solo carpetas AAAA-MM-DD y los siete brazos: quedan archivos viejos
+        # Solo carpetas AAAA-MM-DD y los brazos (con sus variantes `@aN`): quedan archivos viejos
         # (baseline.json, daily.json…) que no se publican.
-        if p.name == "dia.json" or p.stem not in ARMS or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", p.parent.name):
+        m = ALFA_RE.fullmatch(p.stem)
+        if p.name == "dia.json" or not m or m["arm"] not in ARMS or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", p.parent.name):
             continue
         a = json.loads(p.read_text())
-        if a.get("frozen_sha") != sha or a.get("day") != p.parent.name:
+        if a.get("frozen_sha") != sha or a.get("day") != p.parent.name or float(a.get("alfa", 0)) != float(m["alfa"] or 0):
             continue
         dd = days.setdefault(a["day"], {"split": "prueba", "arms": {}})
-        dd["arms"][a["arm"]] = {"label": a["label"], "final": a["final"], "check": a["check"],
-                                  "frozen_sha": a["frozen_sha"], "spec": a["spec"],
-                                  "cuadre": a["check"].get("cuadre_todas_las_fotos"),
-                                  "cum": {"EF": [e+f for e, f in zip(a["cum"]["E"], a["cum"]["F"])],
-                                          "moves": a["cum"]["moves"], "bikes_moved": a["cum"]["bikes_moved"]}}
+        item = {"label": a["label"], "final": a["final"], "check": a["check"],
+                "frozen_sha": a["frozen_sha"], "spec": a["spec"],
+                "cuadre": a["check"].get("cuadre_todas_las_fotos"),
+                "cum": {"EF": [e+f for e, f in zip(a["cum"]["E"], a["cum"]["F"])],
+                        "moves": a["cum"]["moves"], "bikes_moved": a["cum"]["bikes_moved"]}}
+        if m["alfa"]:
+            dd.setdefault("alfas", {}).setdefault(a["arm"], {})[m["alfa"]] = item
+        else:
+            dd["arms"][a["arm"]] = item
+    for dd in days.values():  # variantes ordenadas por α
+        for arm, v in list(dd.get("alfas", {}).items()):
+            dd["alfas"][arm] = dict(sorted(v.items(), key=lambda kv: int(kv[0])))
     idx = {"generated_at": pd.Timestamp.now().isoformat(timespec="seconds"), "results_dir": rel(results_dir(rdir)),
            "frozen_sha": sha, "arms": brazos(fz), "best_real": fz["mejor_real"],
            "frozen": {"n": fz["n"], "lambda_por_brazo": fz["lambda_por_brazo"],
                       "topes_base": fz["topes_base"], "retiro": fz["retiro"]},
+           "alfas": sorted({0, *(int(k) for d in days.values() for v in d.get("alfas", {}).values() for k in v)}),
            "days": dict(sorted(days.items()))}
     _dump(idx, out_dir / "index.json")
     return idx
@@ -609,6 +631,8 @@ def main(argv=None):
     ap.add_argument("--arms", nargs="*")
     ap.add_argument("--results-dir")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--alfas", nargs="*", type=int, default=[],
+                    help="variantes con costo por km (p. ej. 1 3 5 7 10) de los brazos con asignador; además de α = 0 solo si no hay --alfas")
     a = ap.parse_args(argv)
     if a.results_dir:
         os.environ["ECOSIM_RESULTS_DIR"] = str(Path(a.results_dir).resolve())
@@ -620,15 +644,16 @@ def main(argv=None):
     todo = a.arms or brazos(fz)
     for d in days:
         ensure_day_payload(d)
-        for arm in todo:
-            p = OUT_DIR / d / f"{arm}.json"
-            if p.exists() and not a.force:
-                old = json.loads(p.read_text())
-                if old.get("frozen_sha") == frozen_sha(a.results_dir) and old.get("check", {}).get("igual"):
-                    print(f"{d} {arm}: ya está")
-                    continue
-            out = replay_day_arm(d, arm, fz, a.results_dir)
-            print(f"{d} {arm}: EF={out['final']['EF']} igual={out['check']['igual']} ({out['seconds']}s)", flush=True)
+        for alfa in a.alfas or [0]:
+            for arm in todo if not alfa else [x for x in todo if x in POLICIES]:
+                p = OUT_DIR / d / arm_file(arm, alfa)
+                if p.exists() and not a.force:
+                    old = json.loads(p.read_text())
+                    if old.get("frozen_sha") == frozen_sha(a.results_dir) and (old.get("check", {}).get("igual") or (alfa and old.get("check", {}).get("cuadre_todas_las_fotos"))):
+                        print(f"{d} {arm} α={alfa}: ya está")
+                        continue
+                out = replay_day_arm(d, arm, fz, a.results_dir, alfa=alfa)
+                print(f"{d} {arm} α={alfa}: EF={out['final']['EF']} igual={out['check']['igual']} cuadre={out['check']['cuadre_todas_las_fotos']} ({out['seconds']}s)", flush=True)
     write_index(OUT_DIR, a.results_dir)
 
 

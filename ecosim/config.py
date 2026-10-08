@@ -70,10 +70,10 @@ PICKUP_MIN = 15
 DELIVERY_MIN = 60
 DELIVERY_SENS_MIN = (45, 60, 75)
 
-VISITS_PER_DECISION = 67
-MAX_BIKES_PER_VISIT = 14
-VISITS_PER_DECISION_SENS = 83
-MAX_BIKES_PER_VISIT_SENS = 24
+# Topes duros: p95 de Ecobici en todo 2025 (`anual_2025` en
+# results/medicion/ecobici_stats.json; `run.cap()` los lee de ahí).
+VISITS_PER_DECISION = 55
+MAX_BIKES_PER_VISIT = 17
 N_GRID = (1, 2, 3, 4, 5, 6)
 LAMBDA_GRID_N = (15, 30, 60)
 LAMBDA_GRID = (10, 15, 20, 30, 45, 60)
@@ -94,10 +94,8 @@ RUN1_EVAL_DAYS = (
     "2025-10-11", "2025-10-13", "2025-10-15", "2025-10-22", "2025-10-25",
     "2025-11-07", "2025-11-12", "2025-11-15", "2025-11-19", "2025-11-24",
 )
-# 15 días de selección en agosto de 2025.
-SELECTION_SEED = 20261001
-N_SEL_WEEKDAY = 11
-N_SEL_WEEKEND = 4
+# Selección (validación): todos los días de agosto de 2025 con cobertura y
+# apertura válidas (`days.selection_days`).
 # Cobertura: fracción de 20 bloques en [05:00, 00:30) con ≥1 snapshot.
 COVERAGE_BLOCK_MIN = 60
 COVERAGE_MIN = 0.90

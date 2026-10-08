@@ -9,20 +9,31 @@ from ecosim import config as C, run, sim
 
 def test_seven_arms_and_splits():
     assert len(run.ARMS) == 7
-    assert len(run.days("seleccion")) == 15
+    sel, test = run.days("seleccion"), run.days("prueba")
+    # Validación = todo agosto 2025 válido; prueba = septiembre–diciembre 2025, sin 2026.
+    assert sel == sorted(sel) and all(d.startswith("2025-08") for d in sel) and len(sel) == 31
+    assert len(test) == 121 and (test[0], test[-1]) == ("2025-09-01", "2025-12-31")
     assert len(run.days("curva")) == 32
-    assert len(set(run.days("seleccion")) & set(run.days("prueba"))) == 0
-    assert all(not "2026-03-23" <= d <= "2026-03-31" for d in run.days("prod_2026"))
+    assert len(set(sel) & set(test)) == 0
+    with pytest.raises(ValueError):
+        run.days("prod_2026")
+    assert not hasattr(run, "paso6")
+    with pytest.raises(SystemExit):  # sin paso 6 (producción 2026)
+        run.main(["--paso", "6"])
 
 
 def test_unique_resume_keys_and_limits():
     a = run.spec("2025-08-01", "oraculo_directo", "n", 2, 30)
     assert run.key(a) != run.key({**a, "lam": 60})
-    assert run.cap() == {"visitas_por_decision": 67, "bicis_por_visita": 14}
-    assert run.cap("adelante") == {"visitas_por_decision": 47, "bicis_por_visita": 19}
-    assert run.cap("p99") == {"visitas_por_decision": 83, "bicis_por_visita": 24}
-    with pytest.raises(ValueError, match="dos procesos"):
-        run.execute([a], procesos=8, threads=2)
+    # Topes duros: p95 de Ecobici en todo 2025; sin sensibilidades de topes.
+    assert run.cap() == {"visitas_por_decision": 55, "bicis_por_visita": 17}
+    for source in ("adelante", "p99"):
+        with pytest.raises(ValueError):
+            run.cap(source)
+    with pytest.raises(ValueError, match="cinco procesos"):
+        run.execute([a], procesos=6, threads=1)
+    with pytest.raises(SystemExit):
+        run.main(["--paso", "1", "--procesos", "6"])
 
 
 def test_paired_confidence_interval_ties():
@@ -77,7 +88,7 @@ def test_seven_arms_execute_and_resume_real_day(tmp_path, monkeypatch):
     for row in first[first.arm.isin(run.POLICIES)].itertuples():
         assert row.recogidas_aplicadas == row.entregadas_aplicadas
         assert row.truck_end == 0
-        assert row.max_bicis_visita <= 14 and row.max_visitas_decision <= 67
+        assert row.max_bicis_visita <= 17 and row.max_visitas_decision <= 55
 
 
 def test_tables_with_synthetic_test_days(tmp_path, monkeypatch):
@@ -96,16 +107,16 @@ def test_tables_with_synthetic_test_days(tmp_path, monkeypatch):
                          "visitas":50, "bicis_movidas":100, "desvios_salida":1,
                          "desvios_llegada":2, "km_desvio_medio":.1, "replay_neto":0,
                          "decision_mediana_s":.2, "decision_p95_s":.4,
-                         "decision_max_s":.5, "decisiones_limite_10s":0,
+                         "decision_max_s":.5,
                          "tiempos_decision":"[0.2, 0.4]", "damage_external":0,
                          "lam":30, "run":day+arm})
     pd.DataFrame(rows).to_csv(run.FINAL, index=False)
-    prod = [{**r, "day":"2026-02-01", "tag":"prod_2026", "run":"prod"+r["arm"]}
-            for r in rows[:7] if r["arm"] != "ecobici"]
-    pd.DataFrame(rows + prod).to_csv(run.RUNS, index=False)
+    pd.DataFrame(rows).to_csv(run.RUNS, index=False)
     run.tablas()
-    assert "Siete brazos" in (tmp_path / "tablas.md").read_text()
-    assert "ma_diaria" in (tmp_path / "CONCLUSIONES.md").read_text()
+    tables = (tmp_path / "tablas.md").read_text()
+    conclusions = (tmp_path / "CONCLUSIONES.md").read_text()
+    assert "Siete brazos" in tables and "ma_diaria" in conclusions
+    assert "2026" not in tables + conclusions and "limite_10s" not in tables
 
 
 def test_benchmark_pair_rules_do_not_influence_policy():

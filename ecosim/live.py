@@ -66,6 +66,14 @@ TRUCK_DELTA = 5
 MAX_GAP_MIN = 15
 MIN_RECENT_PEERS = 4  # días comparables mínimos para que mean28 cuente como real
 MAX_SESSION_H = 20
+ALFA_MAX = 30.0  # costo por km (α) máximo que acepta una sesión; la app ofrece 0, 1, 3, 5, 7 y 10
+
+
+def validar_alfa(alfa) -> float:
+    """α en minutos-estación por km, entre 0 y ALFA_MAX; ValueError si no."""
+    if isinstance(alfa, bool) or not isinstance(alfa, (int, float)) or not 0 <= alfa <= ALFA_MAX:
+        raise ValueError(f"alfa debe ser un número entre 0 y {ALFA_MAX:g}")
+    return float(alfa)
 # Horizontes con sentido por forma: la diaria es el día completo hecho una vez;
 # la directa mira 1–4 h desde lo observado hoy.
 HORIZONTES = {"diaria": ["dia"], "directa": [1, 2, 3, 4]}
@@ -767,7 +775,8 @@ class LiveLoop:
 
 def _orden(o: K.Order) -> dict:
     return {"short_name": o.short_name, "accion": "recoger" if o.delta < 0 else "entregar", "n": abs(int(o.delta)),
-            "emitida": iso_min(o.issued_at), "recoge": iso_min(o.pickup_at), "entrega": iso_min(o.delivery_at)}
+            "emitida": iso_min(o.issued_at), "recoge": iso_min(o.pickup_at), "entrega": iso_min(o.delivery_at),
+            "paquete": int(o.paquete)}
 
 
 def _efectiva(o: K.Order) -> datetime:
@@ -785,7 +794,7 @@ class Sesion:
     `ESPERA_MAX_S` no llega, corre con la última y lo marca."""
 
     def __init__(self, sid: str, forecast: dict, horas: int, loop: LiveLoop, out_dir: Path,
-                 clock=None, sleep=None, prod: Produccion | None = None, fz: dict | None = None):
+                 clock=None, sleep=None, prod: Produccion | None = None, fz: dict | None = None, alfa: float = 0.0):
         self.id = sid
         self.loop = loop
         self.path = out_dir / f"{sid}.json"
@@ -796,8 +805,9 @@ class Sesion:
         self.model = forecast["model"]
         self.stop_event = threading.Event()
         self.pending: list[K.Order] = []
-        self.asignador = Asignador(time_limit=10, threads=1)
+        self.asignador = Asignador()
         self.params = params_for(self.model, self.fz or frozen())
+        self.params.alfa = validar_alfa(alfa)
         self.prev_t_feed: str | None = None
         inicio = floor15(self.clock())
         fin = min(inicio + timedelta(hours=horas), C.day_bounds(C.window_day(inicio))[1])
@@ -808,7 +818,7 @@ class Sesion:
             "params": {"n": self.params.n_hours, "lambda": self.params.lam,
                        "visitas_por_decision": self.params.visits_per_decision,
                        "bicis_por_visita": self.params.max_bikes_per_visit,
-                       "recoge_min": self.params.pickup_min, "entrega_min": self.params.delivery_min,
+                       "alfa": self.params.alfa, "recoge_min": self.params.pickup_min, "entrega_min": self.params.delivery_min,
                        "espera_max_s": ESPERA_MAX_S, "poll_s": POLL_S},
             "inicio_estado": None,
             "pasos": [], "totales": {"bicis_a_mover": 0, "visitas": 0, "recogidas": 0, "entregadas": 0},
@@ -817,6 +827,13 @@ class Sesion:
                     "No se ejecutan ni se mide E+F ni ahorro: Ecobici sigue operando.",
         }
         self._save()
+
+    def set_alfa(self, alfa) -> float:
+        """Cambia α; vale desde la siguiente decisión (las órdenes ya emitidas no cambian)."""
+        self.params.alfa = validar_alfa(alfa)
+        self.state["params"]["alfa"] = self.params.alfa
+        self._save()
+        return self.params.alfa
 
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -878,6 +895,9 @@ class Sesion:
                     _, _, st, vista, ref = preparar(self.model, t_feed, log_df, prod, t=t)
                     sim_state = K.SimState(t=t, stations=st[["short_name", "bikes", "disabled", "docks", "cap",
                                                              "out_of_service"]])
+                    if self.params.alfa > 0:  # coordenadas del feed para las distancias
+                        self.asignador.coords = {sn: (m[1], m[2]) for sn, m in self.loop.meta.items()
+                                                 if m[1] is not None and m[2] is not None}
                     emitidas = self.asignador.decide(t, sim_state, list(self.pending), vista, self.params)
                     plan = self.asignador.last_plan
                     if plan is None:
@@ -898,7 +918,7 @@ class Sesion:
         estado = {k: lect[k] for k in ESTADO_KEYS}
         if self.state["inicio_estado"] is None:
             self.state["inicio_estado"] = estado
-        paso = {"t": iso_min(t), "t_feed": iso_s(t_feed), "disparo": disparo, "espera_s": espera_s,
+        paso = {"t": iso_min(t), "t_feed": iso_s(t_feed), "alfa": self.params.alfa, "disparo": disparo, "espera_s": espera_s,
                 "feed_atrasado": atrasado, "estado_feed": estado,
                 "lecturas_desde_paso": [] if disparo == "inicio" else self.loop.lecturas_entre(self.prev_t_feed, lect["t_feed"]),
                 "emitidas": [_orden(o) for o in emitidas], "aplicadas": [_orden(o) for o in aplicadas],
@@ -976,12 +996,13 @@ class Asignaciones:
                 s.update(estado="error", error="el servidor se reinició con la sesión corriendo", siguiente_paso=None)
                 p.write_text(json.dumps(s, ensure_ascii=False))
 
-    def start(self, forecast_id: str, horas: int, thread: bool = True) -> str:
+    def start(self, forecast_id: str, horas: int, thread: bool = True, alfa: float = 0.0) -> str:
         if not isinstance(horas, int) or not 1 <= horas <= MAX_SESSION_H:
             raise ValueError(f"horas debe ser un entero entre 1 y {MAX_SESSION_H}")
+        alfa = validar_alfa(alfa)
         fc = leer_pronostico(forecast_id, self.forecast_dir)
         sid = f"{(self.clock or self.loop.clock)().strftime('%Y%m%d-%H%M%S')}-{fc['model']}-{uuid.uuid4().hex[:6]}"
-        s = Sesion(sid, fc, horas, self.loop, self.dir, clock=self.clock, sleep=self.sleep, prod=self.prod, fz=self.fz)
+        s = Sesion(sid, fc, horas, self.loop, self.dir, clock=self.clock, sleep=self.sleep, prod=self.prod, fz=self.fz, alfa=alfa)
         with self.lock:
             self.sesiones[sid] = s
         if thread:
@@ -999,6 +1020,13 @@ class Asignaciones:
         if not p.exists():
             raise KeyError(sid)
         return json.loads(p.read_text())
+
+    def cambiar_alfa(self, sid: str, alfa) -> dict:
+        s = self.sesiones.get(sid)
+        if s is None:
+            raise KeyError(sid)
+        s.set_alfa(alfa)
+        return s.state
 
     def stop(self, sid: str) -> dict:
         s = self.sesiones.get(sid)

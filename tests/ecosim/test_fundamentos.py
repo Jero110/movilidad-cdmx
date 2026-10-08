@@ -19,8 +19,7 @@ def test_window_and_folds():
     assert len(ts) == 78 and ts[0] == start and ts[-1] == end - timedelta(minutes=15)
     assert C.window_day(ts[-1]) == date(2025, 9, 3)
     assert C.PICKUP_MIN == 15 and C.DELIVERY_SENS_MIN == (45, 60, 75)
-    assert (C.VISITS_PER_DECISION, C.MAX_BIKES_PER_VISIT) == (67, 14)
-    assert (C.VISITS_PER_DECISION_SENS, C.MAX_BIKES_PER_VISIT_SENS) == (83, 24)
+    assert (C.VISITS_PER_DECISION, C.MAX_BIKES_PER_VISIT) == (55, 17)
     assert C.N_GRID == (1, 2, 3, 4, 5, 6)
     assert len(C.FOLDS) == 13
     assert C.FOLDS[0]["test_month"] == "2025-08"
@@ -36,10 +35,16 @@ def test_orders_and_params():
     assert o.delta == -3
     frame = K.orders_to_frame([o])
     assert K.frame_to_orders(frame) == [o]
+    assert o.paquete == 0 and frame.paquete.tolist() == [0]
+    q = K.Order(t, t, t, "001", 2, np.int64(3))
+    assert q.paquete == 3 and K.frame_to_orders(K.orders_to_frame([q])) == [q]
     with pytest.raises(ValueError):
         K.Order(t, t, t, "001", 0)
+    for bad in (-1, 1.0, True):
+        with pytest.raises(ValueError, match="paquete"):
+            K.Order(t, t, t, "001", 1, bad)
     p = K.PolicyParams(n_hours=np.int64(3))
-    assert p.n_hours == 3 and p.max_bikes_per_visit == 14
+    assert p.n_hours == 3 and p.max_bikes_per_visit == 17
     with pytest.raises(ValueError):
         K.PolicyParams(pickup_min=60, delivery_min=60)
 
@@ -166,8 +171,11 @@ def test_coverage_audit_and_march_cutoff():
 def test_days_json():
     js = json.loads(C.DAYS_JSON.read_text())
     sel = js["seleccion"]
-    assert len(sel) == 15 and sum(x["type"] == "weekday" for x in sel) == 11
-    assert all(x["day"].startswith("2025-08") and x["coverage"] >= .9 for x in sel)
+    # Validación = todos los días de agosto de 2025 con cobertura y apertura válidas.
+    assert all(x["day"].startswith("2025-08") and x["coverage"] >= .9
+               and x["open_offset_min"] is not None for x in sel)
+    assert [x["day"] for x in sel] == sorted(x["day"] for x in sel)
+    assert len(sel) == 31 and "selection_seed" not in js
     assert len(js["prueba"]) == 5 and all(v for v in js["prueba"].values())
     assert len(js["curva"]) == 32
     for month in ("2025-09", "2025-10", "2025-11", "2025-12"):

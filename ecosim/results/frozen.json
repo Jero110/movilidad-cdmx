@@ -1,19 +1,35 @@
 {
   "seleccion": [
     "2025-08-01",
+    "2025-08-02",
+    "2025-08-03",
     "2025-08-04",
+    "2025-08-05",
     "2025-08-06",
+    "2025-08-07",
     "2025-08-08",
     "2025-08-09",
+    "2025-08-10",
     "2025-08-11",
     "2025-08-12",
     "2025-08-13",
+    "2025-08-14",
+    "2025-08-15",
     "2025-08-16",
+    "2025-08-17",
     "2025-08-18",
+    "2025-08-19",
+    "2025-08-20",
+    "2025-08-21",
+    "2025-08-22",
     "2025-08-23",
+    "2025-08-24",
+    "2025-08-25",
     "2025-08-26",
     "2025-08-27",
     "2025-08-28",
+    "2025-08-29",
+    "2025-08-30",
     "2025-08-31"
   ],
   "n": {
@@ -23,75 +39,75 @@
   "n_ci_promedio_lambda": {
     "oraculo_diario": {
       "1": {
-        "delta_siguiente_menos_actual": -179132.26666666666,
-        "IC95_inf": -206531.02103774698,
-        "IC95_sup": -151733.51229558635,
-        "gana_siguiente_dias": 15,
+        "delta_siguiente_menos_actual": -110275.26881720431,
+        "IC95_inf": -122665.46763857835,
+        "IC95_sup": -97885.06999583027,
+        "gana_siguiente_dias": 31,
         "empata_dias": 0
       },
       "2": {
-        "delta_siguiente_menos_actual": -24948.42222222222,
-        "IC95_inf": -28918.442886192042,
-        "IC95_sup": -20978.401558252397,
-        "gana_siguiente_dias": 15,
+        "delta_siguiente_menos_actual": -68235.41935483873,
+        "IC95_inf": -75951.1859950425,
+        "IC95_sup": -60519.652714634954,
+        "gana_siguiente_dias": 31,
         "empata_dias": 0
       },
       "3": {
-        "delta_siguiente_menos_actual": -2105.311111111111,
-        "IC95_inf": -2630.6079317929093,
-        "IC95_sup": -1580.014290429313,
-        "gana_siguiente_dias": 15,
+        "delta_siguiente_menos_actual": -8968.677419354839,
+        "IC95_inf": -10204.21435370314,
+        "IC95_sup": -7733.140485006537,
+        "gana_siguiente_dias": 31,
         "empata_dias": 0
       },
       "4": {
-        "delta_siguiente_menos_actual": 945.622222222222,
-        "IC95_inf": 351.49539243009406,
-        "IC95_sup": 1539.7490520143501,
-        "gana_siguiente_dias": 4,
+        "delta_siguiente_menos_actual": -302.1505376344092,
+        "IC95_inf": -696.8578576050095,
+        "IC95_sup": 92.55678233619113,
+        "gana_siguiente_dias": 17,
         "empata_dias": 0
       },
       "5": {
-        "delta_siguiente_menos_actual": 1955.7555555555557,
-        "IC95_inf": 1296.8835508527768,
-        "IC95_sup": 2614.6275602583346,
-        "gana_siguiente_dias": 0,
+        "delta_siguiente_menos_actual": 1450.9462365591398,
+        "IC95_inf": 857.656558385201,
+        "IC95_sup": 2044.2359147330785,
+        "gana_siguiente_dias": 8,
         "empata_dias": 0
       }
     },
     "oraculo_directo": {
       "1": {
-        "delta_siguiente_menos_actual": -179139.24444444446,
-        "IC95_inf": -207199.28726655224,
-        "IC95_sup": -151079.20162233667,
-        "gana_siguiente_dias": 15,
+        "delta_siguiente_menos_actual": -108520.20430107527,
+        "IC95_inf": -121234.0671314176,
+        "IC95_sup": -95806.34147073294,
+        "gana_siguiente_dias": 31,
         "empata_dias": 0
       },
       "2": {
-        "delta_siguiente_menos_actual": -27852.688888888897,
-        "IC95_inf": -32408.82304128705,
-        "IC95_sup": -23296.554736490743,
-        "gana_siguiente_dias": 15,
+        "delta_siguiente_menos_actual": -70306.93548387098,
+        "IC95_inf": -78257.86945644056,
+        "IC95_sup": -62356.00151130141,
+        "gana_siguiente_dias": 31,
         "empata_dias": 0
       },
       "3": {
-        "delta_siguiente_menos_actual": -1854.2000000000005,
-        "IC95_inf": -2217.5464093612827,
-        "IC95_sup": -1490.8535906387183,
-        "gana_siguiente_dias": 15,
+        "delta_siguiente_menos_actual": -12784.559139784946,
+        "IC95_inf": -14399.859808276198,
+        "IC95_sup": -11169.258471293693,
+        "gana_siguiente_dias": 31,
         "empata_dias": 0
       },
       "4": {
-        "delta_siguiente_menos_actual": 281.35555555555607,
-        "IC95_inf": -101.02352541603074,
-        "IC95_sup": 663.7346365271428,
-        "gana_siguiente_dias": 6,
+        "delta_siguiente_menos_actual": -48.655913978494056,
+        "IC95_inf": -441.99466370204254,
+        "IC95_sup": 344.6828357450544,
+        "gana_siguiente_dias": 17,
         "empata_dias": 0
       },
       "5": {
-        "delta_siguiente_menos_actual": 1319.511111111111,
-        "IC95_inf": 785.4398530122047,
-        "IC95_sup": 1853.582369210017,
-        "gana_siguiente_dias": 0,
+        "delta_siguiente_menos_actual": 1135.795698924731,
+        "IC95_inf": 691.4353590269214,
+        "IC95_sup": 1580.1560388225403,
+        "gana_siguiente_dias": 8,
         "empata_dias": 0
       }
     }
@@ -99,119 +115,79 @@
   "n_regla": "primera n sin mejora distinguible: IC95 t pareado por día de la media sobre las tres λ incluye 0; si el IC95 indica empeoramiento, también se detiene por dominancia",
   "retiro": 0.0,
   "topes_base": {
-    "visitas_por_decision": 67,
-    "bicis_por_visita": 14
+    "visitas_por_decision": 55,
+    "bicis_por_visita": 17
   },
-  "topes_p99": {
-    "visitas_por_decision": 83,
-    "bicis_por_visita": 24
-  },
-  "topes_hacia_adelante": {
-    "visitas_por_decision": 47,
-    "bicis_por_visita": 19
-  },
-  "procesos": 2,
+  "procesos": 5,
   "threads": 1,
   "lambda_por_brazo": {
     "oraculo_diario": {
-      "lambda": 57.5805,
-      "visitas_confirmadas": 2082.866666666667,
-      "visitas_ecobici": 2065.6,
-      "EF_confirmado": 29558.533333333333,
-      "diferencia_pct": 0.8359153111283435,
+      "lambda": 44.6349,
+      "visitas_confirmadas": 2045.3225806451612,
+      "visitas_ecobici": 2033.8709677419354,
+      "EF_confirmado": 32543.451612903227,
+      "diferencia_pct": 0.563045202220458,
+      "rondas": 4,
       "confirmaciones": [
-        57.5805
+        43.6439,
+        44.1986,
+        44.4699,
+        44.6349
       ],
-      "tipo_ajuste": "interpolación rejilla",
-      "lectura_igual_resultado_lambda_extra": [
-        90,
-        120,
-        180
-      ],
-      "igual_esfuerzo_3pct": true,
-      "visitas_igual_resultado": 821.8664423843221,
-      "visitas_menos_igual_resultado_pct": 60.21173303716488,
-      "no_alcanza_con_10": false
+      "extension_rejilla": [],
+      "igual_esfuerzo_1pct": true
     },
     "ma_diaria": {
-      "lambda": 72.8507,
-      "visitas_confirmadas": 2107.266666666667,
-      "visitas_ecobici": 2065.6,
-      "EF_confirmado": 49044.6,
-      "diferencia_pct": 2.0171701523367114,
+      "lambda": 58.1824,
+      "visitas_confirmadas": 2051.548387096774,
+      "visitas_ecobici": 2033.8709677419354,
+      "EF_confirmado": 49111.645161290326,
+      "diferencia_pct": 0.8691514670896128,
+      "rondas": 1,
       "confirmaciones": [
-        72.8507
+        58.1824
       ],
-      "tipo_ajuste": "extrapolación >60",
-      "lectura_igual_resultado_lambda_extra": [
-        90,
-        120,
-        180
-      ],
-      "igual_esfuerzo_3pct": true,
-      "visitas_igual_resultado": 1006.5240029357419,
-      "visitas_menos_igual_resultado_pct": 51.272075768021786,
-      "no_alcanza_con_10": false
+      "extension_rejilla": [],
+      "igual_esfuerzo_1pct": true
     },
     "lgbm_diario": {
-      "lambda": 72.7447,
-      "visitas_confirmadas": 2112.266666666667,
-      "visitas_ecobici": 2065.6,
-      "EF_confirmado": 49863.86666666667,
-      "diferencia_pct": 2.259230570617099,
+      "lambda": 59.1603,
+      "visitas_confirmadas": 2052.0,
+      "visitas_ecobici": 2033.8709677419354,
+      "EF_confirmado": 49913.709677419356,
+      "diferencia_pct": 0.8913560666138132,
+      "rondas": 1,
       "confirmaciones": [
-        72.7447
+        59.1603
       ],
-      "tipo_ajuste": "extrapolación >60",
-      "lectura_igual_resultado_lambda_extra": [
-        90,
-        120,
-        180
-      ],
-      "igual_esfuerzo_3pct": true,
-      "visitas_igual_resultado": 1033.887682906064,
-      "visitas_menos_igual_resultado_pct": 49.94734300416034,
-      "no_alcanza_con_10": false
+      "extension_rejilla": [],
+      "igual_esfuerzo_1pct": true
     },
     "oraculo_directo": {
-      "lambda": 39.0694,
-      "visitas_confirmadas": 2056.2,
-      "visitas_ecobici": 2065.6,
-      "EF_confirmado": 21455.933333333334,
-      "diferencia_pct": -0.45507358636716067,
+      "lambda": 36.2809,
+      "visitas_confirmadas": 2045.6451612903227,
+      "visitas_ecobici": 2033.8709677419354,
+      "EF_confirmado": 25281.290322580644,
+      "diferencia_pct": 0.5789056304520424,
+      "rondas": 1,
       "confirmaciones": [
-        39.0694
+        36.2809
       ],
-      "tipo_ajuste": "interpolación rejilla",
-      "lectura_igual_resultado_lambda_extra": [
-        90,
-        120,
-        180
-      ],
-      "igual_esfuerzo_3pct": true,
-      "visitas_igual_resultado": 780.7463814662245,
-      "visitas_menos_igual_resultado_pct": 62.202440866274955,
-      "no_alcanza_con_10": false
+      "extension_rejilla": [],
+      "igual_esfuerzo_1pct": true
     },
     "lgbm_directo": {
-      "lambda": 88.9149,
-      "visitas_confirmadas": 2052.4666666666667,
-      "visitas_ecobici": 2065.6,
-      "EF_confirmado": 50369.333333333336,
-      "diferencia_pct": -0.6358120320165139,
+      "lambda": 68.8817,
+      "visitas_confirmadas": 2032.1612903225807,
+      "visitas_ecobici": 2033.8709677419354,
+      "EF_confirmado": 49607.77419354839,
+      "diferencia_pct": -0.08406026962727298,
+      "rondas": 1,
       "confirmaciones": [
-        88.9149
+        68.8817
       ],
-      "tipo_ajuste": "extrapolación >60",
-      "lectura_igual_resultado_lambda_extra": [
-        90,
-        120,
-        180
-      ],
-      "igual_esfuerzo_3pct": true,
-      "visitas_igual_resultado": 1062.1119953113985,
-      "visitas_menos_igual_resultado_pct": 48.58094523085793,
-      "no_alcanza_con_10": false
+      "extension_rejilla": [],
+      "igual_esfuerzo_1pct": true
     }
   },
   "mejor_real": "ma_diaria",
@@ -305,7 +281,10 @@
       20,
       30,
       45,
-      60
+      60,
+      75,
+      90,
+      120
     ],
     "n_rejilla": [
       1,
@@ -315,9 +294,9 @@
       5,
       6
     ],
-    "modelo_directorio": "/Users/jeronimo.deli/Desktop/other/Vs/vaults/movilidad-cdmx/.worktrees/ecosim3-integracion3/data/derived/ecosim/modelos",
-    "conteos": "/Users/jeronimo.deli/Desktop/other/Vs/vaults/movilidad-cdmx/.worktrees/ecosim3-integracion3/data/derived/ecosim/trips_2024_01_2026_08.parquet",
-    "movimientos": "/Users/jeronimo.deli/Desktop/other/Vs/vaults/movilidad-cdmx/.worktrees/ecosim3-integracion3/data/derived/ecosim/ecobici_moves.parquet",
-    "danadas": "/Users/jeronimo.deli/Desktop/other/Vs/vaults/movilidad-cdmx/.worktrees/ecosim3-integracion3/data/derived/ecosim/damage_events.parquet"
+    "modelo_directorio": "/Users/jeronimo.deli/Desktop/other/Vs/vaults/movilidad-cdmx/.worktrees/ecosim-greedy-runs/data/derived/ecosim/modelos",
+    "conteos": "/Users/jeronimo.deli/Desktop/other/Vs/vaults/movilidad-cdmx/.worktrees/ecosim-greedy-runs/data/derived/ecosim/trips_2024_01_2026_08.parquet",
+    "movimientos": "/Users/jeronimo.deli/Desktop/other/Vs/vaults/movilidad-cdmx/.worktrees/ecosim-greedy-runs/data/derived/ecosim/ecobici_moves.parquet",
+    "danadas": "/Users/jeronimo.deli/Desktop/other/Vs/vaults/movilidad-cdmx/.worktrees/ecosim-greedy-runs/data/derived/ecosim/damage_events.parquet"
   }
 }

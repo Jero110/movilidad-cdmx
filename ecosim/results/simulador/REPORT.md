@@ -57,7 +57,7 @@ Se contrastan dos reglas deterministas, reproducibles con `validar.py`:
 Ejecutar (semáforo compartido):
 
 ```sh
-uv run python -m ecosim.results.v1.validar
+uv run python3 /Users/jeronimo.deli/Desktop/other/Vs/vaults/movilidad-cdmx/scripts/heavy.py uv run python -m ecosim.results.v1.validar
 ```
 
 El total observado se **lee** de `ecosim/results/medicion/ecobici_observado.csv` de `medicion3`: integra duraciones exactas entre commits y reporta blancos/sin-observación por separado. `validar.py` reconstruye una malla de un minuto **solo** para etiquetar contextos estación/franja y extraer ejemplos; su diferencia con el total oficial se muestra como fila independiente, sin atribuirla falsamente a una franja. Los CSV de salida son `run3_v1_por_dia.csv`, `run3_v1_causas.csv`, `run3_v1_estaciones.csv`, `run3_v1_hora_movimiento.csv` y `run3_replay_neto.csv`.

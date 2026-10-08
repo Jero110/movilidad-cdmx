@@ -24,7 +24,7 @@ node_modules/
 # macOS
 .DS_Store
 
-# Intermedios de LaTeX. reporte-final.pdf SÍ se versiona.
+# Intermedios de LaTeX. reporte-caso.pdf SÍ se versiona.
 report/*.aux
 report/*.log
 report/*.out

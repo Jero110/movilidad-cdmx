@@ -33,10 +33,15 @@ def candidate_days(start: date, end: date) -> list[dict]:
              "open_offset_min": _initial_photo_offset(d)} for d in _dates(start, end)]
 
 
+def _eligible(candidates: list[dict]) -> list[dict]:
+    """Cobertura ≥ C.COVERAGE_MIN y foto de apertura válida."""
+    return [c for c in candidates if c["coverage"] >= C.COVERAGE_MIN
+            and c["open_offset_min"] is not None]
+
+
 def _sample(candidates: list[dict], weekday: int, other: int,
             seed: int | np.random.Generator) -> list[dict]:
-    eligible = [c for c in candidates if c["coverage"] >= C.COVERAGE_MIN
-                and c["open_offset_min"] is not None]
+    eligible = _eligible(candidates)
     wd = [c for c in eligible if c["type"] == "weekday"]
     we = [c for c in eligible if c["type"] != "weekday"]
     if len(wd) < weekday or len(we) < other:
@@ -48,7 +53,8 @@ def _sample(candidates: list[dict], weekday: int, other: int,
 
 
 def selection_days(candidates: list[dict]) -> list[dict]:
-    return _sample(candidates, C.N_SEL_WEEKDAY, C.N_SEL_WEEKEND, C.SELECTION_SEED)
+    """Validación: todos los días de agosto de 2025 que pasan los filtros."""
+    return sorted(_eligible(candidates), key=lambda c: c["day"])
 
 
 def curve_days(candidates: list[dict]) -> list[dict]:
@@ -99,7 +105,7 @@ def build() -> dict:
     out = {
         "coverage_def": "fracción de 20 bloques (19 de 60 min y uno de 30 min) en [05:00, 00:30) con foto",
         "coverage_min": C.COVERAGE_MIN,
-        "selection_seed": C.SELECTION_SEED, "curve_seed": C.CURVE_SEED,
+        "curve_seed": C.CURVE_SEED,
         "seleccion": seleccion, "prueba": prueba, "curva": curva, "prod_2026": prod,
         "coverage_by_month": json.loads(C.COVERAGE_AUDIT.read_text())["months"],
     }

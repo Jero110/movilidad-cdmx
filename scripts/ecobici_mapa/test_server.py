@@ -121,6 +121,24 @@ def test_replay_endpoints_contrato():
     assert {a for v in idx["days"].values() for a in v["arms"]} <= set(server._arms())
 
 
+def test_replay_variantes_de_alfa_y_alfa_en_vivo():
+    for bad in ("ma_diaria@ax", "ma_diaria@a", "nada@a10", "../x@a10", "ma_diaria@a-1"):
+        with pytest.raises(HTTPException) as exc:
+            server.api_replay_arm("2025-09-01", bad)
+        assert exc.value.status_code == 400, bad
+    idx = server.api_replay_index() if server.REPLAY_DIR.joinpath("index.json").exists() else None
+    for day, v in (idx or {"days": {}})["days"].items():
+        for arm, por_alfa in v.get("alfas", {}).items():
+            assert arm in v["arms"] and arm in server._arms()
+            for alfa in por_alfa:
+                a = json.loads(open(server.api_replay_arm(day, f"{arm}@a{alfa}").path).read())
+                assert a["alfa"] == float(alfa) and a["check"]["cuadre_todas_las_fotos"] and a["check"]["igual"] is None
+    assert idx is None or 0 in idx.get("alfas", [0])
+    with pytest.raises(HTTPException) as exc:
+        server.api_live_assign_alfa("no-existe", 3.0)
+    assert exc.value.status_code == 404
+
+
 def test_live_models_con_datos_de_produccion():
     from ecosim import actualizar as A
     if not A.MANIFIESTO.exists():

@@ -1,4 +1,4 @@
-"""Servidor local del mapa Ecobici para ecosim run 3.
+"""Servidor local del mapa Ecobici para ecosim greedy.
 
 Sirve tres pestañas: Ahora, Replay y Predicción. Toda predicción pasa por
 `ecosim.live` (en vivo, sin modo histórico) con los datos y modelos de
@@ -27,7 +27,7 @@ GBFS_BASE = "https://gbfs.mex.lyftbikes.com/gbfs/es"
 FEEDS = {"station_information": 3600, "station_status": 15, "system_alerts": 300}
 HERE = Path(__file__).parent
 REPO_ROOT = HERE.parent.parent
-REPLAY_DIR = REPO_ROOT / "data" / "derived" / "ecosim" / "replay"
+REPLAY_DIR = Path(os.environ.get("ECOSIM_REPLAY_DIR") or REPO_ROOT / "data" / "derived" / "ecosim" / "replay")
 DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")  # se usa con fullmatch
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -160,11 +160,11 @@ def api_replay_index() -> dict:
         cur = None
     idx["frozen_sha_actual"] = cur
     idx["stale"] = cur is not None and cur != idx.get("frozen_sha")
-    # Solo días AAAA-MM-DD y los siete brazos del run 3 (en la carpeta quedan
+    # Solo días AAAA-MM-DD y los brazos de ecosim greedy (en la carpeta quedan
     # archivos viejos sin `snap` que la API no sirve).
     arms = set(_arms())
     idx["days"] = {d: {**v, "arms": {a: x for a, x in v.get("arms", {}).items() if a in arms}}
-                   for d, v in idx.get("days", {}).items() if DAY_RE.fullmatch(d)}
+                   for d, v in idx.get("days", {}).items() if DAY_RE.fullmatch(d) and d <= "2025-12-31"}
     return idx
 
 
@@ -184,8 +184,9 @@ def api_replay_day(day: str) -> Response:
 def api_replay_arm(day: str, arm: str) -> Response:
     if not DAY_RE.fullmatch(day):
         raise HTTPException(400, "día inválido: se espera AAAA-MM-DD")
-    if arm not in _arms():
-        raise HTTPException(400, f"brazo inválido: {arm!r}; válidos: {', '.join(_arms())}")
+    m = re.fullmatch(r"([a-z_]+)(@a\d+)?", arm)  # `<brazo>@a<α>`: variante con costo por km
+    if not m or m[1] not in _arms():
+        raise HTTPException(400, f"brazo inválido: {arm!r}; válidos: {', '.join(_arms())} (con variante opcional @a<α>)")
     return _json_file(REPLAY_DIR / day / f"{arm}.json")
 
 
@@ -304,9 +305,9 @@ def api_live_eventos() -> StreamingResponse:
 
 
 @app.post("/api/live/assign/start")
-def api_live_assign_start(forecast_id: str, horas: int = 1) -> dict:
+def api_live_assign_start(forecast_id: str, horas: int = 1, alfa: float = 0.0) -> dict:
     try:
-        sid = _asignaciones().start(forecast_id, horas)
+        sid = _asignaciones().start(forecast_id, horas, alfa=alfa)
     except KeyError:
         raise HTTPException(404, f"pronóstico {forecast_id!r} no existe: pide uno con POST /api/live/forecast")
     except ValueError as exc:
@@ -327,6 +328,18 @@ def api_live_assign_get(sid: str) -> dict:
         return _asignaciones().get(sid)
     except KeyError:
         raise HTTPException(404, f"sesión {sid!r} no existe")
+
+
+@app.post("/api/live/assign/{sid}/alfa")
+def api_live_assign_alfa(sid: str, alfa: float) -> dict:
+    """Cambia el costo por km (α) de una sesión corriendo; aplica desde la siguiente decisión."""
+    try:
+        st = _asignaciones().cambiar_alfa(sid, alfa)
+    except KeyError:
+        raise HTTPException(404, f"sesión {sid!r} no está corriendo en este servidor")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"session_id": sid, "alfa": st["params"]["alfa"], "nota": "aplica desde la siguiente decisión"}
 
 
 @app.post("/api/live/assign/{sid}/stop")
@@ -360,19 +373,23 @@ def favicon() -> Response:
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Mapa Ecobici + replay y predicción run 3.")
+    ap = argparse.ArgumentParser(description="Mapa Ecobici + replay y predicción ecosim greedy.")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--no-live", action="store_true")
     ap.add_argument("--results-dir", default=None)
+    ap.add_argument("--replay-dir", default=None, help="carpeta del replay precalculado (por defecto data/derived/ecosim/replay)")
     a = ap.parse_args(argv)
     if a.results_dir:
         os.environ["ECOSIM_RESULTS_DIR"] = str(Path(a.results_dir).resolve())
+    if a.replay_dir:
+        global REPLAY_DIR
+        REPLAY_DIR = Path(a.replay_dir).resolve()
     if not a.no_live:
         _live_loop().start()
     url = f"http://{a.host}:{a.port}"
-    print(f"Ecobici run 3 · {url}  (loop en vivo: {'no' if a.no_live else 'si'})", flush=True)
+    print(f"Ecobici ecosim greedy · {url}  (loop en vivo: {'no' if a.no_live else 'si'})", flush=True)
     if not a.no_browser:
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     import uvicorn

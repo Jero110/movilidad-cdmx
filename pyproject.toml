@@ -6,7 +6,6 @@ dependencies = [
     "duckdb>=1.5.5",
     "fastapi>=0.141.1",
     "geopandas>=1.2.0",
-    "highspy>=1.15.1",
     "holidays>=0.105",
     "joblib",
     "kneed>=0.8.6",

@@ -230,7 +230,7 @@ def test_pronostico_fuera_de_horario(prod):
 # --- asignación en tiempo real con feed y reloj simulados -------------------------
 
 PASO_KEYS = {"t", "t_feed", "emitidas", "aplicadas", "bicis_a_mover", "visitas", "salidas_est", "llegadas_est"}
-ORDEN_KEYS = {"short_name", "accion", "n", "emitida", "recoge", "entrega"}
+ORDEN_KEYS = {"short_name", "accion", "n", "emitida", "recoge", "entrega", "paquete"}
 
 
 class Reloj:
@@ -267,11 +267,15 @@ def test_sesion_de_dos_horas_cierra_entregas(prod, tmp_path):
     s = asig.get(sid)
     assert s["estado"] == "terminada" and s["siguiente_paso"] is None and s["pendientes"] == []
     assert s["inicio"] == "2025-09-20T09:00" and s["horas"] == 2
-    # 8 pasos que emiten (09:00–10:45) y 4 que solo cierran entregas (11:00–11:45).
-    assert [p["t"] for p in s["pasos"]] == [f"2025-09-20T{9 + k // 4:02d}:{15 * (k % 4):02d}" for k in range(12)]
+    # Pasos cada 15 min: 8 que pueden emitir (09:00–10:45) y luego solo cierran
+    # entregas hasta la última pendiente (como mucho 11:45).
+    emitidas = [o for p in s["pasos"] for o in p["emitidas"]]
+    ultima = max([o["entrega"] for o in emitidas] + ["2025-09-20T10:45"])
+    k_fin = (datetime.fromisoformat(ultima) - datetime(2025, 9, 20, 9)) // timedelta(minutes=15)
+    assert [p["t"] for p in s["pasos"]] == [f"2025-09-20T{9 + k // 4:02d}:{15 * (k % 4):02d}" for k in range(k_fin + 1)]
+    assert 8 <= len(s["pasos"]) <= 12
     assert all(PASO_KEYS <= set(p) for p in s["pasos"])
     assert all(p["visitas"] == 0 for p in s["pasos"][8:])
-    emitidas = [o for p in s["pasos"] for o in p["emitidas"]]
     aplicadas = [o for p in s["pasos"] for o in p["aplicadas"]]
     assert emitidas, "el asignador no emitió órdenes con una estación llena y otra vacía"
     assert all(ORDEN_KEYS <= set(o) for o in emitidas)
@@ -291,6 +295,31 @@ def test_sesion_de_dos_horas_cierra_entregas(prod, tmp_path):
     assert not sin_metricas & (set(s) | set(tot) | {k for p in s["pasos"] for k in p})
     # Sobrevive a recargar: otra instancia lee la sesión del disco.
     assert live.Asignaciones(loop, tmp_path / "ses", tmp_path / "fc").get(sid)["estado"] == "terminada"
+
+
+def test_sesion_con_alfa_y_cambio_en_caliente(prod, tmp_path):
+    reloj = Reloj(datetime(2025, 9, 20, 9, 7))
+    loop = live.LiveLoop(snapshot_fn=_snapshot_fn(reloj), log_dir=tmp_path / "gbfs", clock=reloj)
+    t = loop.poll()
+    fc = live.pronosticar("ma_diaria", "dia", loop.log_today(t), t, loop.meta, prod=prod)
+    live.guardar_pronostico(fc, tmp_path / "fc")
+    asig = live.Asignaciones(loop, tmp_path / "ses", tmp_path / "fc", clock=reloj, sleep=reloj.sleep, prod=prod, fz=FZ)
+    for malo in (-1, 31, "5", None, True):
+        with pytest.raises(ValueError):
+            asig.start(fc["id"], 1, thread=False, alfa=malo)
+    sid = asig.start(fc["id"], 1, thread=False, alfa=3)
+    s = asig.get(sid)
+    assert s["params"]["alfa"] == 3.0 and all(p["alfa"] == 3.0 for p in s["pasos"])
+    assert s["estado"] == "terminada" and any(p["emitidas"] for p in s["pasos"])
+    ses = live.Sesion("y", fc, 1, loop, tmp_path / "ses2", clock=reloj, sleep=reloj.sleep, prod=prod, fz=FZ)
+    assert ses.params.alfa == 0.0 and ses.state["params"]["alfa"] == 0.0
+    ses.set_alfa(7)
+    assert ses.params.alfa == 7.0 and json.loads(ses.path.read_text())["params"]["alfa"] == 7.0
+    with pytest.raises(ValueError):
+        ses.set_alfa(-2)
+    assert ses.params.alfa == 7.0
+    paso = ses.paso(datetime(2025, 9, 20, 9, 15))
+    assert paso["alfa"] == 7.0
 
 
 def test_sesion_detenida_y_reinicio(prod, tmp_path):
@@ -462,6 +491,9 @@ def test_sesion_corta_con_lgbm_directo(prod, tmp_path):
     s, _ = _sesion(prod, tmp_path, [datetime(2025, 9, 20, 9, 5)] + [m + timedelta(seconds=20) for m in marcas[1:]],
                    modelo="lgbm_directo", horizonte="1")
     assert s["estado"] == "terminada" and s["model"] == "lgbm_directo", s["error"]
-    assert len(s["pasos"]) == 8 and s["pendientes"] == []
+    # Horizonte 1 h: 4 pasos que emiten y luego cierran entregas hasta la última.
+    emitidas = [o for p in s["pasos"] for o in p["emitidas"]]
+    ultima = max([o["entrega"] for o in emitidas] + ["2025-09-20T09:45"])
+    assert s["pasos"][-1]["t"] == ultima and 4 <= len(s["pasos"]) <= 8 and s["pendientes"] == []
     assert s["totales"]["recogidas"] == s["totales"]["entregadas"] == s["totales"]["bicis_a_mover"]
     assert all(PASO_KEYS <= set(p) for p in s["pasos"])
