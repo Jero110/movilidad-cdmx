@@ -727,18 +727,26 @@ async function run(base) {
         ok(msg);
       }
     }
-    {  // Órdenes: historial por cuarto de hora hasta el paso elegido.
+    {  // Órdenes: historial de toda la sesión agrupado por paso; cada paso se abre al picarlo.
       await page.click('#apTabs [data-list="historial"]');
-      const hi = await page.eval(`(()=>{const ps=S.live.session.pasos.slice(0,S.live.step+1); return {heads:document.querySelectorAll('#apList li.pkg').length, rows:document.querySelectorAll('#apList .row[data-pk]').length, want:ps.reduce((n,p)=>n+pairsOf(livePackages(p.emitidas)).length,0), steps:ps.length}})()`);
+      const want = j => `pairsOf(livePackages(S.live.session.pasos[${j}].emitidas)).length`;
+      const hi = await page.eval(`(()=>({heads:document.querySelectorAll('#apList li.step-head').length, rows:document.querySelectorAll('#apList .row[data-pk]').length, steps:S.live.session.pasos.length, k:S.live.step, want:${want('S.live.step')}}))()`);
       if (hi.heads !== hi.steps || hi.rows !== hi.want) throw new Error(`pestaña Órdenes (historial): ${JSON.stringify(hi)}`);
+      let msg = `Asignación: "Órdenes" agrupa la sesión en ${hi.steps} pasos (abierto el elegido, ${hi.rows} traslados)`;
       if (hi.steps >= 2) {
-        await page.eval(`(document.querySelectorAll('#apList li.pkg')[1].nextElementSibling.querySelector('.row[data-pk]')?.click(), true)`);
-        const st = await page.eval(`({k:S.live.step, n:S.live.session.pasos.length})`);
-        if (st.k !== st.n - 2) throw new Error(`picar una orden de un paso anterior debe ir a ese paso: ${JSON.stringify(st)}`);
-        await page.eval(`(goAssignStep(S.live.session.pasos.length - 1), true)`);
+        // Abrir el paso anterior: el mapa va a ese paso, la lista sigue mostrando todos los pasos y los dos quedan abiertos.
+        await page.eval(`(document.querySelectorAll('#apList .step-toggle')[1].click(), true)`);
+        const st = await page.eval(`({k:S.live.step, n:S.live.session.pasos.length, heads:document.querySelectorAll('#apList li.step-head').length, rows:document.querySelectorAll('#apList .row[data-pk]').length, want:${want('S.live.session.pasos.length-1')}+${want('S.live.session.pasos.length-2')}})`);
+        if (st.k !== st.n - 2 || st.heads !== st.n || st.rows !== st.want) throw new Error(`abrir un paso anterior: ${JSON.stringify(st)}`);
+        if (shots) { await sleep(2000); await page.shot('ord-05-prediccion-historial.png'); }
+        await page.eval(`(document.querySelectorAll('#apList .step-toggle')[1].click(), true)`);  // cerrarlo
+        const c = await page.eval(`({rows:document.querySelectorAll('#apList .row[data-pk]').length, want:${want('S.live.session.pasos.length-1')}})`);
+        if (c.rows !== c.want) throw new Error(`cerrar un paso: ${JSON.stringify(c)}`);
+        msg += `; abrir el paso anterior lleva el mapa a ese paso sin ocultar los demás y se cierra al volver a picarlo`;
+        await page.eval(`(goAssignStep(S.live.session.pasos.length - 1), S.live.open = null, true)`);
       }
       await page.click('#apTabs [data-list="emitidas"]');
-      ok(`Asignación: "Órdenes" muestra el historial en ${hi.steps} cuartos de hora (${hi.rows} traslados); picar una orden vieja lleva a su paso`);
+      ok(msg);
     }
     {  // El pronóstico no sale por defecto: está en su pestaña del panel derecho.
       await page.click('#apTabs [data-list="pronostico"]');

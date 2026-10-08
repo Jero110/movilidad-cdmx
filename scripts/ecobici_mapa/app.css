@@ -598,6 +598,14 @@ input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
 .rows .none { padding: 18px 6px; color: var(--ink-3); font-size: 13px; text-align: center; }
 .rows li.pkg { padding: 10px 6px 4px; font-size: 12px; font-weight: 700; color: var(--ink-2); border-bottom: 1px solid var(--line); letter-spacing: .02em; }
 .rows li.pkg small { font-weight: 500; color: var(--ink-3); }
+.rows li.step-head { padding: 0; }
+.step-toggle { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: 100%; padding: 10px 6px 6px; cursor: pointer; }
+.step-toggle:hover { background: var(--surface-2); }
+.step-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.step-toggle small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step-toggle .chev { width: 12px; height: 12px; flex: none; transition: transform .15s; }
+.step-toggle .chev.open { transform: rotate(90deg); }
+.rows li.step-head.cur .step-toggle { color: var(--ink); }
 .row .act.reloc { background: #6b7782; }
 .maplibregl-popup.ord .maplibregl-popup-content { max-width: 260px; }
 .rows .more { padding: 10px 6px; color: var(--ink-3); font-size: 12.5px; }

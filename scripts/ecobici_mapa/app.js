@@ -114,7 +114,7 @@ const S = {
   zones: {on: {ahora: false, replay: false, pronostico: false, asignacion: false}, geo: null},  // interruptor independiente por vista
   nums: {replay: false, pronostico: false, asignacion: false},  // "Bicis por estación", independiente por vista
   replay: {index: null, days: {}, arms: {}, dayData: null, sel: [], keys: [], k: 0, timer: null, list: 'emitidas', side: 0, token: 0, alfa: 0},
-  live: {models: null, sessionId: null, session: null, poll: null, clock: null, step: -1, follow: true, list: 'emitidas'},
+  live: {models: null, sessionId: null, session: null, poll: null, clock: null, step: -1, follow: true, list: 'emitidas', open: null},
 };
 // Escenario principal del Replay (el primero elegido).
 Object.defineProperty(S.replay, 'arm', {get() { return this.sel[0] || null; }});
@@ -870,7 +870,7 @@ const HELP = {
   asignacion: ['Elige el pronóstico, cuántas horas emitir órdenes y el costo por km (α), y pulsa <b>Iniciar</b>. El asignador (greedy) decide cada 15 minutos qué bicis mover y de dónde a dónde.',
     'La barra de arriba tiene un paso por cada 15 minutos de la sesión. Se va llenando conforme corre; puedes regresar a cualquier paso ya calculado (← y →). Al lado dice cuánto lleva corriendo y cuánto le falta.',
     'A la derecha, <b>Mover</b> es la lista de trabajo del paso: de qué estación recoger, a cuál llevar, cuántas bicis y a qué hora. Pica una fila para ir a esa línea en el mapa.',
-    '<b>Órdenes</b> es el historial: todas las órdenes hasta el paso elegido, por cuarto de hora. En el mapa, <b>Órdenes actuales</b> dibuja cada traslado de origen (tenue) a destino (intenso). <b>Órdenes aplicadas en el paso</b> dibuja los traslados emitidos antes que se recogen o se entregan en este paso.',
+    '<b>Órdenes</b> es el historial: todas las órdenes de la sesión agrupadas por paso; pica un paso para abrir sus órdenes y verlas en el mapa. En el mapa, <b>Órdenes actuales</b> dibuja cada traslado de origen (tenue) a destino (intenso). <b>Órdenes aplicadas en el paso</b> dibuja los traslados emitidos antes que se recogen o se entregan en este paso.',
     'Cada orden recoge 15 minutos después de emitirse y entrega una hora después. Es una demo: Ecobici sigue operando y nadie ejecuta estas órdenes.',
     'El cálculo vive en el servidor: puedes recargar la página sin perder la sesión. Al detenerla o terminar, puedes iniciar otra.'],
 };
@@ -1841,7 +1841,7 @@ $('#startAssign').onclick = async () => {
     if (!r?.session_id) throw new ApiError('El servidor no devolvió una sesión.');
     clearTimeout(S.live.poll);
     S.live.forecast = {model: f.model, issued_at: f.issued_at, t_feed: f.t_feed, minutes: f.minutes?.at(-1), riesgos: f.riesgos || []};
-    S.live.sessionId = r.session_id; S.live.session = null; S.live.step = -1; S.live.follow = true;
+    S.live.sessionId = r.session_id; S.live.session = null; S.live.step = -1; S.live.follow = true; S.live.open = null;
     try {
       localStorage.setItem(SESSION_KEY, r.session_id);
       localStorage.setItem(PRON_KEY(r.session_id), JSON.stringify(S.live.forecast));
@@ -2070,14 +2070,26 @@ function renderAssignList() {
     return;
   }
   if (L === 'historial') {
-    // Órdenes de todos los pasos hasta el elegido, por cuarto de hora, del más reciente al más viejo.
-    const pasos = (S.live.session?.pasos || []).slice(0, S.live.step + 1).reverse();
-    el.innerHTML = pasos.map(q => {
+    // Órdenes de todos los pasos calculados, agrupadas por paso (del más reciente al más viejo). Cada paso se abre o
+    // se cierra al picarlo; al abrirlo, el mapa va a ese paso. Sin nada abierto a mano, se abre el paso elegido.
+    const pasos = S.live.session?.pasos || [];
+    const open = S.live.open || new Set([p.t]);
+    el.innerHTML = pasos.map((q, j) => ({q, j})).reverse().map(({q, j}) => {
       const xs = pairsOf(livePackages(q.emitidas)).sort((a, b) => b.n - a.n);
-      const bikes = xs.reduce((n, x) => n + x.n, 0);
-      return `<li class="pkg">${esc(hhmm(q.t))} <small>· ${plural(xs.length, 'traslado', 'traslados')} · ${bikesTxt(bikes)}</small></li>`
-        + (xs.length ? xs.map(x => pairRow(x, 'De')).join('') : '<li class="none">Sin órdenes en este cuarto de hora.</li>');
+      const bikes = xs.reduce((n, x) => n + x.n, 0), on = open.has(q.t);
+      return `<li class="pkg step-head${j === S.live.step ? ' cur' : ''}"><button class="step-toggle" data-t="${esc(q.t)}" aria-expanded="${on}">
+          ${icon('chev-right', `ico chev${on ? ' open' : ''}`)}${esc(hhmm(q.t))} <small>· ${plural(xs.length, 'traslado', 'traslados')} · ${bikesTxt(bikes)}${j === S.live.step ? ' · en el mapa' : ''}</small></button></li>`
+        + (!on ? '' : xs.length ? xs.map(x => pairRow(x, 'De')).join('') : '<li class="none">Sin órdenes en este cuarto de hora.</li>');
     }).join('');
+    $$('.step-toggle', el).forEach(b => {
+      b.onclick = () => {
+        const t = b.dataset.t, o = new Set(S.live.open || [p.t]);
+        if (o.has(t)) o.delete(t); else o.add(t);
+        S.live.open = o;
+        const j = pasos.findIndex(q => q.t === t);
+        if (o.has(t) && j !== S.live.step) goAssignStep(j); else renderAssignList();
+      };
+    });
     bind();
     return;
   }
