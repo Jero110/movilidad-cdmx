@@ -5,6 +5,7 @@
 \usepackage{times,graphicx,booktabs,amsmath,amssymb,url,tabularx,array}
 \usepackage[numbers]{natbib}
 \usepackage{float}
+\usepackage[colorlinks=true,urlcolor=blue,linkcolor=black,citecolor=black]{hyperref}
 \makeatletter\g@addto@macro\UrlBreaks{\do\-\do\_\do\.}\makeatother
 \Urlmuskip=0mu plus 1mu
 \input{numeros-run3.tex}
@@ -31,9 +32,9 @@ Ecobici, rebalanceo, bicicletas compartidas, pronóstico, algoritmo greedy, simu
 
 % ======================================================================
 \section{Contexto}
-La Ciudad de México mueve todos los días a millones de personas en un sistema de transporte muy fragmentado, que incluye Metro, Metrobús, RTP, microbuses y combis concesionados, bicicletas públicas, plataformas digitales y automóvil privado; en un día entre semana, la zona metropolitana suma 34.56 millones de viajes \cite{inegi2017}. Cada modo tiene su propia cobertura, costo, horario y nivel de seguridad, y no todos los habitantes tienen acceso a los mismos modos ni los usan de la misma manera \cite{caso2026}.
+La Ciudad de México mueve todos los días a millones de personas en un sistema de transporte muy fragmentado, que incluye Metro, Metrobús, RTP, microbuses y combis concesionados, bicicletas públicas, plataformas digitales y automóvil privado; en un día entre semana, la zona metropolitana suma 34.56 millones de viajes \cite{inegi2017}. Cada modo tiene su propia cobertura, costo, horario y nivel de seguridad, y no todos los habitantes tienen acceso a los mismos modos ni los usan de la misma manera.
 
-La información sobre esa movilidad es igual de desigual. Hay datos de afluencia del Metro y encuestas origen-destino, pero el transporte concesionado, que mueve a la mayoría de la población, opera sin un registro sistemático de rutas, tiempos o usuarios, y el resto de las fuentes, desde plataformas de navegación hasta registros de la Fiscalía, está disperso. Tampoco hay consenso entre autoridades, concesionarios y ciudadanía sobre cuál es el problema de movilidad más urgente, ni para quién \cite{caso2026}.
+La información sobre esa movilidad es igual de desigual. Hay datos de afluencia del Metro y encuestas origen-destino, pero el transporte concesionado, que mueve a la mayoría de la población, opera sin un registro sistemático de rutas, tiempos o usuarios, y el resto de las fuentes, desde plataformas de navegación hasta registros de la Fiscalía, está disperso. Tampoco hay consenso entre autoridades, concesionarios y ciudadanía sobre cuál es el problema de movilidad más urgente, ni para quién.
 
 Ecobici es una excepción en este panorama, porque publica sus datos. Con 9,308 bicicletas es el sistema de bicicletas públicas con más unidades de América Latina, por delante de BikeSantiago y de BikeItaú en São Paulo, con 3,500 cada uno \cite{eluniversal2025semovi}, y opera unas 687 estaciones \cite{expansion2026}. En 2025 registró más de 19.4 millones de viajes de 284,289 personas \cite{ecobici2025balance}. Su principal problema es la disponibilidad: en la encuesta oficial de 2025, la desventaja que más usuarios eligieron fue que no siempre hay bicis disponibles (1,990 de 4,139 respuestas), muy por encima de la falta de espacios para anclar (114) \cite{encuesta2025}.
 
@@ -238,7 +239,7 @@ Repetimos la media móvil y el oráculo directo en los \cxDias{} días de prueba
 Para medir cuánto cuesta acortar los traslados repetimos la media móvil en los \caDias{} días de prueba con $\alpha\in\{\caAlfas\}$ minutos-estación por kilómetro y la misma $n$ y $\lambda$ (Tabla~\ref{tab:alfa}). Los de Ecobici no se observan, porque solo vemos cuántas bicis sacó y metió en cada estación; como referencia damos una cota inferior: emparejamos sus recogidas con sus entregas de la misma foto o de la hora siguiente de la forma que sume menos kilómetros, lo que cubre el \caEcoEmpar\% de sus bicis recogidas, así que sus kilómetros reales son al menos esos. Con $\alpha=0$ nuestros tramos suman \caCeroKm{} km por día, más que la cota de Ecobici (\caEcoKm). Con $\alpha=1$ bajan \caUnoKm\% y $\EF$ sube apenas \caUnoEF\%; con $\alpha=3$ ya igualan esa cota, y con valores mayores quedan por debajo. Recomendamos $\alpha=10$: los kilómetros bajan a la mitad (\caDiezKm\% menos, \caDiezKmEco\% por debajo de la cota de Ecobici) y $\EF$ sube solo \caDiezEF\%, todavía \caDiezEco\% por debajo de Ecobici; los desvíos suben \caDiezDesv\%. Como $\lambda$ quedó fija, con $\alpha$ mayor también bajan las visitas (\caDiezVis\% con $\alpha=10$) y las bicis movidas, así que la comparación ya no es a igual esfuerzo; esa diferencia, otra vez, favorece a Ecobici.
 
 \subsection{La aplicación}
-La aplicación \cite{repo}, de donde salen las Figs.~\ref{fig:sin} y~\ref{fig:nueve}, tiene tres vistas. \emph{Ahora} muestra el feed en vivo sobre el mapa de AGEB; \emph{Replay} reproduce un día de prueba foto por foto, con dos brazos lado a lado y el cuadre de cada foto, y \emph{Predicción} toma el feed del momento: quien coordina elige el pronóstico y $\alpha$, y cada quince minutos el asignador le dice qué bicis mover, de qué estación a cuál y a qué hora, con una barra para regresar a los pasos anteriores.
+La aplicación (\url{https://github.com/Jero110/movilidad-cdmx}), de donde salen las Figs.~\ref{fig:sin} y~\ref{fig:nueve}, tiene tres vistas. \emph{Ahora} muestra el feed en vivo sobre el mapa de AGEB; \emph{Replay} reproduce un día de prueba foto por foto, con dos brazos lado a lado y el cuadre de cada foto, y \emph{Predicción} toma el feed del momento: quien coordina elige el pronóstico y $\alpha$, y cada quince minutos el asignador le dice qué bicis mover, de qué estación a cuál y a qué hora, con una barra para regresar a los pasos anteriores.
 
 % ======================================================================
 \section{Conclusiones}
@@ -431,7 +432,7 @@ Para elegir $n$ corrimos el asignador con los dos oráculos, que marcan hasta d�
 Para elegir $\lambda$ y comparar con el mismo esfuerzo, buscamos para cada uno de los cinco brazos con asignador la $\lambda$ con la que hace tantas visitas por día como Ecobici en la validación, \rselEcoVis. Corrimos cada brazo con su $n$ en una rejilla de $\lambda$ de 10 a 120 minutos-estación; como las visitas bajan al subir $\lambda$, interpolamos linealmente entre los dos puntos que encierran el objetivo, corrimos la $\lambda$ resultante para confirmarla y la aceptamos si sus visitas quedaban a menos del 1\% del objetivo; si no, sumamos ese punto a la curva y repetimos. La confirmación tomó a lo más \rlamRondasMax{} rondas, y ningún brazo quedó a más del \rlamDifMax\% del objetivo. Quedaron \rlamMa{} para la media móvil, \rlamLgbmD{} y \rlamLgbmDir{} para los dos LightGBM, y \rlamOrD{} y \rlamOrDir{} para los oráculos.
 
 \section{Cómo reproducir y uso de IA}\label{ap:repro}
-El código, la aplicación y las instrucciones están en \cite{repo}. Todos los comandos se corren con \texttt{uv run} desde la raíz.
+El código, la aplicación y las instrucciones están en \url{https://github.com/Jero110/movilidad-cdmx}. Todos los comandos se corren con \texttt{uv run} desde la raíz.
 
 \begin{center}\footnotesize
 \begin{tabularx}{\columnwidth}{@{}p{2.7cm}Y@{}}
