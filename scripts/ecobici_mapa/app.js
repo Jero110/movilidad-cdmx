@@ -104,7 +104,6 @@ function setRangeFill(el) {
 // ───────────────────────── estado ─────────────────────────
 const S = {
   tab: 'ahora',
-  sub: 'pronostico',
   map: null,         // mapa principal (MAPS[0].map)
   mapReady: false,
   view: null,        // vista del mapa principal: {mode, stations:[...], props(i), ...}
@@ -115,7 +114,7 @@ const S = {
   zones: {on: {ahora: false, replay: false, pronostico: false, asignacion: false}, geo: null},  // interruptor independiente por vista
   nums: {replay: false, pronostico: false, asignacion: false},  // "Bicis por estación", independiente por vista
   replay: {index: null, days: {}, arms: {}, dayData: null, sel: [], keys: [], k: 0, timer: null, list: 'emitidas', side: 0, token: 0, alfa: 0},
-  live: {models: null, forecast: null, fk: 0, risk: 'all', sessionId: null, session: null, poll: null, step: -1, list: 'emitidas'},
+  live: {models: null, sessionId: null, session: null, poll: null, clock: null, step: -1, follow: true, list: 'emitidas'},
 };
 // Escenario principal del Replay (el primero elegido).
 Object.defineProperty(S.replay, 'arm', {get() { return this.sel[0] || null; }});
@@ -582,8 +581,7 @@ function paint(M, v) {
 
 function buildViews() {
   if (S.tab === 'replay' && S.replay.dayData && S.replay.sel.length) return S.replay.sel.map((a, j) => replayView(a, j));
-  if (S.tab === 'prediccion' && S.sub === 'pronostico' && S.live.forecast) return [forecastView()];
-  if (S.tab === 'prediccion' && S.sub === 'asignacion' && S.snapshot) return [assignView()];
+  if (S.tab === 'prediccion' && S.snapshot) return [assignView()];
   return [nowView()];
 }
 
@@ -676,7 +674,7 @@ function ordersLegend(emitSel, arriveSel, reloc) {
   if (!e && !a) return '';
   const items = [
     e ? '<span class="legend-item"><i class="line-sw emit"></i>orden emitida: de dónde se recoge a dónde se entrega</span>' : '',
-    a ? '<span class="legend-item"><i class="line-sw arrive"></i>llegó: bicis movidas del origen al destino</span>' : '',
+    a ? '<span class="legend-item"><i class="line-sw arrive"></i>se recogió o llegó en la foto: bicis movidas del origen al destino</span>' : '',
     a && reloc ? '<span class="legend-item"><i class="line-sw reloc"></i>no cupieron: del destino a la estación cercana</span>' : '',
   ].join('');
   return `<div class="legend-row">${items}</div>`;
@@ -712,13 +710,15 @@ function legendParts(mode) {
       compact: `<div class="legend-row">${stateItems(['vacia', 'pocas', 'normal', 'llena'])}</div>`,
     };
   }
-  const ord = ordersLegend('#showEmitA', '#showArriveA', false);
+  const e = $('#showEmitA').checked, a = $('#showArriveA').checked;
+  const ord = e || a ? `<div class="legend-row">${e ? '<span class="legend-item"><i class="line-sw emit"></i>mover: de dónde recoger (tenue) a dónde llevar (intenso)</span>' : ''}${a ? '<span class="legend-item"><i class="line-sw arrive"></i>órdenes que se recogen o llegan en este paso</span>' : ''}</div>` : '';
   return {  // asignación
-    full: `<span class="legend-title">Órdenes del paso</span>
-      <div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>entregar</span><span class="legend-item"><i class="chip minus">−N</i>recoger</span></div>
+    full: `<span class="legend-title">Qué mover en este paso</span>
+      <div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>llevar aquí</span><span class="legend-item"><i class="chip minus">−N</i>recoger aquí</span></div>
+      ${ord}
       <span class="legend-title">Estado actual de la estación</span>
-      <div class="legend-row">${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}${numChip}</div>${ord}`,
-    compact: `<div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>entregar</span><span class="legend-item"><i class="chip minus">−N</i>recoger</span>${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}</div>${ord}`,
+      <div class="legend-row">${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}${numChip}</div>`,
+    compact: `<div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>llevar</span><span class="legend-item"><i class="chip minus">−N</i>recoger</span>${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}</div>${ord}`,
   };
 }
 function renderLegend() {
@@ -865,23 +865,19 @@ const HELP = {
     'En el mapa, <span class="k-plus">+N</span> son bicis entregadas y <span class="k-minus">−N</span> recogidas; en azul, <span class="k-pm">+N/−N</span> son bicis que pasan a rentables o a no rentables sin moverse. Cada estación es una bolita con el color de su estado; <b>Bicis por estación</b> muestra en su lugar el número de bicis.',
     'El panel derecho da cada número de la foto y su acumulado desde las 05:00. La ficha de cada estación muestra su cuenta: bicis anteriores − salidas + llegadas + entregadas − recogidas ± etiquetas = bicis actuales.',
     '<b>Zonas de la ciudad</b> colorea las AGEB urbanas del INEGI con el mismo estado que los pines (vacía, pocas, normal, llena), sumando sus estaciones; cambia con cada foto.',
-    '<b>Órdenes emitidas</b> dibuja, en la foto en que se emitieron, una línea naranja de cada estación donde se recoge a la estación donde se entrega (la flecha marca el sentido). <b>Órdenes que llegaron</b> dibuja lo que el simulador realmente movió (azul) y, punteado, las bicis que no cupieron y se dejaron en la estación cercana. Pasa o pica una línea para ver origen, destino, bicis y horas.',
+    '<b>Órdenes emitidas</b> dibuja, en la foto en que se emitieron, una línea naranja de cada estación donde se recoge a la estación donde se entrega (la flecha marca el sentido). <b>Órdenes que llegaron</b> dibuja lo que el simulador realmente movió en la foto (azul): los traslados que se recogieron y los que se entregaron y, punteado, las bicis que no cupieron y se dejaron en la estación cercana. Pasa o pica una línea para ver origen, destino, bicis y horas.',
     'Pica una estación para ver su cuenta. Teclado: ← y → mueven 15 minutos, la barra espaciadora reproduce o pausa, y [ y ] ocultan los paneles.'],
-  pronostico: ['Pronostica, con el feed de este momento, cuántas bicis tendrá cada estación en las próximas horas o en lo que queda del día.',
-    'Elige modelo y pulsa <b>Pronosticar</b>. Los modelos diarios pronostican el día completo; el directo, de 1 a 4 horas. Mueve la barra de arriba para ver cada cuarto de hora.',
-    'A la derecha están las estaciones que se vaciarán o llenarán y en cuántos minutos.',
-    'La proyección no incluye rebalanceo: es lo que pasaría si nadie mueve bicis. <b>Bicis por estación</b> y <b>Zonas de la ciudad</b> usan la proyección del minuto elegido.'],
-  asignacion: ['Con el pronóstico elegido, el asignador decide con un procedimiento greedy, cada 15 minutos, qué estaciones visitar y cuántas bicis recoger o entregar.',
-    '<b>Órdenes emitidas</b> y <b>Órdenes que llegaron</b> dibujan en el mapa de dónde a dónde van las bicis del paso elegido (en la demo en vivo, lo que llega es lo planeado).',
-    'Pulsa <b>Iniciar</b> y déjalo corriendo: el cálculo vive en el servidor, así que puedes recargar la página sin perder la sesión.',
-    'Cada orden recoge 15 minutos después de emitirse y entrega una hora después de emitirse.',
-    'Los viajes del panel derecho se estiman con los cambios del feed; no son viajes registrados.',
-    '<b>Bicis por estación</b> y <b>Zonas de la ciudad</b> usan el estado actual del feed. Las flechas de los bordes (o [ y ]) ocultan los paneles.'],
+  asignacion: ['Elige el pronóstico, cuántas horas emitir órdenes y el costo por km (α), y pulsa <b>Iniciar</b>. El asignador (greedy) decide cada 15 minutos qué bicis mover y de dónde a dónde.',
+    'La barra de arriba tiene un paso por cada 15 minutos de la sesión. Se va llenando conforme corre; puedes regresar a cualquier paso ya calculado (← y →). Al lado dice cuánto lleva corriendo y cuánto le falta.',
+    'A la derecha, <b>Mover</b> es la lista de trabajo del paso: de qué estación recoger, a cuál llevar, cuántas bicis y a qué hora. Pica una fila para ir a esa línea en el mapa.',
+    '<b>Órdenes</b> es el historial: todas las órdenes hasta el paso elegido, por cuarto de hora. En el mapa, <b>Órdenes actuales</b> dibuja cada traslado de origen (tenue) a destino (intenso). <b>Órdenes aplicadas en el paso</b> dibuja los traslados emitidos antes que se recogen o se entregan en este paso.',
+    'Cada orden recoge 15 minutos después de emitirse y entrega una hora después. Es una demo: Ecobici sigue operando y nadie ejecuta estas órdenes.',
+    'El cálculo vive en el servidor: puedes recargar la página sin perder la sesión. Al detenerla o terminar, puedes iniciar otra.'],
 };
-function helpKey() { return S.tab === 'prediccion' ? S.sub : S.tab; }
+function helpKey() { return S.tab === 'prediccion' ? 'asignacion' : S.tab; }
 function renderHelp() {
   const key = helpKey();
-  const titles = {ahora: 'Ahora', replay: 'Replay', pronostico: 'Pronóstico', asignacion: 'Asignación'};
+  const titles = {ahora: 'Ahora', replay: 'Replay', asignacion: 'Asignación'};
   $('#helpTitle').textContent = `Cómo usar ${titles[key]}`;
   $('#helpBody').innerHTML = HELP[key].map(t => `<li>${t}</li>`).join('');
 }
@@ -952,7 +948,7 @@ arrowNav($('.tabs'), b => activateTab(b.dataset.tab));
 function writeHash() {
   let h = S.tab;
   if (S.tab === 'replay' && S.replay.arm) h += `/${S.replay.arm.day}/${S.replay.sel.map(a => a.arm).join('+')}/${S.replay.k}`;
-  if (S.tab === 'prediccion') h += `/${S.sub}`;
+  if (S.tab === 'prediccion') h += '/asignacion';
   history.replaceState(null, '', `#${h}`);
 }
 function readHash() {
@@ -1156,8 +1152,18 @@ const hhmmOf = t => String(t ?? '').slice(-5);
 function replayPackages(a, k) {
   return packagesOf((a.decision?.[k]?.orders || []).map(([i, d, q]) => ({id: i, delta: d, paq: q, key: k})));
 }
-/** Pares ejecutados que llegaron en la foto k: [paquete, origen, destino, bicis, tipo (1 = reubicación), dist_m, foto emitida, …]. */
-function replayArrived(a, k) { return a.pares?.[k] || []; }
+/** Pares ejecutados que se aplicaron en la foto k: [paquete, origen, destino, bicis, tipo (1 = reubicación), dist_m, foto emitida,
+ * foto de recogida, foto de entrega]. Los que se entregan en k y los traslados que se recogen en k (estos viven en la foto de su entrega). */
+function replayArrived(a, k) {
+  if (!a.pares) return [];
+  if (!a._recogidas) {
+    a._recogidas = a.pares.map(() => []);
+    for (const fr of a.pares) for (const x of fr) if (!x[4] && x[7] != null && x[7] !== x[8] && a._recogidas[x[7]]) a._recogidas[x[7]].push(x);
+  }
+  return (a.pares[k] || []).concat(a._recogidas[k] || []);
+}
+/** El par se recogió en la foto k y aún va en camino (no se entrega en k). */
+const recogidoEn = (x, k) => x[8] != null && x[8] !== k;
 
 function replayOrders(a) {
   const emit = $('#showEmit').checked, arrive = $('#showArrive').checked;
@@ -1173,9 +1179,13 @@ function replayOrders(a) {
     }
   }
   if (arrive) {
-    for (const [q, o, d, n, tipo, m, ki] of replayArrived(a, k)) {
+    for (const x of replayArrived(a, k)) {
+      const [q, o, d, n, tipo, m, ki] = x;
       const pick = addMin(T[ki], 15), when = addMin(T[ki], deliv);
-      add(tipo
+      add(recogidoEn(x, k)
+        ? ordFeature(dd.stations, o, d, {k: 'arrive', a: 'arrive', n},
+          `Se recogieron ${bikesTxt(n)} en ${nm(o)} para ${nm(d)}<small>Paquete ${q} · recogidas a las ${esc(pick)} · se entregan a las ${esc(when)}</small>`)
+        : tipo
         ? ordFeature(dd.stations, o, d, {k: 'reloc', a: 'arrive', n},
           `No cupieron ${bikesTxt(n)} en ${nm(o)}: dejadas en ${nm(d)}${m == null ? '' : ` (${fmt(m)} m)`}<small>Paquete ${q} · dejadas a las ${esc(when)}</small>`)
         : ordFeature(dd.stations, o, d, {k: 'arrive', a: 'arrive', n},
@@ -1669,9 +1679,17 @@ function renderReplayList() {
     const deliv = a.spec?.delivery || 60;
     const arr = replayArrived(a, k);
     const seen = new Set();
-    for (const [q, o, d, n, tipo, m, ki] of arr.slice().sort((x, y) => x[0] - y[0] || x[4] - y[4])) {
-      if (!seen.has(q)) { seen.add(q); rows.push(`<li class="pkg">Paquete ${q} <small>· emitido a las ${esc(T[ki] ?? '—')}, llegó a las ${esc(addMin(T[ki], deliv))}</small></li>`); }
-      rows.push(tipo
+    for (const x of arr.slice().sort((x, y) => x[6] - y[6] || x[0] - y[0] || x[4] - y[4])) {
+      const [q, o, d, n, tipo, m, ki] = x, pk = recogidoEn(x, k);
+      if (!seen.has(`${ki}|${q}`)) {
+        seen.add(`${ki}|${q}`);
+        rows.push(`<li class="pkg">Paquete ${q} <small>· emitido a las ${esc(T[ki] ?? '—')}, ${pk ? `recogido a las ${esc(addMin(T[ki], 15))}, se entrega a las` : 'llegó a las'} ${esc(addMin(T[ki], deliv))}</small></li>`);
+      }
+      rows.push(pk
+        ? `<li><button class="row" data-i="${o}"><span class="act minus">${icon('up')}Recogidas</span>
+            <span class="r-main"><span class="r-title">${esc(name(o))}</span><span class="r-sub">→ ${esc(name(d))} · se entregan a las ${esc(addMin(T[ki], deliv))}</span></span>
+            <span class="r-end">${bikesTxt(n)}</span></button></li>`
+        : tipo
         ? `<li><button class="row" data-i="${d}"><span class="act reloc">${icon('down')}Dejadas</span>
             <span class="r-main"><span class="r-title">En ${esc(name(d))}</span><span class="r-sub">No cupieron en ${esc(name(o))}${m == null ? '' : ` · a ${fmt(m)} m`}</span></span>
             <span class="r-end">${bikesTxt(n)}</span></button></li>`
@@ -1679,7 +1697,7 @@ function renderReplayList() {
             <span class="r-main"><span class="r-title">${esc(name(o))}</span><span class="r-sub">→ ${esc(name(d))} · recogidas a las ${esc(addMin(T[ki], 15))}</span></span>
             <span class="r-end">${bikesTxt(n)}</span></button></li>`);
     }
-    empty = a.pares ? 'No llegaron órdenes con camioneta en esta foto.' : 'Este replay no trae los pares ejecutados.';
+    empty = a.pares ? 'No se recogió ni llegó ninguna orden con camioneta en esta foto.' : 'Este replay no trae los pares ejecutados.';
   } else {
     const dv = a.desvios?.[k] || [];
     rows = dv.map(([, kind, io, ir, m]) => `<li><button class="row" data-i="${ir}"><span class="act detour">${kind === 'salida' ? 'Salida' : 'Llegada'}</span>
@@ -1732,42 +1750,29 @@ function replayCard(a, i) {
   return html;
 }
 
-// ───────────────────────── Predicción ─────────────────────────
+// ───────────────────────── Predicción: asignación en vivo ─────────────────────────
+// Una sola vista: se elige pronóstico y α, se inicia, y la barra de arriba recorre los pasos ya calculados.
+const PRON_KEY = sid => `ecobici.asignacion.pronostico.${sid}`;
 function updatePredLayout() {
   const on = S.tab === 'prediccion';
-  setTabs('#view-prediccion .segmented', 'sub', S.sub);
-  $('#pane-pronostico').hidden = S.sub !== 'pronostico';
-  $('#pane-asignacion').hidden = S.sub !== 'asignacion';
-  $('#right-pronostico').hidden = !(on && S.sub === 'pronostico');
-  $('#right-asignacion').hidden = !(on && S.sub === 'asignacion');
-  $('#forecastDock').hidden = !(on && S.sub === 'pronostico' && S.live.forecast);
-  $('[data-zones="pronostico"]').hidden = !S.live.forecast;  // las zonas del pronóstico necesitan una proyección
-  $('.stage').classList.toggle('with-dock', !$('#replayDock').hidden || !$('#forecastDock').hidden);
+  $('#right-asignacion').hidden = !on;
+  $('#assignDock').hidden = !(on && (S.live.session?.pasos?.length || 0) > 0);
+  $('.stage').classList.toggle('with-dock', !$('#replayDock').hidden || !$('#assignDock').hidden);
+  clearInterval(S.live.clock);
+  S.live.clock = on ? setInterval(renderAssignDock, 30000) : null;
 }
-function pickSub(sub) {
-  S.sub = sub;
-  updatePredLayout();
-  if (!$('#help').hidden) renderHelp();
-  writeHash();
-  if (sub === 'asignacion') renderAssign();
-  renderMap();
-}
-$$('#view-prediccion .segmented [role="tab"]').forEach(b => { b.onclick = () => pickSub(b.dataset.sub); });
-arrowNav($('#view-prediccion .segmented'), b => pickSub(b.dataset.sub));
-$('#goForecast').onclick = () => pickSub('pronostico');
 
 function enterPrediccion() {
   if (!S.live.models) loadModels();
   if (!S.live.sessionId) {
     try { S.live.sessionId = localStorage.getItem(SESSION_KEY); } catch { /* sin almacenamiento */ }
-    if (S.live.sessionId) pollSession();
+    if (S.live.sessionId) { loadForecastOf(S.live.sessionId); pollSession(); }
   }
-  renderForecastPanel();
   renderAssign();
 }
 
 async function loadModels() {
-  showNote('#ferror', null);
+  showNote('#aerror', null);
   try {
     const m = await api('/api/live/models');
     S.live.models = m;
@@ -1783,14 +1788,13 @@ async function loadModels() {
         <span class="c-name">${esc(x.label || x.key)}<small>${x.forma === 'directa' ? 'próximas horas' : 'día completo'}</small></span>
         <span class="c-note">${esc(note)}${x.disponible && corte ? `<br><span class="c-train">${esc(corte)}</span>` : ''}</span></label>`;
     }).join('') || '<p class="empty">El servidor no reporta modelos.</p>';
-    $$('input[name="model"]').forEach(r => { r.onchange = syncHorizon; });
-    syncHorizon();
-    $('#runForecast').disabled = !firstOk;
+    $('#startAssign').disabled = !firstOk;
+    renderAssign();
   } catch (e) {
     $('#lastPublished').textContent = '—'; $('#modelsUpdated').textContent = '—';
     $('#models').innerHTML = '';
-    $('#runForecast').disabled = true;
-    showNote('#ferror', `No se pudieron cargar los modelos. ${e.message}`, {retry: loadModels});
+    $('#startAssign').disabled = true;
+    showNote('#aerror', `No se pudieron cargar los modelos. ${e.message}`, {retry: loadModels});
   }
 }
 
@@ -1800,222 +1804,18 @@ function corteText(c) {
   if (c.train_start) return `Viajes ${shortDay(c.train_start)} – ${shortDay(c.train_end)}`;
   return c.train_end ? `Sin entrenamiento; viajes hasta ${shortDay(c.train_end)}` : (c.nota || '');
 }
-/** El horizonte depende de la forma del modelo: diaria → día completo; directa → 1 a 4 h. */
-/** Horizontes válidos del modelo: los manda el backend (`horizontes`); si faltan, se deducen de la forma. */
-function horizonsOf(mi) {
-  if (Array.isArray(mi?.horizontes) && mi.horizontes.length) return mi.horizontes.map(String);
-  if (!mi?.forma) return ['1', '2', '3', '4', 'dia'];
-  return mi.forma === 'diaria' ? ['dia'] : ['1', '2', '3', '4'];
-}
-function syncHorizon() {
-  const mi = modelInfo($('input[name="model"]:checked')?.value);
-  const valid = horizonsOf(mi), daily = !valid.some(h => h !== 'dia');
-  $$('#horizon label').forEach(l => {
-    const inp = $('input', l);
-    const ok = valid.includes(inp.value);
-    l.hidden = !ok;
-    inp.disabled = !ok;
-  });
-  const cur = $('input[name="hz"]:checked');
-  if (!cur || cur.disabled) {
-    const pick = valid.includes('2') ? '2' : valid[0];
-    const el = $(`input[name="hz"][value="${pick}"]`);
-    if (el) el.checked = true;
-  }
-  $('#hzHint').textContent = !mi ? '' : daily
-    ? 'Los modelos diarios pronostican lo que queda del día completo.'
-    : 'El modelo directo pronostica de 1 a 4 horas hacia adelante.';
-}
-
-$('#runForecast').onclick = async () => {
-  const model = $('input[name="model"]:checked')?.value;
-  const hz = $('input[name="hz"]:checked')?.value;
-  if (!model) { showNote('#ferror', 'Elige un modelo disponible.'); return; }
-  const btn = $('#runForecast');
-  setBusy(btn, true, 'Pronosticando…');
-  showNote('#ferror', null);
-  mapState('Calculando pronóstico…', 'busy');
-  try {
-    const f = await api(`/api/live/forecast?${new URLSearchParams({model, horizonte: hz})}`, {method: 'POST', timeout: 180000});
-    if (!Array.isArray(f?.proyeccion) || !Array.isArray(f?.minutes)) throw new ApiError('La respuesta del pronóstico no tiene el formato esperado.');
-    const st = f.stations || {};
-    f._stations = Array.isArray(st) ? st : (st.short_name || []).map((sn, i) => ({short_name: sn, name: st.name?.[i], lat: st.lat?.[i], lon: st.lon?.[i], cap: st.cap?.[i]}));
-    f._byShort = new Map(f._stations.map((s, i) => [s.short_name, i]));
-    f._hz = hz;
-    S.live.forecast = f;
-    const r = $('#fk');
-    r.max = f.minutes.length - 1;
-    S.live.fk = Math.min(f.minutes.findIndex(m => m >= 60) >= 0 ? f.minutes.findIndex(m => m >= 60) : 0, f.minutes.length - 1);
-    r.value = S.live.fk;
-    renderForecastTicks();
-    updatePredLayout();
-    renderForecastPanel();
-    renderForecastDock();
-    renderMap();
-    renderAssign();
-    toast(`Pronóstico listo: ${plural(f.riesgos?.length || 0, 'estación en riesgo', 'estaciones en riesgo')}.`);
-  } catch (e) {
-    showNote('#ferror', e.message, {retry: () => $('#runForecast').click()});
-  } finally {
-    setBusy(btn, false, 'Pronosticar');
-    mapState(null);
-  }
-};
-
 function modelInfo(key) { return S.live.models?.modelos?.find(m => m.key === key); }
-
-function renderForecastTicks() {
-  const f = S.live.forecast, n = f.minutes.length;
-  const step = n > 24 ? 16 : n > 8 ? 4 : 1;
-  const el = $('#fticks');
-  const marks = [];
-  for (let j = step - 1; j < n; j += step) marks.push([j, f.minutes[j] % 60 === 0 ? `${f.minutes[j] / 60} h` : `${f.minutes[j]}′`]);
-  el.innerHTML = marks.map(([j, t]) => `<span style="left:${(j / (n - 1 || 1)) * 100}%">${t}</span>`).join('');
+/** Horizonte del pronóstico que usa la asignación: el más largo que ofrece el modelo (día completo o 4 h). */
+function assignHorizon(mi) {
+  const hz = (Array.isArray(mi?.horizontes) && mi.horizontes.length ? mi.horizontes : mi?.forma === 'directa' ? [1, 2, 3, 4] : ['dia']).map(String);
+  return hz.includes('dia') ? 'dia' : hz.sort((a, b) => b - a)[0];
 }
-function renderForecastDock() {
-  const f = S.live.forecast;
-  if (!f) return;
-  const m = f.minutes[S.live.fk];
-  const base = hhmm(f.t_feed || f.issued_at);
-  $('#ftime').textContent = `+${m} min`;
-  $('#fstep').textContent = base !== '—' ? `hacia las ${addMin(base, m)}` : 'proyección';
-  setRangeFill($('#fk'));
-}
-$('#fk').oninput = () => {
-  S.live.fk = +$('#fk').value;
-  renderForecastDock();
-  renderMap();
-  if (S.sel !== null) renderCard();
-};
-
-function renderForecastPanel() {
-  const f = S.live.forecast;
-  const info = $('#forecastInfo');
-  if (!f) {
-    info.hidden = true;
-    $('#riskCount').textContent = '';
-    $('#riskList').innerHTML = '<li class="none">Pide un pronóstico para ver qué estaciones se vaciarán o llenarán.</li>';
-    return;
-  }
-  const mi = modelInfo(f.model);
-  const ref = f.referencia || {};
-  const rows = [
-    ['Modelo', mi?.label || f.model],
-    ['Entrenamiento', mi?.corte?.train_start ? `${shortDay(mi.corte.train_start)} – ${shortDay(mi.corte.train_end)}` : mi?.corte?.train_end ? `No se entrena; viajes hasta ${shortDay(mi.corte.train_end)}` : '—'],
-    ['Rezagos', ref.rezagos === 'reales' ? 'Reales' : ref.rezagos === 'dia_referencia' ? `Día de referencia ${shortDay(ref.dia_referencia)}` : '—'],
-    ['Foto del feed', hhmm(f.t_feed)],
-  ];
-  if (ref.viajes_del_dia === 'inferidos_feed') {
-    rows.push(['Viajes de hoy', 'Inferidos del feed']);
-    const fh = ref.feed_hoy || {};
-    rows.push(['Lecturas de hoy desde', fh.desde ? `${hhmm(fh.desde)}${fh.fotos !== undefined ? ` (${fmt(fh.fotos)} fotos)` : ''}` : 'Sin lecturas']);
-  }
-  const warn = [];
-  if (ref.rezagos === 'dia_referencia') warn.push('Faltan días publicados para los rezagos de hoy; se usa el día de referencia indicado.');
-  if (ref.viajes_del_dia === 'inferidos_feed') warn.push('Las salidas y llegadas de hoy se infieren de los cambios del feed; es una demostración de cómo operaría, no un resultado medido.');
-  if (ref.feed_hoy && ref.feed_hoy.completo === false) warn.push('No hay lecturas continuas del feed desde las 05:00.');
-  info.innerHTML = rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('') +
-    `<dd class="full">Proyección sin rebalanceo, emitida a las ${esc(hhmm(f.issued_at))}.${warn.length ? ' ' + esc(warn.join(' ')) : ''}</dd>`;
-  info.hidden = false;
-  renderRisks();
+/** Lo que se guarda del pronóstico de una sesión (para verlo en la pestaña Pronóstico del panel, también tras recargar). */
+function loadForecastOf(sid) {
+  try { S.live.forecast = JSON.parse(localStorage.getItem(PRON_KEY(sid)) || 'null'); } catch { S.live.forecast = null; }
 }
 
-function pickRisk(b) { S.live.risk = b.dataset.risk; setTabs('#riskTabs', 'risk', S.live.risk); renderRisks(); }
-$$('#riskTabs [role="tab"]').forEach(b => { b.onclick = () => pickRisk(b); });
-arrowNav($('#riskTabs'), pickRisk);
-function renderRisks() {
-  const f = S.live.forecast;
-  if (!f) return;
-  const all = (f.riesgos || []).slice().sort((a, b) => a.minutos - b.minutos);
-  const list = S.live.risk === 'all' ? all : all.filter(r => r.tipo === S.live.risk);
-  $('#riskCount').textContent = plural(all.length, 'estación', 'estaciones');
-  const rows = list.map(r => {
-    const i = f._byShort.get(r.short_name);
-    const s = f._stations[i] || {};
-    const now = i !== undefined ? f.bikes_now?.[i] : undefined;
-    return `<li><button class="row" data-i="${i ?? -1}"><span class="act ${r.tipo}">${r.tipo === 'vacia' ? 'Se vacía' : 'Se llena'}</span>
-      <span class="r-main"><span class="r-title">${esc(r.short_name)} · ${esc(bare(s.name))}</span><span class="r-sub">${now !== undefined ? `Ahora ${plural(now, 'bici', 'bicis')}` : ''}${s.cap ? ` de ${fmt(s.cap)}` : ''}</span></span>
-      <span class="r-end">en ${fmt(r.minutos)} min</span></button></li>`;
-  });
-  $('#riskList').innerHTML = rowsHtml(rows, S.live.risk === 'all' ? 'Ninguna estación se vacía ni se llena en este horizonte.' : 'Ninguna estación en esta categoría.');
-  $$('#riskList .row').forEach(b => { b.onclick = () => { const i = +b.dataset.i; if (i >= 0) openStation(i); }; });
-}
-
-function forecastView() {
-  const f = S.live.forecast, j = S.live.fk, st = f._stations;
-  const proj = f.proyeccion[j] || [];
-  const state = i => stationState(proj[i], (st[i].cap ?? Infinity) - proj[i], true);
-  return {
-    mode: 'pronostico', stations: st,
-    props: i => (proj[i] === undefined || proj[i] === null) ? null : ({...stateMarker('pronostico', state(i), proj[i], 0.8), dimg: '', sort: 1}),
-    // Zonas con la proyección del minuto elegido (sin dato de no rentables: anclajes libres = capacidad − bicis).
-    zone: i => (proj[i] === undefined || proj[i] === null || !st[i].cap) ? null : {b: proj[i], cap: st[i].cap, docks: Math.max(0, st[i].cap - proj[i])},
-    hover: i => `${plural(proj[i], 'bici proyectada', 'bicis proyectadas')} en +${f.minutes[j]} min`,
-    card: i => ({state: state(i), html: forecastCard(i)}),
-  };
-}
-function forecastCard(i) {
-  const f = S.live.forecast, j = S.live.fk, s = f._stations[i];
-  const risk = (f.riesgos || []).find(r => r.short_name === s.short_name);
-  return `<div class="card-stats">
-      <div class="card-stat hero"><b>${fmt(f.proyeccion[j][i])}</b><span>bicis proyectadas en +${fmt(f.minutes[j])} min</span></div>
-      <div class="card-stat"><b>${fmt(f.bikes_now?.[i])}</b><span>bicis ahora</span></div>
-      <div class="card-stat"><b>${fmt(s.cap)}</b><span>capacidad</span></div>
-    </div>
-    <section><h3>En el cuarto de hora que termina en +${fmt(f.minutes[j])} min</h3>
-      <dl class="kv"><dt>Salidas esperadas</dt><dd>${fmt(f.salidas?.[j]?.[i])}</dd><dt>Llegadas esperadas</dt><dd>${fmt(f.llegadas?.[j]?.[i])}</dd></dl></section>
-    ${risk ? `<div class="note warn">${icon('alert')}<span>${risk.tipo === 'vacia' ? 'Se vacía' : 'Se llena'} en ${fmt(risk.minutos)} minutos si nadie mueve bicis.</span></div>` : ''}`;
-}
-
-// ── Asignación ──
-function renderAssign() {
-  const f = S.live.forecast, sess = S.live.session, id = S.live.sessionId;
-  const running = sess?.estado === 'corriendo';
-  $('#session').hidden = !id;
-  $('#assignEmpty').hidden = !!id || !!f;
-  $('#assignForm').hidden = !!id || !f;
-  if (f && !id) {
-    const mi = modelInfo(f.model);
-    $('#assignUsing').innerHTML = `Usará el pronóstico de <b>${esc(mi?.label || f.model)}</b> emitido a las <b>${esc(hhmm(f.issued_at))}</b>.`;
-  }
-  if (id) {
-    const pill = $('#sessState');
-    const label = {corriendo: 'Corriendo', terminada: 'Terminada', detenida: 'Detenida', error: 'Error'}[sess?.estado] || 'Conectando…';
-    pill.dataset.s = sess?.estado || '';
-    pill.textContent = label;
-    $('#stopAssign').hidden = !running;
-    $('#newAssign').hidden = !sess || running;
-    const pasos = sess?.pasos || [];
-    const mi = modelInfo(sess?.model);
-    const rows = sess ? [
-      ['Modelo', mi?.label || sess.model || '—'],
-      ['Inicio', hhmm(sess.inicio)],
-      ['Duración', sess.horas ? `${sess.horas} h` : '—'],
-      ['Pasos registrados', fmt(pasos.length)],
-      ['Costo por km (α)', fmt(sess.params?.alfa ?? 0)],
-    ] : [];
-    $('#salfaField').hidden = !running;
-    if (running) $('#salfa').value = String(sess.params?.alfa ?? 0);
-    if (running) rows.splice(3, 0, ['Siguiente paso', hhmm(sess.siguiente_paso)]);
-    $('#sessInfo').innerHTML = rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd${k === 'Siguiente paso' ? ' id="nextStep"' : ''}>${esc(v)}</dd></div>`).join('') ||
-      '<div><dt>Sesión</dt><dd><span class="skeleton w-8"></span></dd></div>';
-    $('#stepPick').hidden = pasos.length < 2;
-    if (pasos.length) {
-      const sel = $('#astep');
-      const follow = S.live.step < 0 || S.live.step >= pasos.length - 1 || S.live.follow;
-      sel.innerHTML = pasos.map((p, j) => `<option value="${j}">${esc(hhmm(p.t))} · ${plural(p.emitidas?.length || 0, 'orden', 'órdenes')}</option>`).join('');
-      S.live.step = follow ? pasos.length - 1 : Math.min(S.live.step, pasos.length - 1);
-      sel.value = S.live.step;
-    }
-  }
-  renderAssignPanel();
-}
-$('#astep').onchange = () => {
-  S.live.step = +$('#astep').value;
-  S.live.follow = S.live.step === (S.live.session?.pasos?.length || 0) - 1;
-  renderAssignPanel(); renderMap();
-};
-
+// ── controles ──
 const LIVE_ALFAS = [0, 1, 3, 5, 7, 10];
 for (const id of ['#aalfa', '#salfa']) $(id).innerHTML = LIVE_ALFAS.map(x => `<option value="${x}">${x === 0 ? '0 (sin costo por km)' : x}</option>`).join('');
 $('#salfa').onchange = async () => {
@@ -2028,17 +1828,25 @@ $('#salfa').onchange = async () => {
   } catch (e) { showNote('#aerror', e.message); $('#salfa').value = String(S.live.session?.params?.alfa ?? 0); }
 };
 $('#startAssign').onclick = async () => {
-  const f = S.live.forecast;
-  if (!f) return;
+  const model = $('input[name="model"]:checked')?.value;
+  if (!model) { showNote('#aerror', 'Elige un pronóstico disponible.'); return; }
   const btn = $('#startAssign');
-  setBusy(btn, true, 'Iniciando…');
   showNote('#aerror', null);
   try {
+    setBusy(btn, true, 'Pronosticando…');
+    const f = await api(`/api/live/forecast?${new URLSearchParams({model, horizonte: assignHorizon(modelInfo(model))})}`, {method: 'POST', timeout: 180000});
+    if (!f?.id) throw new ApiError('El servidor no devolvió el pronóstico.');
+    setBusy(btn, true, 'Iniciando…');
     const r = await api(`/api/live/assign/start?${new URLSearchParams({forecast_id: f.id, horas: $('#ahours').value, alfa: $('#aalfa').value})}`, {method: 'POST', timeout: 180000});
     if (!r?.session_id) throw new ApiError('El servidor no devolvió una sesión.');
+    clearTimeout(S.live.poll);
+    S.live.forecast = {model: f.model, issued_at: f.issued_at, t_feed: f.t_feed, minutes: f.minutes?.at(-1), riesgos: f.riesgos || []};
     S.live.sessionId = r.session_id; S.live.session = null; S.live.step = -1; S.live.follow = true;
-    try { localStorage.setItem(SESSION_KEY, r.session_id); } catch { /* sin almacenamiento */ }
-    renderAssign();
+    try {
+      localStorage.setItem(SESSION_KEY, r.session_id);
+      localStorage.setItem(PRON_KEY(r.session_id), JSON.stringify(S.live.forecast));
+    } catch { /* sin almacenamiento */ }
+    renderAssign(); renderMap();
     await pollSession();
     toast('Asignación iniciada. Sigue corriendo aunque recargues la página.');
   } catch (e) {
@@ -2053,18 +1861,12 @@ $('#stopAssign').onclick = async () => {
   try {
     await api(`/api/live/assign/${encodeURIComponent(S.live.sessionId)}/stop`, {method: 'POST'});
     await pollSession();
-    toast('Asignación detenida.');
+    toast('Asignación detenida. Puedes iniciar otra.');
   } catch (e) {
     showNote('#aerror', e.message);
   } finally {
     setBusy(btn, false, 'Detener');
   }
-};
-$('#newAssign').onclick = () => {
-  clearTimeout(S.live.poll);
-  S.live.sessionId = null; S.live.session = null; S.live.step = -1;
-  try { localStorage.removeItem(SESSION_KEY); } catch { /* sin almacenamiento */ }
-  renderAssign(); renderMap();
 };
 
 async function pollSession() {
@@ -2092,96 +1894,230 @@ async function pollSession() {
   }
 }
 
+// ── panel izquierdo: formulario y sesión ──
+const ESTADO_TXT = {corriendo: 'Corriendo', terminada: 'Terminada', detenida: 'Detenida', error: 'Error'};
+function renderAssign() {
+  const sess = S.live.session, id = S.live.sessionId;
+  const running = sess?.estado === 'corriendo' || (id && !sess);
+  $('#session').hidden = !id;
+  $('#assignForm').hidden = !!running;  // detenida o terminada: se puede iniciar otra
+  $('#assignFormTitle').hidden = !id;
+  if (id) {
+    const pill = $('#sessState');
+    pill.dataset.s = sess?.estado || '';
+    pill.textContent = ESTADO_TXT[sess?.estado] || 'Conectando…';
+    $('#stopAssign').hidden = sess?.estado !== 'corriendo';
+    const mi = modelInfo(sess?.model);
+    const rows = sess ? [
+      ['Pronóstico', mi?.label || sess.model || '—'],
+      ['Costo por km (α)', fmt(sess.params?.alfa ?? 0)],
+      ['Inicio', hhmm(sess.inicio)],
+      ['Emite órdenes hasta', hhmm(sess.fin_emision)],
+    ] : [];
+    $('#salfaField').hidden = sess?.estado !== 'corriendo';
+    if (sess?.estado === 'corriendo') $('#salfa').value = String(sess.params?.alfa ?? 0);
+    $('#sessInfo').innerHTML = rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('') ||
+      '<div><dt>Sesión</dt><dd><span class="skeleton w-8"></span></dd></div>';
+    const n = sess?.pasos?.length || 0;
+    if (n) S.live.step = S.live.follow || S.live.step < 0 ? n - 1 : Math.min(S.live.step, n - 1);
+  }
+  updatePredLayout();
+  renderAssignDock();
+  renderAssignPanel();
+}
+
+// ── barra de pasos (arriba del mapa) ──
+const STEP_MIN = 15;
+const toDate = iso => (iso ? new Date(iso) : null);
+const addMins = (d, m) => new Date(d.getTime() + m * 60000);
+const isoMin = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+/** Pasos esperados de la sesión: cada 15 min desde el inicio hasta la última entrega (último paso que emite + entrega). */
+function plannedSteps(sess) {
+  const pasos = sess?.pasos || [];
+  if (sess?.estado !== 'corriendo') return pasos.map(p => p.t);
+  const ini = toDate(sess.inicio), fin = toDate(sess.fin_emision);
+  if (!ini || !fin) return pasos.map(p => p.t);
+  const end = addMins(fin, (sess.params?.entrega_min ?? 60) - STEP_MIN);
+  const out = [];
+  for (let d = ini; d <= end; d = addMins(d, STEP_MIN)) out.push(isoMin(d));
+  return out.length >= pasos.length ? out : pasos.map(p => p.t);
+}
+function durTxt(ms) {
+  const m = Math.max(0, Math.round(ms / 60000));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
+}
+function renderAssignDock() {
+  const sess = S.live.session, pasos = sess?.pasos || [];
+  if (!pasos.length) return;
+  const plan = plannedSteps(sess), total = plan.length, done = pasos.length, k = S.live.step;
+  const r = $('#ak');
+  r.max = Math.max(0, total - 1); r.value = k;
+  const pct = j => `${(j / Math.max(1, total - 1)) * 100}%`;
+  r.style.setProperty('--p', pct(k));
+  r.style.setProperty('--q', pct(done - 1));
+  $('#atime').textContent = hhmm(pasos[k]?.t);
+  $('#astepTxt').textContent = `Paso ${k + 1} de ${total}${k === done - 1 && sess.estado === 'corriendo' ? ' · el último' : ''}`;
+  $('#aprev').disabled = k <= 0;
+  $('#anext').disabled = k >= done - 1;
+  const marks = plan.map((t, j) => [j, t]).filter(([, t]) => t.endsWith(':00'));
+  $('#aticks').innerHTML = marks.map(([j, t]) => `<span style="left:${pct(j)}">${esc(hhmm(t).slice(0, 2))} h</span>`).join('');
+  const now = new Date(), ini = toDate(sess.inicio);
+  let run;
+  if (sess.estado === 'corriendo') {
+    const end = toDate(plan.at(-1));
+    run = `<b>Lleva ${durTxt(now - ini)}</b><span>faltan ≈ ${durTxt(end - now)} · siguiente paso ${esc(hhmm(sess.siguiente_paso))}</span>`;
+  } else {
+    run = `<b>${esc(ESTADO_TXT[sess.estado] || '—')}</b><span>${plural(done, 'paso calculado', 'pasos calculados')}, de ${esc(hhmm(pasos[0].t))} a ${esc(hhmm(pasos.at(-1).t))}</span>`;
+  }
+  $('#arun').innerHTML = run;
+}
+function goAssignStep(k) {
+  const n = S.live.session?.pasos?.length || 0;
+  if (!n) return;
+  S.live.step = Math.max(0, Math.min(n - 1, k));
+  S.live.follow = S.live.step === n - 1;  // en el último paso, la barra sigue a los pasos nuevos
+  renderAssignDock(); renderAssignPanel(); renderMap();
+  if (S.sel !== null) renderCard();
+}
+$('#ak').oninput = () => goAssignStep(+$('#ak').value);  // los pasos que aún no corren no se pueden elegir
+$('#aprev').onclick = () => goAssignStep(S.live.step - 1);
+$('#anext').onclick = () => goAssignStep(S.live.step + 1);
+document.addEventListener('keydown', e => {
+  if (S.tab !== 'prediccion' || e.metaKey || e.ctrlKey || e.altKey || $('#assignDock').hidden) return;
+  if (e.target.closest('input, select, textarea, [role="tab"], [role="separator"], .help')) return;
+  if (e.key === 'ArrowLeft') { goAssignStep(S.live.step - 1); e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { goAssignStep(S.live.step + 1); e.preventDefault(); }
+});
+
+// ── panel derecho: qué mover ──
 function currentStep() {
   const p = S.live.session?.pasos || [];
   return p.length ? p[Math.max(0, Math.min(S.live.step, p.length - 1))] : null;
 }
-function stationName(sn) {
-  const st = S.snapshot?.stations?.find(s => s.short_name === sn) || S.live.forecast?._stations?.[S.live.forecast._byShort.get(sn)];
-  return st?.name || '';
-}
+function stationName(sn) { return S.snapshot?.stations?.find(s => s.short_name === sn)?.name || ''; }
 function pick(b) { S.live.list = b.dataset.list; setTabs('#apTabs', 'list', S.live.list); renderAssignList(); }
 $$('#apTabs [role="tab"]').forEach(b => { b.onclick = () => pick(b); });
 arrowNav($('#apTabs'), pick);
 
+/** Traslados (donante → receptor) de una lista de paquetes. */
+const pairsOf = gs => gs.flatMap(g => g.donors.map(dn => ({paq: g.paq, key: g.key, fase: g.fase, from: dn.id, to: g.recv.id, n: dn.n, recoge: dn.ex.recoge, entrega: g.recv.ex.entrega})));
 function renderAssignPanel() {
   const sess = S.live.session, p = currentStep();
   if (!sess || !p) {
-    $('#apTitle').textContent = 'Órdenes';
+    $('#apTitle').textContent = 'Qué mover';
     $('#apSub').textContent = sess ? 'Esperando el primer paso…' : ' ';
     $('#apStats').innerHTML = '';
-    $('#apList').innerHTML = `<li class="none">${sess ? 'El primer paso aparece en unos segundos.' : 'Inicia una asignación para ver aquí las órdenes de cada paso.'}</li>`;
     $$('#apTabs [role="tab"]').forEach(b => { b.querySelector('.n')?.remove(); });
+    renderAssignList();
     return;
   }
-  $('#apTitle').textContent = `Paso de las ${hhmm(p.t)}`;
-  $('#apSub').textContent = `Foto del feed de las ${p.t_feed ? p.t_feed.slice(11, 19) : '—'}${p.alfa > 0 ? ` · α ${fmt(p.alfa)}` : ''}`;
-  const tot = sess.totales || {};
+  const mover = pairsOf(livePackages(p.emitidas));
   const km = liveKm(p);
-  $('#apStats').innerHTML = `
-    <div class="stat-group"><h3>Este paso</h3><div class="stat-pair">
-      <div class="tile" data-stat="visitas"><b>${fmt(p.visitas)}</b><span>visitas</span></div>
-      <div class="tile" data-stat="bicis_a_mover"><b>${fmt(p.bicis_a_mover)}</b><span>bicis a mover</span></div></div>
-      <div class="stat-pair">
-      <div class="tile" data-stat="km_tramos"><b>${fmtDec(km.km, 1)}</b><span>km de tramos</span></div>
-      <div class="tile" data-stat="km_por_bici"><b>${km.bikes ? fmtDec(km.bkm / km.bikes, 2) : '—'}</b><span>km por bici</span></div></div></div>
-    <div class="stat-group"><h3>Acumulado de la sesión</h3><div class="stat-pair">
-      <div class="tile"><b>${fmt(tot.visitas)}</b><span>visitas</span></div>
-      <div class="tile"><b>${fmt(tot.bicis_a_mover)}</b><span>bicis a mover</span></div></div></div>`;
-  const counts = {emitidas: p.emitidas?.length || 0, aplicadas: p.aplicadas?.length || 0, llegaron: liveArrived(p).length};
+  $('#apTitle').textContent = `Qué mover a las ${hhmm(p.t)}`;
+  $('#apSub').textContent = `Foto del feed de las ${p.t_feed ? p.t_feed.slice(11, 19) : '—'}${p.alfa > 0 ? ` · α ${fmt(p.alfa)}` : ''}${p.nota ? ` · ${p.nota}` : ''}`;
+  $('#apStats').innerHTML = `<div class="stat-pair tri">
+      <div class="tile" data-stat="traslados"><b>${fmt(mover.length)}</b><span>traslados</span></div>
+      <div class="tile" data-stat="bicis_a_mover"><b>${fmt(p.bicis_a_mover)}</b><span>bicis a mover</span></div>
+      <div class="tile" data-stat="km_tramos"><b>${fmtDec(km.km, 1)}</b><span>km en línea recta</span></div></div>`;
+  const counts = {emitidas: mover.length, llegaron: pairsOf(liveArrived(p)).length};
   $$('#apTabs [role="tab"]').forEach(b => {
-    const base = {emitidas: 'Emitidas', aplicadas: 'Aplicadas', llegaron: 'Llegaron', viajes: 'Viajes'}[b.dataset.list];
-    b.innerHTML = base + (b.dataset.list in counts ? `<span class="n">${fmt(counts[b.dataset.list])}</span>` : '');
+    const base = {emitidas: 'Mover', historial: 'Órdenes', llegaron: 'Llegan', pronostico: 'Pronóstico'}[b.dataset.list];
+    b.innerHTML = base + (counts[b.dataset.list] != null ? `<span class="n">${fmt(counts[b.dataset.list])}</span>` : '');
   });
   renderAssignList();
 }
+const nameOf = sn => `${sn} · ${bare(stationName(sn))}`;
+/** Fila de un traslado: "N bicis · de X → a Y", con las horas. Al pulsarla, el mapa va a esa línea. */
+function pairRow(x, verbo) {
+  return `<li><button class="row move" data-pk="${esc(`${x.key}|${x.paq}|${x.from}`)}">
+    <span class="mv-n"><b>${fmt(x.n)}</b>${x.n === 1 ? 'bici' : 'bicis'}</span>
+    <span class="r-main"><span class="r-title">${verbo} ${esc(nameOf(x.from))}</span>
+      <span class="r-title mv-to">→ a ${esc(nameOf(x.to))}</span>
+      <span class="r-sub">recoger ${esc(hhmm(x.recoge))} · entregar ${esc(hhmm(x.entrega))}</span></span></button></li>`;
+}
 function renderAssignList() {
-  const p = currentStep(), el = $('#apList');
-  if (!p) return;
-  if (S.live.list === 'viajes') {
-    const pasos = S.live.session.pasos;
-    el.innerHTML = `<li><div class="note warn">${icon('info')}<span>Estimados de los cambios del feed entre pasos; no son viajes registrados.</span></div></li>
-      <li class="stat"><span><i class="mk trip"></i>Salidas estimadas en este paso</span><b>${fmt(p.salidas_est)}</b></li>
-      <li class="stat"><span><i class="mk trip"></i>Llegadas estimadas en este paso</span><b>${fmt(p.llegadas_est)}</b></li>
-      ${pasos.length > 1 ? `<li class="stat-group" style="margin-top:12px"><h3>Por paso (salidas / llegadas estimadas)</h3>${pasos.map(x => `<div class="stat"><span>${esc(hhmm(x.t))}</span><b>${fmt(x.salidas_est)} / ${fmt(x.llegadas_est)}</b></div>`).join('')}</li>` : ''}`;
+  const p = currentStep(), el = $('#apList'), L = S.live.list;
+  const bind = () => {
+    $$('.row[data-pk]', el).forEach(b => {
+      b.onclick = () => {
+        // Una orden de otro paso: primero se va a ese paso (sus líneas son las que están en el mapa).
+        const j = (S.live.session?.pasos || []).findIndex(q => q.t === b.dataset.pk.split('|')[0]);
+        if (j >= 0 && j !== S.live.step && S.live.list === 'historial') goAssignStep(j);
+        focusPair(b.dataset.pk);
+      };
+    });
+    $$('.row[data-i]', el).forEach(b => { b.onclick = () => { const i = +b.dataset.i; if (i >= 0) openStation(i); }; });
+  };
+  if (L === 'pronostico') {
+    const f = S.live.forecast;
+    if (!f) { el.innerHTML = '<li class="none">El pronóstico de esta sesión no está guardado en este navegador.</li>'; return; }
+    const mi = modelInfo(f.model);
+    const idx = new Map((S.snapshot?.stations || []).map((s, i) => [s.short_name, i]));
+    const rows = (f.riesgos || []).slice().sort((a, b) => a.minutos - b.minutos).map(r => `<li><button class="row" data-i="${idx.get(r.short_name) ?? -1}">
+      <span class="act ${r.tipo}">${r.tipo === 'vacia' ? 'Se vacía' : 'Se llena'}</span>
+      <span class="r-main"><span class="r-title">${esc(nameOf(r.short_name))}</span></span>
+      <span class="r-end">en ${fmt(r.minutos)} min</span></button></li>`);
+    el.innerHTML = `<li><div class="note">${icon('info')}<span>${esc(mi?.label || f.model)}, emitido a las ${esc(hhmm(f.issued_at))}: estaciones que se vaciarían o llenarían si nadie mueve bicis.</span></div></li>`
+      + rowsHtml(rows, 'Ninguna estación se vacía ni se llena en el horizonte del pronóstico.');
+    bind();
     return;
   }
-  const nameOf = sn => `${sn} · ${bare(stationName(sn))}`;
-  const idxOf = sn => S.view?.mode === 'asignacion' ? S.view.stations.findIndex(s => s.short_name === sn) : -1;
-  const pkgRows = (g, verbo) => [
-    `<li class="pkg">Paquete ${g.paq} <small>· entrega ${bikesTxt(g.recv.n)} en ${esc(nameOf(g.recv.id))} a las ${esc(hhmm(g.recv.ex.entrega))}</small></li>`,
-    ...g.donors.map(dn => `<li><button class="row" data-i="${idxOf(dn.id)}">${verbo === 'Recoge' ? actChip('recoger') : `<span class="act plus">${icon('down')}Llegaron</span>`}
-      <span class="r-main"><span class="r-title">${verbo === 'Recoge' ? `Recoge en ${esc(nameOf(dn.id))}` : esc(nameOf(dn.id))}</span><span class="r-sub">→ entrega en ${esc(nameOf(g.recv.id))} · recoge a las ${esc(hhmm(dn.ex.recoge))}</span></span>
-      <span class="r-end">${bikesTxt(dn.n)}</span></button></li>`)];
-  if (S.live.list === 'llegaron') {
-    const rows = liveArrived(p).flatMap(g => pkgRows(g, 'Llegaron'));
-    el.innerHTML = `<li><div class="note">${icon('info')}<span>Demo en vivo: se muestra lo planeado que llega en este paso; no se simula cuántas bicis caben en cada estación.</span></div></li>`
-      + rowsHtml(rows, 'No llega ninguna entrega en este paso.');
-    $$('.row', el).forEach(b => { b.onclick = () => { const i = +b.dataset.i; if (i >= 0) openStation(i); }; });
+  if (!p) { el.innerHTML = `<li class="none">${S.live.session ? 'El primer paso aparece en unos segundos.' : 'Elige pronóstico y α y pulsa Iniciar: aquí sale qué bicis mover de dónde a dónde.'}</li>`; return; }
+  if (L === 'llegaron') {
+    el.innerHTML = rowsHtml(pairsOf(liveArrived(p)).map(x => pairRow(x, x.fase === 'recoger' ? 'Se recogen en' : 'Llegan de')),
+      'No se recoge ni llega ninguna orden en este paso.');
+    bind();
     return;
   }
-  const orders = ((S.live.list === 'emitidas' ? p.emitidas : p.aplicadas) || []).filter(o => S.live.list !== 'emitidas' || !o.paquete);
-  const pkRows = S.live.list === 'emitidas' ? livePackages(p.emitidas).flatMap(g => pkgRows(g, 'Recoge')) : [];
-  const rows = pkRows.concat(orders.slice().sort((a, b) => (a.accion > b.accion ? -1 : 1) || b.n - a.n).map(o => {
-    const i = S.view?.mode === 'asignacion' ? S.view.stations.findIndex(s => s.short_name === o.short_name) : -1;
-    const when = o.accion === 'recoger' ? `Recoge a las ${hhmm(o.recoge)} · entrega a las ${hhmm(o.entrega)}` : `Entrega a las ${hhmm(o.entrega)}`;
+  if (L === 'historial') {
+    // Órdenes de todos los pasos hasta el elegido, por cuarto de hora, del más reciente al más viejo.
+    const pasos = (S.live.session?.pasos || []).slice(0, S.live.step + 1).reverse();
+    el.innerHTML = pasos.map(q => {
+      const xs = pairsOf(livePackages(q.emitidas)).sort((a, b) => b.n - a.n);
+      const bikes = xs.reduce((n, x) => n + x.n, 0);
+      return `<li class="pkg">${esc(hhmm(q.t))} <small>· ${plural(xs.length, 'traslado', 'traslados')} · ${bikesTxt(bikes)}</small></li>`
+        + (xs.length ? xs.map(x => pairRow(x, 'De')).join('') : '<li class="none">Sin órdenes en este cuarto de hora.</li>');
+    }).join('');
+    bind();
+    return;
+  }
+  // Mover: un renglón por traslado, del más grande al más chico; las órdenes sin paquete van al final.
+  const pairs = pairsOf(livePackages(p.emitidas)).sort((a, b) => b.n - a.n);
+  const sueltas = (p.emitidas || []).filter(o => !o.paquete).map(o => {
+    const i = (S.snapshot?.stations || []).findIndex(s => s.short_name === o.short_name);
     return `<li><button class="row" data-i="${i}">${actChip(o.accion)}
-      <span class="r-main"><span class="r-title">${esc(o.short_name)} · ${esc(bare(stationName(o.short_name)))}</span><span class="r-sub" title="${esc(when)}">${esc(when)}</span></span>
-      <span class="r-end">${plural(o.n, 'bici', 'bicis')}</span></button></li>`;
-  }));
-  el.innerHTML = rowsHtml(rows, S.live.list === 'emitidas' ? 'El asignador no emitió órdenes en este paso.' : 'Ninguna orden se aplica en este paso.');
-  $$('.row', el).forEach(b => { b.onclick = () => { const i = +b.dataset.i; if (i >= 0) openStation(i); }; });
+      <span class="r-main"><span class="r-title">${esc(nameOf(o.short_name))}</span><span class="r-sub">${o.accion === 'recoger' ? `recoger ${esc(hhmm(o.recoge))}` : `entregar ${esc(hhmm(o.entrega))}`}</span></span>
+      <span class="r-end">${bikesTxt(o.n)}</span></button></li>`;
+  });
+  el.innerHTML = rowsHtml(pairs.map(x => pairRow(x, 'De')).concat(sueltas), 'El asignador no pidió mover bicis en este paso.');
+  bind();
+}
+/** Lleva el mapa a un traslado y lo resalta con su ficha. */
+function focusPair(pk) {
+  const M = MAPS[0];
+  if (!M?.ready) return;
+  const f = M.map.getSource('orders')._data?.features?.find(x => x.properties.pk === pk && x.geometry.type === 'LineString');
+  if (!f) { toast('Prende "Órdenes actuales" o "Órdenes aplicadas en el paso" para ver la línea.'); return; }
+  const cs = f.geometry.coordinates;
+  const b = cs.reduce((bb, c) => bb.extend(c), new maplibregl.LngLatBounds(cs[0], cs[0]));
+  M.map.fitBounds(b, {padding: 120, maxZoom: 16, duration: REDUCED ? 0 : 700});
+  for (const l of ['ord-hl-casing', 'ord-hl']) M.map.setFilter(l, ['all', ['==', ['geometry-type'], 'LineString'], ['==', ['get', 'fid'], f.properties.fid]]);
+  ordOpacidad(M.map, 0.28);
+  M.pinned.setLngLat(cs[Math.floor(cs.length / 2)]).setHTML(f.properties.tip).addTo(M.map);
+  $$('#apList .row[data-pk]').forEach(b => b.classList.toggle('on', b.dataset.pk === pk));
 }
 
 /** Paquetes de una lista de órdenes de la sesión en vivo (`paquete` viene de la orden, `emitida` los separa entre pasos). */
 function livePackages(orders) {
   return packagesOf((orders || []).map(o => ({id: o.short_name, delta: o.accion === 'entregar' ? o.n : -o.n, paq: o.paquete, key: o.emitida, ex: o})));
 }
-/** Paquetes cuya entrega cae en el paso actual. En la demo en vivo no hay simulador: se muestra lo planeado completo. */
+/** Paquetes que se aplican en el paso actual: su recogida o su entrega cae aquí (`fase`). En la demo en vivo no hay simulador:
+ * se muestra lo planeado completo. */
 function liveArrived(p) {
-  const llegan = new Set((p?.aplicadas || []).filter(o => o.accion === 'entregar' && o.paquete).map(o => `${o.emitida}|${o.paquete}`));
-  if (!llegan.size) return [];
-  return livePackages((S.live.session?.pasos || []).flatMap(x => x.emitidas || [])).filter(g => llegan.has(`${g.key}|${g.paq}`));
+  const fase = new Map((p?.aplicadas || []).filter(o => o.paquete).map(o => [`${o.emitida}|${o.paquete}`, o.accion]));
+  if (!fase.size) return [];
+  return livePackages((S.live.session?.pasos || []).flatMap(x => x.emitidas || []))
+    .filter(g => fase.has(`${g.key}|${g.paq}`)).map(g => ({...g, fase: fase.get(`${g.key}|${g.paq}`)}));
 }
 /** Km en línea recta de los tramos donante → receptor emitidos en un paso (coordenadas del feed). */
 function liveKm(p) {
@@ -2207,15 +2143,13 @@ function assignOrders() {
   const coords = {lon: st.map(s => s.lon), lat: st.map(s => s.lat)};
   const nm = sn => `${esc(sn)} · ${esc(bare(stationName(sn)))}`;
   const feats = [];
-  const draw = (g, kind, verbo) => {
-    for (const dn of g.donors) {
-      const f = ordFeature(coords, idx.get(dn.id), idx.get(g.recv.id), {k: kind, a: kind, n: dn.n},
-        `${verbo} ${bikesTxt(dn.n)} ${kind === 'emit' ? `en ${nm(dn.id)} → entrega en ${nm(g.recv.id)}` : `de ${nm(dn.id)} a ${nm(g.recv.id)}`}<small>Paquete ${g.paq} · recoge a las ${esc(hhmm(dn.ex.recoge))} · entrega a las ${esc(hhmm(g.recv.ex.entrega))}</small>`);
-      if (f) feats.push(f);
-    }
+  const draw = (x, kind) => {
+    const f = ordFeature(coords, idx.get(x.from), idx.get(x.to), {k: kind, a: kind, n: x.n, pk: `${x.key}|${x.paq}|${x.from}`},
+      `${kind === 'emit' ? 'Mover' : x.fase === 'recoger' ? 'Se recogen' : 'Llegan'} ${bikesTxt(x.n)} de ${nm(x.from)} a ${nm(x.to)}<small>recoger ${esc(hhmm(x.recoge))} · entregar ${esc(hhmm(x.entrega))}</small>`);
+    if (f) feats.push(f);
   };
-  if (emit) for (const g of livePackages(p.emitidas)) draw(g, 'emit', 'Recoge');
-  if (arrive) for (const g of liveArrived(p)) draw(g, 'arrive', 'Llegaron');
+  if (emit) pairsOf(livePackages(p.emitidas)).forEach(x => draw(x, 'emit'));
+  if (arrive) pairsOf(liveArrived(p)).forEach(x => draw(x, 'arrive'));
   return ordCollection(feats);
 }
 function assignView() {
@@ -2241,12 +2175,15 @@ function assignView() {
     hover: i => `${plural(st[i].bikes, 'bici', 'bicis')} ahora`,
     card: i => {
       const s = st[i];
-      const mine = (p?.emitidas || []).filter(o => o.short_name === s.short_name);
+      const mine = pairsOf(livePackages(p?.emitidas)).filter(x => x.from === s.short_name || x.to === s.short_name);
+      const li = x => x.from === s.short_name
+        ? `<li class="row" style="cursor:default">${actChip('recoger')}<span class="r-main"><span class="r-title">Llevar a ${esc(nameOf(x.to))}</span><span class="r-sub">recoger ${esc(hhmm(x.recoge))}</span></span><span class="r-end">${bikesTxt(x.n)}</span></li>`
+        : `<li class="row" style="cursor:default">${actChip('entregar')}<span class="r-main"><span class="r-title">Llegan de ${esc(nameOf(x.from))}</span><span class="r-sub">entregar ${esc(hhmm(x.entrega))}</span></span><span class="r-end">${bikesTxt(x.n)}</span></li>`;
       return {state: stationState(+s.bikes, +s.docks, s.renting && s.installed), html: `<div class="card-stats">
           <div class="card-stat hero"><b>${fmt(s.bikes)}</b><span>bicis disponibles ahora</span></div>
           <div class="card-stat"><b>${fmt(s.bikes_disabled)}</b><span>no rentables</span></div>
           <div class="card-stat"><b>${fmt(s.docks)}</b><span>anclajes libres de ${fmt(s.capacity)}</span></div></div>
-        <section><h3>Órdenes de este paso</h3>${mine.length ? `<ul class="rows">${mine.map(o => `<li class="row" style="cursor:default">${actChip(o.accion)}<span class="r-main"><span class="r-sub">${o.accion === 'recoger' ? `Recoge a las ${esc(hhmm(o.recoge))}` : `Entrega a las ${esc(hhmm(o.entrega))}`}</span></span><span class="r-end">${plural(o.n, 'bici', 'bicis')}</span></li>`).join('')}</ul>` : '<p class="rp-sub" style="margin:0">Sin órdenes en este paso.</p>'}</section>`};
+        <section><h3>Movimientos de este paso</h3>${mine.length ? `<ul class="rows">${mine.map(li).join('')}</ul>` : '<p class="rp-sub" style="margin:0">Sin movimientos en este paso.</p>'}</section>`};
     },
   };
 }
@@ -2254,7 +2191,6 @@ function assignView() {
 // ───────────────────────── arranque ─────────────────────────
 (async () => {
   const h = readHash();
-  if (h.tab === 'prediccion' && ['pronostico', 'asignacion'].includes(h.rest[0])) S.sub = h.rest[0];
   activateTab(h.tab, {fromHash: true});
   renderLegend();
   const mapP = initMap();

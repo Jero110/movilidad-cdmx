@@ -140,112 +140,71 @@
       </div>
     </section>
 
-    <!-- PREDICCIÓN -->
+    <!-- PREDICCIÓN: asignación en vivo -->
     <section class="view" id="view-prediccion" role="tabpanel" aria-labelledby="tab-prediccion" hidden>
-      <h1 class="panel-title">Predicción</h1>
-      <div class="segmented" role="tablist" aria-label="Herramienta">
-        <button role="tab" id="sub-pronostico" data-sub="pronostico" aria-selected="true">Pronóstico</button>
-        <button role="tab" id="sub-asignacion" data-sub="asignacion" aria-selected="false" tabindex="-1">Asignación</button>
-      </div>
+      <h1 class="panel-title">Asignación en vivo</h1>
       <dl class="provenance" id="dataInfo">
         <div><dt>Viajes publicados hasta</dt><dd id="lastPublished"><span class="skeleton w-8"></span></dd></div>
         <div><dt>Modelos actualizados</dt><dd id="modelsUpdated"><span class="skeleton w-8"></span></dd></div>
       </dl>
 
-      <div class="subview" id="pane-pronostico">
-        <fieldset class="field">
-          <legend>Modelo</legend>
-          <div class="choices" id="models"><span class="skeleton block"></span><span class="skeleton block"></span></div>
-        </fieldset>
-        <fieldset class="field">
-          <legend>Horizonte</legend>
-          <div class="chips" id="horizon" aria-describedby="hzHint">
-            <label><input type="radio" name="hz" value="1"><span>1 h</span></label>
-            <label><input type="radio" name="hz" value="2" checked><span>2 h</span></label>
-            <label><input type="radio" name="hz" value="3"><span>3 h</span></label>
-            <label><input type="radio" name="hz" value="4"><span>4 h</span></label>
-            <label><input type="radio" name="hz" value="dia"><span>Día completo</span></label>
-          </div>
-          <p class="hint" id="hzHint"></p>
-        </fieldset>
-        <button class="btn primary block" id="runForecast"><span class="btn-label">Pronosticar</span></button>
-        <div class="note error" id="ferror" role="alert" hidden></div>
-        <dl class="provenance" id="forecastInfo" hidden></dl>
-        <div class="zones-ctl" data-zones="pronostico">
-          <label class="toggle">
-            <input type="checkbox" id="showNumsF" data-nums="pronostico">
-            <span class="toggle-track" aria-hidden="true"></span>
-            <span>Bicis por estación</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" class="zones-on">
-            <span class="toggle-track" aria-hidden="true"></span>
-            <span>Zonas de la ciudad</span>
-          </label>
+      <div class="session" id="session" hidden>
+        <div class="session-head">
+          <span class="status-pill" id="sessState"></span>
+          <button class="btn danger sm" id="stopAssign"><svg class="ico"><use href="#i-stop"/></svg><span class="btn-label">Detener</span></button>
+        </div>
+        <dl class="provenance" id="sessInfo"></dl>
+        <div class="field" id="salfaField" hidden>
+          <label for="salfa">Costo por km (α)</label>
+          <select id="salfa"></select>
+          <p class="hint">El cambio aplica desde la siguiente decisión; las órdenes ya emitidas no cambian.</p>
         </div>
       </div>
 
-      <div class="subview" id="pane-asignacion" hidden>
-        <div class="empty" id="assignEmpty">
-          <p>La asignación usa un pronóstico. Pide uno primero.</p>
-          <button class="btn" id="goForecast">Ir a Pronóstico</button>
+      <div id="assignForm">
+        <h2 class="form-title" id="assignFormTitle" hidden>Nueva asignación</h2>
+        <fieldset class="field">
+          <legend>Pronóstico</legend>
+          <div class="choices" id="models"><span class="skeleton block"></span><span class="skeleton block"></span></div>
+        </fieldset>
+        <div class="field">
+          <label for="ahours">Emitir órdenes durante</label>
+          <select id="ahours">
+            <option value="1">1 hora</option><option value="2" selected>2 horas</option>
+            <option value="3">3 horas</option><option value="4">4 horas</option>
+          </select>
+          <p class="hint">Después sigue corriendo hasta que llega la última entrega (45 min más).</p>
         </div>
-        <div id="assignForm" hidden>
-          <p class="using" id="assignUsing"></p>
-          <div class="field">
-            <label for="ahours">Correr durante</label>
-            <select id="ahours">
-              <option value="1">1 hora</option><option value="2" selected>2 horas</option>
-              <option value="3">3 horas</option><option value="4">4 horas</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="aalfa">Costo por km (α)</label>
-            <select id="aalfa"></select>
-            <p class="hint">Minutos-estación por km de cada tramo donante → receptor. Con α más alto, donantes más cercanos: menos km y algo más de E+F. 0 = sin costo por km.</p>
-          </div>
-          <button class="btn primary block" id="startAssign"><span class="btn-label">Iniciar</span></button>
+        <div class="field">
+          <label for="aalfa">Costo por km (α)</label>
+          <select id="aalfa"></select>
+          <p class="hint">Minutos-estación por km de cada tramo donante → receptor. Con α más alto, donantes más cercanos: menos km y algo más de E+F. 0 = sin costo por km.</p>
         </div>
-        <div class="session" id="session" hidden>
-          <div class="session-head">
-            <span class="status-pill" id="sessState"></span>
-            <button class="btn danger sm" id="stopAssign"><svg class="ico"><use href="#i-stop"/></svg><span class="btn-label">Detener</span></button>
-          </div>
-          <dl class="provenance" id="sessInfo"></dl>
-          <div class="field" id="salfaField" hidden>
-            <label for="salfa">Costo por km (α)</label>
-            <select id="salfa"></select>
-            <p class="hint">El cambio aplica desde la siguiente decisión; las órdenes ya emitidas no cambian.</p>
-          </div>
-          <div class="field" id="stepPick" hidden>
-            <label for="astep">Paso</label>
-            <select id="astep"></select>
-          </div>
-          <button class="btn ghost sm" id="newAssign" hidden>Nueva asignación</button>
-        </div>
-        <div class="note error" id="aerror" role="alert" hidden></div>
-        <div class="zones-ctl" data-zones="asignacion">
+        <button class="btn primary block" id="startAssign"><span class="btn-label">Iniciar</span></button>
+      </div>
+      <div class="note error" id="aerror" role="alert" hidden></div>
+
+      <div class="zones-ctl" data-zones="asignacion">
         <label class="toggle">
-          <input type="checkbox" id="showEmitA">
+          <input type="checkbox" id="showEmitA" checked>
           <span class="toggle-track" aria-hidden="true"></span>
-          <span>Órdenes emitidas</span>
+          <span>Órdenes actuales</span>
         </label>
         <label class="toggle">
           <input type="checkbox" id="showArriveA">
           <span class="toggle-track" aria-hidden="true"></span>
-          <span>Órdenes que llegaron</span>
+          <span>Órdenes aplicadas en el paso</span>
         </label>
-          <label class="toggle">
-            <input type="checkbox" id="showNumsA" data-nums="asignacion">
-            <span class="toggle-track" aria-hidden="true"></span>
-            <span>Bicis por estación</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" class="zones-on">
-            <span class="toggle-track" aria-hidden="true"></span>
-            <span>Zonas de la ciudad</span>
-          </label>
-        </div>
+        <label class="toggle">
+          <input type="checkbox" id="showNumsA" data-nums="asignacion">
+          <span class="toggle-track" aria-hidden="true"></span>
+          <span>Bicis por estación</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" class="zones-on">
+          <span class="toggle-track" aria-hidden="true"></span>
+          <span>Zonas de la ciudad</span>
+        </label>
       </div>
     </section>
     <section class="side-legend" id="sideLegend" aria-label="Leyenda del mapa"></section>
@@ -275,12 +234,17 @@
       </div>
     </div>
 
-    <div class="dock" id="forecastDock" hidden>
-      <div class="dock-time"><strong id="ftime">--:--</strong><span id="fstep">Proyección</span></div>
-      <div class="dock-line">
-        <input type="range" id="fk" min="0" max="0" value="0" aria-label="Minutos hacia adelante">
-        <div class="ticks" id="fticks" aria-hidden="true"></div>
+    <div class="dock" id="assignDock" hidden>
+      <div class="dock-time"><strong id="atime">--:--</strong><span id="astepTxt">Paso — de —</span></div>
+      <div class="dock-ctrl">
+        <button class="icon-btn" id="aprev" aria-label="Paso anterior" title="Paso anterior (←)"><svg class="ico"><use href="#i-back"/></svg></button>
+        <button class="icon-btn" id="anext" aria-label="Paso siguiente" title="Paso siguiente (→)"><svg class="ico"><use href="#i-fwd"/></svg></button>
       </div>
+      <div class="dock-line">
+        <input type="range" id="ak" min="0" max="0" value="0" aria-label="Pasos de la asignación">
+        <div class="ticks" id="aticks" aria-hidden="true"></div>
+      </div>
+      <div class="dock-run" id="arun" aria-live="polite"></div>
     </div>
 
     <div class="legend compact" id="legend" aria-label="Leyenda del mapa (panel izquierdo oculto)"></div>
@@ -316,25 +280,15 @@
       <ul class="rows" id="rpList"></ul>
     </div>
 
-    <div id="right-pronostico" hidden>
-      <header class="rp-head"><h2>Estaciones en riesgo</h2><span class="count" id="riskCount"></span></header>
-      <div class="segmented small" role="tablist" aria-label="Filtrar riesgo" id="riskTabs">
-        <button role="tab" data-risk="all" aria-selected="true">Todas</button>
-        <button role="tab" data-risk="vacia" aria-selected="false" tabindex="-1">Se vacían</button>
-        <button role="tab" data-risk="llena" aria-selected="false" tabindex="-1">Se llenan</button>
-      </div>
-      <ul class="rows" id="riskList"></ul>
-    </div>
-
     <div id="right-asignacion" hidden>
-      <header class="rp-head"><h2 id="apTitle">Órdenes</h2></header>
+      <header class="rp-head"><h2 id="apTitle">Qué mover</h2></header>
       <p class="rp-sub" id="apSub">&nbsp;</p>
       <div class="stats" id="apStats"></div>
       <div class="segmented small" role="tablist" aria-label="Listas del paso" id="apTabs">
-        <button role="tab" data-list="emitidas" aria-selected="true">Emitidas</button>
-        <button role="tab" data-list="aplicadas" aria-selected="false" tabindex="-1">Aplicadas</button>
-        <button role="tab" data-list="llegaron" aria-selected="false" tabindex="-1">Llegaron</button>
-        <button role="tab" data-list="viajes" aria-selected="false" tabindex="-1">Viajes</button>
+        <button role="tab" data-list="emitidas" aria-selected="true">Mover</button>
+        <button role="tab" data-list="historial" aria-selected="false" tabindex="-1">Órdenes</button>
+        <button role="tab" data-list="llegaron" aria-selected="false" tabindex="-1">Llegan</button>
+        <button role="tab" data-list="pronostico" aria-selected="false" tabindex="-1">Pronóstico</button>
       </div>
       <ul class="rows" id="apList"></ul>
     </div>

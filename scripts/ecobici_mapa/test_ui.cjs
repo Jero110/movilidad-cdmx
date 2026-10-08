@@ -10,13 +10,13 @@ servidor sin su bucle de lectura del feed (útil si ya hay otro servidor escribi
 
 Recorrido: carga las tres pestañas sin errores de consola; busca una estación y abre su ficha con
 los campos de `raw`; prende y apaga las zonas (AGEB de /api/zonas) en Ahora; pliega y despliega los paneles
-(Ahora, Replay con 2 escenarios, Pronóstico) revisando leyenda y tamaño del mapa; avanza el Replay de 05:00 a 05:15 y lee
+(Ahora, Replay con 2 escenarios, Asignación) revisando leyenda y tamaño del mapa; avanza el Replay de 05:00 a 05:15 y lee
 el panel derecho (foto y acumulado desde 05:00, contra la suma de snap[0..k]) con `cuadre_ok`;
 revisa que solo se dibujen los viajes que llegaron en la foto y los desvíos; prende la coropleta
 por AGEB (sumas, colores y cortes de los pines, tooltip) y ve que cambia con la foto; compara dos escenarios (dos mapas sincronizados, panel
-A/B) y vuelve a uno; pide un pronóstico con cada modelo disponible revisando que el horizonte
-dependa de su forma; arranca una asignación en vivo, ve su primer paso, recarga la página (la
-sesión se retoma) y la detiene.
+A/B) y vuelve a uno; en Predicción (una sola vista) arranca una asignación en vivo con pronóstico y α,
+recorre la barra de pasos (último por defecto, regresa, no se adelanta), revisa los traslados del mapa y
+de la lista "Mover", recarga la página (la sesión se retoma), la detiene y ve que se puede iniciar otra.
 
 Sin dependencias npm: maneja Google Chrome por el protocolo DevTools con el WebSocket de Node (≥ 22).
 Chrome se busca en CHROME o en /Applications/Google Chrome.app. */
@@ -51,7 +51,9 @@ function fixtureServer(port) {
     const pasos = tpl.pasos.slice(0, steps);
     let estado = s.estado;
     if (estado === 'corriendo' && steps >= Math.min(tpl.pasos.length, s.horas * 4)) estado = 'terminada';
-    return {estado, model: s.model, inicio: tpl.pasos[0].t, horas: s.horas, pasos, params: {alfa: s.alfa || 0},
+    const fin = new Date(new Date(tpl.pasos[0].t).getTime() + s.horas * 3600e3);
+    const fin_emision = `${tpl.pasos[0].t.slice(0, 11)}${String(fin.getHours()).padStart(2, '0')}:${String(fin.getMinutes()).padStart(2, '0')}`;
+    return {estado, model: s.model, inicio: tpl.pasos[0].t, fin_emision, horas: s.horas, pasos, params: {alfa: s.alfa || 0, entrega_min: 60},
       totales: {visitas: pasos.reduce((n, p) => n + p.visitas, 0), bicis_a_mover: pasos.reduce((n, p) => n + p.bicis_a_mover, 0)},
       siguiente_paso: tpl.pasos[steps]?.t ?? null};
   };
@@ -640,74 +642,27 @@ async function run(base) {
     await page.eval(`(()=>{const z=document.querySelector('#view-replay .zones-on'); z.checked=false; z.dispatchEvent(new Event('change')); return true})()`);
     ok('al quitar un escenario vuelve a un solo mapa');
 
-    // Predicción · Pronóstico
+    // Predicción: una sola vista de asignación en vivo (sin subpestañas), con la barra de pasos arriba.
     await page.click('#tab-prediccion');
     await page.waitFor(`S.live.models && document.querySelectorAll('input[name="model"]').length > 0`, 'modelos cargados', 30000);
     const models = await page.eval(`[...document.querySelectorAll('input[name="model"]')].map(i=>({key:i.value, ok:!i.disabled}))`);
-    const avail = models.filter(m => m.ok).map(m => m.key);
-    if (!avail.length) throw new Error('ningún modelo disponible');
+    if (!models.some(m => m.ok)) throw new Error('ningún modelo disponible');
     const pub = await page.eval(`document.querySelector('#lastPublished').textContent + ' · ' + document.querySelector('#modelsUpdated').textContent`);
     ok(`modelos: ${models.map(m => `${m.key}${m.ok ? '' : ' (deshabilitado)'}`).join(', ')}; viajes publicados y modelos: ${pub}`);
-    const order = avail.filter(k => k !== 'lgbm_directo').concat(avail.includes('lgbm_directo') ? ['lgbm_directo'] : []);
-    for (const key of order) {
-      // El horizonte depende de la forma del modelo: diaria → solo día completo; directa → solo 1 a 4 h.
-      await page.click(`input[name="model"][value="${key}"]`);
-      const hzs = await page.eval(`(()=>{const mi=modelInfo('${key}'); return {forma:mi.forma, api:mi.horizontes ?? null, shown:[...document.querySelectorAll('#horizon label')].filter(l=>!l.hidden).map(l=>l.querySelector('input').value), checked:document.querySelector('input[name="hz"]:checked')?.value}})()`);
-      const want = hzs.api ? hzs.api.map(String) : hzs.forma === 'diaria' ? ['dia'] : ['1', '2', '3', '4'];
-      if (hzs.forma === 'diaria' ? JSON.stringify(want) !== '["dia"]' : want.includes('dia')) throw new Error(`horizontes del backend para ${key} no siguen su forma: ${JSON.stringify(hzs)}`);
-      if (JSON.stringify(hzs.shown) !== JSON.stringify(want) || !want.includes(hzs.checked)) throw new Error(`horizontes de ${key} (${hzs.forma}): ${JSON.stringify(hzs)}`);
-      const hz = hzs.checked;
-      const prevId = await page.eval(`S.live.forecast?.id ?? null`);
-      await page.click('#runForecast');
-      await page.waitFor(`(S.live.forecast && S.live.forecast.id !== ${JSON.stringify(prevId)} && S.live.forecast.model === '${key}') || !document.querySelector('#ferror').hidden`, `pronóstico ${key}`, 300000);
-      const err = await page.eval(`document.querySelector('#ferror').hidden ? null : document.querySelector('#ferror').textContent`);
-      if (err) throw new Error(`pronóstico ${key}: ${err}`);
-      const f = await page.eval(`(()=>{const f=S.live.forecast; return {n:f.minutes.length, last:f.minutes.at(-1), riesgos:(f.riesgos||[]).length, info:document.querySelector('#forecastInfo').innerText.replace(/\\n+/g,' | ')}})()`);
-      if (!f.n) throw new Error(`pronóstico ${key} sin pasos`);
-      ok(`pronóstico ${key} (${hzs.forma}; horizontes ofrecidos ${hzs.shown.join(', ')}; pedido ${hz}): ${f.n} pasos hasta +${f.last} min, ${f.riesgos} en riesgo · ${f.info}`);
-    }
-    // Zonas en Pronóstico: interruptor propio, apagado por defecto, con la proyección del minuto elegido.
-    if (zonasOk) {
-      const offs = await page.eval(`[...document.querySelectorAll('[data-zones] .zones-on')].map(c=>c.closest('[data-zones]').dataset.zones+':'+c.checked).join(' ')`);
-      if (/true/.test(offs)) throw new Error(`algún interruptor de zonas quedó prendido al llegar a Pronóstico: ${offs}`);
-      await page.click('[data-zones="pronostico"] .zones-on');
-      await page.waitFor(`S.map.getSource('zones')._data?.features?.length > 0`, 'zonas en Pronóstico', 30000);
-      const zf = await page.eval(`(()=>{const f=S.live.forecast, j=S.live.fk, idx=new Map(f._stations.map((s,i)=>[snKey(s.short_name),i])), geo=new Map(S.zones.geo.map(g=>[g.properties.cvegeo,g]));
-        const feats=S.map.getSource('zones')._data.features; let bad=0;
-        for (const x of feats) { let b=0; for (const sn of geo.get(x.properties.cvegeo).properties.estaciones) { const i=idx.get(snKey(sn)); if (i!==undefined && f._stations[i].cap) b+=f.proyeccion[j][i]; } if (b!==x.properties.b) bad++; }
-        return {n:feats.length, bad, others:['ahora','replay','asignacion'].map(k=>document.querySelector('[data-zones="'+k+'"] .zones-on').checked)}})()`);
-      if (zf.bad || zf.others.some(Boolean)) throw new Error(`zonas de Pronóstico: ${JSON.stringify(zf)}`);
-      ok(`Pronóstico: zonas propias con la proyección del minuto elegido (${zf.n} AGEB); Ahora, Replay y Asignación siguen apagados`);
-      await page.click('[data-zones="pronostico"] .zones-on');  // vuelve al valor por defecto para la captura
-    }
-    // "Bicis por estación" en Pronóstico: propio, apagado por defecto, con el estado proyectado.
-    const nf = await page.eval(`(()=>{const before=document.querySelector('#showNumsF').checked; document.querySelector('#showNumsF').click();
-      const f=S.map.getSource('st')._data.features, j=S.live.fk, p=S.live.forecast;
-      const ok=f.every(x=>x.properties.anchor==='num' && x.properties.img.split('|')[2]===String(p.proyeccion[j][x.properties.i]) && x.properties.img.split('|')[1]===stationState(p.proyeccion[j][x.properties.i], (p._stations[x.properties.i].cap ?? Infinity)-p.proyeccion[j][x.properties.i], true));
-      const r={before, n:f.length, ok, replay:document.querySelector('#showNums').checked, asign:document.querySelector('#showNumsA').checked};
-      document.querySelector('#showNumsF').click(); return r})()`);
-    if (nf.before || !nf.ok || nf.replay || nf.asign) throw new Error(`"Bicis por estación" en Pronóstico: ${JSON.stringify(nf)}`);
-    await page.eval(`(openStation(S.live.forecast._byShort.get(S.live.forecast.riesgos?.[0]?.short_name) ?? 0, {fly:false}), true)`);
-    await page.waitFor(`!document.querySelector('#card').hidden`, 'ficha de pronóstico');
-    await checkLinks('Pronóstico');
-    await page.eval(`(closeCard(), true)`);
-    ok(`Pronóstico: "Bicis por estación" propio (apagado por defecto) pone ${nf.n} números con el estado proyectado; Replay y Asignación no cambian`);
-    await checkPanels('Pronóstico', true);
-    await page.eval(`(()=>{const r=document.querySelector('#fk'); r.value=Math.min(+r.max, 7); r.dispatchEvent(new Event('input')); S.map.jumpTo({center:[-99.168,19.418], zoom:13.4}); return true})()`);
-    await sleep(5000);
-    if (shots) await page.shot('ux-04-pronostico.png');
-
-    // Predicción · Asignación
-    await page.click('#sub-asignacion');
-    await page.waitFor(`!document.querySelector('#assignForm').hidden`, 'formulario de asignación');
+    const pv = await page.eval(`(()=>({subtabs:!!document.querySelector('#view-prediccion .segmented'), form:!document.querySelector('#assignForm').hidden, dock:document.querySelector('#assignDock').hidden, emit:document.querySelector('#showEmitA').checked, arrive:document.querySelector('#showArriveA').checked}))()`);
+    if (pv.subtabs || !pv.form || !pv.dock || !pv.emit || pv.arrive) throw new Error(`Predicción al entrar: ${JSON.stringify(pv)}`);
+    ok('Predicción: una sola vista; formulario visible, sin barra de pasos hasta iniciar; "Órdenes actuales" prendido y "Órdenes aplicadas en el paso" apagado');
+    if (await page.eval(`!!modelInfo('lgbm_directo')?.disponible`)) await page.click('input[name="model"][value="lgbm_directo"]');
     await page.eval(`document.querySelector('#ahours').value='1'`);
     await page.eval(`(()=>{const s=document.querySelector('#aalfa'); if (!s || s.value!=='0') throw new Error('selector α de Asignación debe arrancar en 0'); s.value='1'; return true})()`);
     await page.click('#startAssign');
     await page.waitFor(`S.live.session && (S.live.session.pasos||[]).length >= 1 || !document.querySelector('#aerror').hidden`, 'primer paso de la asignación', 300000);
     const aerr = await page.eval(`document.querySelector('#aerror').hidden ? null : document.querySelector('#aerror').textContent`);
     if (aerr) throw new Error(`asignación: ${aerr}`);
-    const a1 = await page.eval(`(()=>{const s=S.live.session,p=s.pasos[0]; return {id:S.live.sessionId, estado:s.estado, t:p.t, emitidas:p.emitidas.length, visitas:p.visitas, bicis:p.bicis_a_mover, sig:s.siguiente_paso, title:document.querySelector('#apTitle').textContent, rows:document.querySelectorAll('#apList .row').length}})()`);
-    ok(`asignación ${a1.id} ${a1.estado}: primer paso ${a1.t} con ${a1.emitidas} órdenes (${a1.visitas} visitas, ${a1.bicis} bicis), siguiente paso ${a1.sig}; panel "${a1.title}" con ${a1.rows} filas`);
+    const a1 = await page.eval(`(()=>{const s=S.live.session,p=s.pasos[0]; return {id:S.live.sessionId, estado:s.estado, model:s.model, t:p.t, emitidas:p.emitidas.length, bicis:p.bicis_a_mover, title:document.querySelector('#apTitle').textContent, rows:document.querySelectorAll('#apList .row').length, form:document.querySelector('#assignForm').hidden, dock:!document.querySelector('#assignDock').hidden, paso:document.querySelector('#astepTxt').textContent, run:document.querySelector('#arun').innerText.replace(/\\n+/g,' · '), pron:!!S.live.forecast}})()`);
+    if (!a1.dock || !/^Paso 1 de \d+/.test(a1.paso) || !a1.run || !a1.pron) throw new Error(`barra de pasos de la asignación: ${JSON.stringify(a1)}`);
+    if (a1.estado === 'corriendo' && !a1.form) throw new Error('el formulario debe ocultarse mientras la sesión corre');
+    ok(`asignación ${a1.id} (${a1.model}) ${a1.estado}: paso ${a1.t} con ${a1.emitidas} órdenes (${a1.bicis} bicis); barra "${a1.paso}" · "${a1.run}"; panel "${a1.title}" con ${a1.rows} filas`);
     if (shots) {
       await page.eval(`(()=>{const p=S.live.session.pasos.at(-1); const sn=p.emitidas[0]?.short_name; const s=S.snapshot.stations.find(x=>x.short_name===sn); if(s) S.map.jumpTo({center:[s.lon,s.lat], zoom:12.6}); return true})()`);
       await sleep(5000);
@@ -722,83 +677,102 @@ async function run(base) {
         ok('Asignación: la sesión inicia con α=1 y el cambio a α=5 en caliente llega al servidor (aplica desde la siguiente decisión)');
       } else ok('Asignación: la sesión inició con α=1');
     }
-    // Órdenes en Asignación: emitidas del paso (siempre) y las que llegaron (cuando algún paso aplica una entrega).
+    // Barra de pasos: por defecto en el último; se puede regresar a los ya calculados y no adelantarse a los que faltan.
+    if (flag('--fixtures')) await page.waitFor(`S.live.session.pasos.length >= 3`, 'tres pasos de la sesión', 120000);
+    {
+      const n = await page.eval(`S.live.session.pasos.length`);
+      if (n >= 2) {
+        const last = await page.eval(`({k:S.live.step, v:+document.querySelector('#ak').value, follow:S.live.follow})`);
+        if (last.k !== n - 1 || last.v !== n - 1) throw new Error(`la barra debe arrancar en el último paso: ${JSON.stringify(last)} de ${n}`);
+        await page.click('#aprev');
+        const back = await page.eval(`({k:S.live.step, follow:S.live.follow, title:document.querySelector('#apTitle').textContent, time:document.querySelector('#atime').textContent})`);
+        if (back.k !== n - 2 || back.follow) throw new Error(`regresar un paso: ${JSON.stringify(back)}`);
+        await page.eval(`(()=>{const r=document.querySelector('#ak'); r.value=r.max; r.dispatchEvent(new Event('input')); return true})()`);
+        const fwd = await page.eval(`({k:S.live.step, max:+document.querySelector('#ak').max, follow:S.live.follow})`);
+        if (fwd.k !== n - 1 || !fwd.follow) throw new Error(`la barra no debe pasar del último paso calculado: ${JSON.stringify(fwd)}`);
+        ok(`barra de pasos: arranca en el último (${n}), ← regresa al ${n - 1} ("${back.title}"), y al arrastrar al final (${fwd.max + 1} pasos previstos) se queda en el último calculado`);
+      } else skipped.push('navegación de la barra de pasos (la sesión solo tiene un paso)');
+    }
+    // Movimientos: un renglón por traslado con su línea en el mapa; al pulsar el renglón, el mapa va a la línea.
     {
       const hasPq = await page.eval(`S.live.session.pasos.some(p => (p.emitidas || []).some(o => o.paquete))`);
-      if (!hasPq) skipped.push('órdenes de Asignación (la sesión no tiene órdenes con paquete en sus pasos)');
+      if (!hasPq) skipped.push('movimientos de Asignación (la sesión no tiene órdenes con paquete en sus pasos)');
       else {
-        const off = await page.eval(`(()=>({e:document.querySelector('#showEmitA').checked, a:document.querySelector('#showArriveA').checked}))()`);
-        if (off.e || off.a) throw new Error(`órdenes de Asignación deberían arrancar apagadas: ${JSON.stringify(off)}`);
         const feats = () => page.eval(`(()=>{const f=S.map.getSource('orders')._data.features.filter(x=>x.geometry.type==='LineString'); return {emit:f.filter(x=>x.properties.k==='emit').length, arrive:f.filter(x=>x.properties.k==='arrive').length, tip:f.every(x=>x.properties.tip)}})()`);
-        if (shots && flag('--fixtures')) await page.waitFor(`S.live.session.pasos.some(p => liveArrived(p).length)`, 'un paso que aplique una entrega', 120000).catch(() => {});
-        const ks = await page.eval(`(()=>{const ps=S.live.session.pasos; return {two: ps.findIndex(p=>livePackages(p.emitidas).some(g=>g.donors.length>=2)), arr: ps.findIndex(p=>liveArrived(p).length>0)}})()`);
-        const goStep = j => page.eval(`(()=>{const el=document.querySelector('#astep'); el.value=${j}; el.dispatchEvent(new Event('change')); return true})()`);
-        const st = ks.two >= 0 ? ks.two : 0;
-        await goStep(st);
-        await page.click('#showEmitA');
-        const wantE = await page.eval(`livePackages(currentStep().emitidas).reduce((n,g)=>n+g.donors.length,0)`);
+        const ks = await page.eval(`(()=>{const ps=S.live.session.pasos; return {em: ps.findIndex(p=>livePackages(p.emitidas).length>0), arr: ps.findIndex(p=>liveArrived(p).length>0)}})()`);
+        await page.eval(`(goAssignStep(${ks.em}), true)`);
+        const wantE = await page.eval(`pairsOf(livePackages(currentStep().emitidas)).length`);
         const e1 = await feats();
-        if (e1.emit !== wantE || e1.arrive || !e1.tip) throw new Error(`Asignación "Órdenes emitidas": ${JSON.stringify(e1)} (esperaba ${wantE})`);
-        const leg = await page.eval(`document.querySelector('#sideLegend').textContent`);
-        if (!/orden emitida/.test(leg)) throw new Error(`leyenda de Asignación: ${leg}`);
-        await page.eval(`(()=>{S.live.list='emitidas'; renderAssignList(); return true})()`);
-        const le = await page.eval(`({pkg:document.querySelectorAll('#apList li.pkg').length, txt:document.querySelector('#apList').textContent})`);
-        if (!le.pkg || !/Recoge en/.test(le.txt) || !/entrega en/.test(le.txt)) throw new Error(`lista "Emitidas" de Asignación: ${JSON.stringify(le)}`);
-        if (shots) {
-          await page.eval(`(()=>{const g=livePackages(currentStep().emitidas)[0]; const s=S.snapshot.stations.find(x=>x.short_name===g.recv.id); if(s) S.map.jumpTo({center:[s.lon,s.lat], zoom:13}); return true})()`);
-          await sleep(5000);
-          await page.shot('ord-03-prediccion-emitidas.png');
-        }
-        let msg = `Asignación: "Órdenes emitidas" dibuja ${e1.emit} líneas del paso ${st + 1} y la lista sale por paquete`;
+        if (e1.emit !== wantE || e1.arrive || !e1.tip) throw new Error(`"Órdenes actuales": ${JSON.stringify(e1)} (esperaba ${wantE})`);
+        const le = await page.eval(`({rows:document.querySelectorAll('#apList .row[data-pk]').length, txt:document.querySelector('#apList').textContent})`);
+        if (le.rows !== wantE || !/→ a /.test(le.txt)) throw new Error(`lista "Mover": ${JSON.stringify({rows: le.rows, wantE})}`);
+        await page.eval(`(document.querySelector('#apList .row[data-pk]').click(), true)`);
+        await page.waitFor(`!!document.querySelector('.maplibregl-popup.ord') && document.querySelector('#apList .row.on')`, 'ficha del traslado elegido', 15000);
+        if (shots) { await sleep(2000); await page.shot('ord-03-prediccion-emitidas.png'); }
+        let msg = `Asignación: "Órdenes actuales" dibuja ${e1.emit} traslados del paso ${ks.em + 1}, uno por renglón de "Mover"; al pulsar un renglón el mapa va a su línea`;
         if (ks.arr >= 0) {
-          await goStep(ks.arr);
+          await page.eval(`(goAssignStep(${ks.arr}), true)`);
           await page.click('#showEmitA'); await page.click('#showArriveA');
-          const wantA = await page.eval(`liveArrived(currentStep()).reduce((n,g)=>n+g.donors.length,0)`);
+          const wantA = await page.eval(`pairsOf(liveArrived(currentStep())).length`);
           const e2 = await feats();
-          if (e2.arrive !== wantA || e2.emit || !e2.tip) throw new Error(`Asignación "Órdenes que llegaron": ${JSON.stringify(e2)} (esperaba ${wantA})`);
-          await page.eval(`(()=>{S.live.list='llegaron'; renderAssignList(); return true})()`);
-          if (!await page.eval(`document.querySelectorAll('#apList li.pkg').length > 0`)) throw new Error('lista "Llegaron" de Asignación vacía');
-          if (shots) {
-            await page.eval(`(()=>{const g=liveArrived(currentStep())[0]; const s=S.snapshot.stations.find(x=>x.short_name===g.recv.id); if(s) S.map.jumpTo({center:[s.lon,s.lat], zoom:13}); return true})()`);
-            await sleep(5000);
-            await page.shot('ord-04-prediccion-llegaron.png');
-          }
-          await page.click('#showArriveA');
-          msg += `; "Órdenes que llegaron" dibuja ${e2.arrive} en el paso ${ks.arr + 1}`;
-        } else {
-          await page.click('#showEmitA');
-          msg += '; ningún paso aplicó aún una entrega (sin líneas de llegada que revisar)';
-        }
-        await goStep(0);
-        await page.eval(`(()=>{S.live.list='emitidas'; renderAssignList(); return true})()`);
+          if (e2.arrive !== wantA || e2.emit || !e2.tip) throw new Error(`"Órdenes aplicadas en el paso": ${JSON.stringify(e2)} (esperaba ${wantA})`);
+          await page.click('#apTabs [data-list="llegaron"]');
+          if (await page.eval(`document.querySelectorAll('#apList .row[data-pk]').length`) !== wantA) throw new Error('lista "Llegan" de Asignación');
+          if (shots) { await sleep(3000); await page.shot('ord-04-prediccion-llegaron.png'); }
+          await page.click('#showArriveA'); await page.click('#showEmitA');
+          msg += `; "Órdenes aplicadas en el paso" dibuja ${e2.arrive} en el paso ${ks.arr + 1}`;
+        } else msg += '; ningún paso aplicó aún una entrega (sin líneas de llegada que revisar)';
+        await page.click('#apTabs [data-list="emitidas"]');
+        await page.eval(`(goAssignStep(S.live.session.pasos.length - 1), true)`);
         ok(msg);
       }
+    }
+    {  // Órdenes: historial por cuarto de hora hasta el paso elegido.
+      await page.click('#apTabs [data-list="historial"]');
+      const hi = await page.eval(`(()=>{const ps=S.live.session.pasos.slice(0,S.live.step+1); return {heads:document.querySelectorAll('#apList li.pkg').length, rows:document.querySelectorAll('#apList .row[data-pk]').length, want:ps.reduce((n,p)=>n+pairsOf(livePackages(p.emitidas)).length,0), steps:ps.length}})()`);
+      if (hi.heads !== hi.steps || hi.rows !== hi.want) throw new Error(`pestaña Órdenes (historial): ${JSON.stringify(hi)}`);
+      if (hi.steps >= 2) {
+        await page.eval(`(document.querySelectorAll('#apList li.pkg')[1].nextElementSibling.querySelector('.row[data-pk]')?.click(), true)`);
+        const st = await page.eval(`({k:S.live.step, n:S.live.session.pasos.length})`);
+        if (st.k !== st.n - 2) throw new Error(`picar una orden de un paso anterior debe ir a ese paso: ${JSON.stringify(st)}`);
+        await page.eval(`(goAssignStep(S.live.session.pasos.length - 1), true)`);
+      }
+      await page.click('#apTabs [data-list="emitidas"]');
+      ok(`Asignación: "Órdenes" muestra el historial en ${hi.steps} cuartos de hora (${hi.rows} traslados); picar una orden vieja lleva a su paso`);
+    }
+    {  // El pronóstico no sale por defecto: está en su pestaña del panel derecho.
+      await page.click('#apTabs [data-list="pronostico"]');
+      const pr = await page.eval(`({rows:document.querySelectorAll('#apList .row').length, txt:document.querySelector('#apList').textContent.slice(0,120)})`);
+      if (!/emitido a las/.test(pr.txt)) throw new Error(`pestaña Pronóstico del panel: ${JSON.stringify(pr)}`);
+      await page.click('#apTabs [data-list="emitidas"]');
+      ok(`Asignación: el pronóstico de la sesión se ve en la pestaña "Pronóstico" del panel (${pr.rows} estaciones en riesgo)`);
     }
     if (zonasOk) {
       const before = await page.eval(`document.querySelector('[data-zones="asignacion"] .zones-on').checked`);
       if (before) throw new Error('las zonas de Asignación deberían arrancar apagadas');
       await page.click('[data-zones="asignacion"] .zones-on');
       await page.waitFor(`S.view.mode === 'asignacion' && S.map.getSource('zones')._data?.features?.length > 0`, 'zonas en Asignación', 30000);
-      const za = await page.eval(`(()=>({n:S.map.getSource('zones')._data.features.length, pron:document.querySelector('[data-zones="pronostico"] .zones-on').checked}))()`);
+      const za = await page.eval(`S.map.getSource('zones')._data.features.length`);
       await page.click('[data-zones="asignacion"] .zones-on');
-      ok(`Asignación: zonas propias con el estado actual del feed (${za.n} AGEB); el de Pronóstico no cambió (${za.pron ? 'prendido' : 'apagado'})`);
+      ok(`Asignación: zonas propias con el estado actual del feed (${za} AGEB)`);
     }
     const na = await page.eval(`(()=>{const before=document.querySelector('#showNumsA').checked; document.querySelector('#showNumsA').click();
       const f=S.map.getSource('st')._data.features; const st=S.snapshot.stations;
       const ok=f.length>0 && f.every(x=>x.properties.anchor==='num' && x.properties.img.split('|')[1]===stationState(+st[x.properties.i].bikes, +st[x.properties.i].docks, st[x.properties.i].renting&&st[x.properties.i].installed));
-      const r={before, n:f.length, ok, pron:document.querySelector('#showNumsF').checked}; document.querySelector('#showNumsA').click(); return r})()`);
-    if (na.before || !na.ok || na.pron) throw new Error(`"Bicis por estación" en Asignación: ${JSON.stringify(na)}`);
+      const r={before, n:f.length, ok, replay:document.querySelector('#showNums').checked}; document.querySelector('#showNumsA').click(); return r})()`);
+    if (na.before || !na.ok || na.replay) throw new Error(`"Bicis por estación" en Asignación: ${JSON.stringify(na)}`);
     ok(`Asignación: "Bicis por estación" propio pone ${na.n} números con el estado actual del feed`);
+    await checkPanels('Asignación', true);
     await page.goto(`${base}/#prediccion/asignacion`);
     await page.waitFor(`S.live.session && S.live.sessionId === ${JSON.stringify(a1.id)}`, 'sesión retomada tras recargar', 30000);
-    ok('al recargar la página se retoma la sesión activa');
+    ok('al recargar la página se retoma la sesión activa (con su pronóstico en el panel)');
     if (await page.eval(`S.live.session.estado === 'corriendo'`)) {
       await page.click('#stopAssign');
       await page.waitFor(`S.live.session.estado === 'detenida'`, 'sesión detenida', 30000);
-      ok(`asignación detenida: ${await page.eval(`document.querySelector('#sessState').textContent`)}`);
-    } else {
-      ok(`la sesión ya estaba ${await page.eval(`S.live.session.estado`)}; no hay nada que detener`);
     }
+    const fin = await page.eval(`({pill:document.querySelector('#sessState').textContent, form:!document.querySelector('#assignForm').hidden, title:!document.querySelector('#assignFormTitle').hidden, stop:document.querySelector('#stopAssign').hidden})`);
+    if (!fin.form || !fin.title || !fin.stop) throw new Error(`tras detener o terminar se debe poder iniciar otra: ${JSON.stringify(fin)}`);
+    ok(`asignación ${fin.pill.toLowerCase()}; el formulario "Nueva asignación" vuelve para iniciar otra`);
 
     // El plegado y el ancho se recuerdan por pestaña (localStorage) al recargar.
     await page.click('#tab-replay');

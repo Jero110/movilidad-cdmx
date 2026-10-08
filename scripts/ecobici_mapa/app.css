@@ -396,7 +396,12 @@ select:disabled { color: var(--ink-4); background-color: var(--surface-2); curso
   display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 16px;
   padding: 10px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-2);
 }
-#forecastDock { grid-template-columns: auto 1fr; }
+#assignDock { width: min(760px, calc(100% - 24px)); grid-template-columns: auto auto 1fr auto; }
+.dock-run { display: grid; line-height: 1.25; font-size: 12px; color: var(--ink-3); text-align: right; white-space: nowrap; }
+.dock-run b { font-size: 13px; color: var(--ink); font-weight: 650; }
+/* Pasos de la asignación: oscuro hasta el paso elegido, gris medio lo ya calculado, claro lo que falta. */
+#ak { --q: 0%; }
+#ak::-webkit-slider-runnable-track { background: linear-gradient(to right, var(--ink) var(--p), var(--ink-3) var(--p), var(--ink-3) var(--q), var(--line-strong) var(--q)); }
 .dock-time { display: grid; line-height: 1.15; min-width: 76px; }
 .dock-time strong { font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
 .dock-time span { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
@@ -657,3 +662,12 @@ input[type="range"]:disabled { cursor: not-allowed; opacity: .5; }
 .side-legend .legend-item { white-space: normal; }
 .card-links { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; border-top: 1px solid var(--line); padding-top: 14px; }
 .card-links .btn { text-decoration: none; }
+
+/* Asignación: renglones "mover N bicis de X a Y" */
+.form-title { margin: 4px 0 0; font-size: 15px; font-weight: 650; }
+.row.move { align-items: start; }
+.mv-n { display: grid; justify-items: center; min-width: 44px; padding: 4px 6px; border-radius: var(--r-sm, 6px); background: var(--surface-2, #f1f3f5); font-size: 11px; color: var(--ink-3); line-height: 1.1; }
+.mv-n b { font-size: 17px; color: var(--ink); }
+.mv-to { font-weight: 600; }
+.stat-pair.tri { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.row.move.on { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--emit); }
