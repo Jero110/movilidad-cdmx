@@ -390,10 +390,11 @@ def sens_table(b: Book):
     b.add('xEco', fmt(base_eco), src + ', sens_pares_sin_regla ecobici EF (no cambia con ninguna variante)')
     b.add('xMa', fmt(base_ma), src + ', sens_pares_sin_regla ma_diaria EF (caso base)')
     b.add('xMaPct', fmt(100 * (1 - base_ma / base_eco), 1), src + ', 1 − EF ma_diaria base / EF ecobici')
-    lines = [r'\begin{tabular}{@{}lrrr@{}}', r'\toprule',
-             r'Variante & E+F & Cambio $\pm$ IC95 & Orác. dir. \\', r'\midrule',
-             f'Ecobici (medido) & {fmt(base_eco)} & --- & --- \\\\',
-             f'Caso base, media móvil & {fmt(base_ma)} & --- & --- \\\\', r'\midrule']
+    vs_eco = lambda x: fmt_s(100 * (x / base_eco - 1), 1)                    # noqa: E731
+    lines = [r'\begin{tabular}{@{}lrrrr@{}}', r'\toprule',
+             r'Variante & E+F & Cambio $\pm$ IC95 & vs.\ Ecobici, \% & Orác. dir. \\', r'\midrule',
+             f'Ecobici (medido) & {fmt(base_eco)} & --- & --- & --- \\\\',
+             f'Caso base, media móvil & {fmt(base_ma)} & --- & {vs_eco(base_ma)} & --- \\\\', r'\midrule']
     variants = (('sens_entrega_45', r'Entrega a los \rentregaCorta{} min', 'Corta'),
                 ('sens_entrega_75', r'Entrega a los \rentregaLarga{} min', 'Larga'),
                 ('sens_danadas_feed', 'No rentables según el feed', 'Dan'))
@@ -404,7 +405,7 @@ def sens_table(b: Book):
     for v, label, tag in variants:
         d, lo, hi = (delta(v, 'ma_diaria', c) for c in ('delta_EF_base', 'IC95_inf', 'IC95_sup'))
         o = delta(v, 'oraculo_directo', 'delta_EF_base')
-        lines.append(f'{label} & {fmt(ef(v, "ma_diaria"))} & {fmt_s(d)} $\\pm$ {fmt((hi - lo) / 2)} & {fmt_s(o)} \\\\')
+        lines.append(f'{label} & {fmt(ef(v, "ma_diaria"))} & {fmt_s(d)} $\\pm$ {fmt((hi - lo) / 2)} & {vs_eco(ef(v, "ma_diaria"))} & {fmt_s(o)} \\\\')
         b.add(f'x{tag}Pct', fmt(100 * (1 - ef(v, 'ma_diaria') / base_eco), 1), src + f', {v}, 1 − EF ma_diaria / EF ecobici base')
     return '\n'.join(lines + [r'\bottomrule', r'\end{tabular}']) + '\n'
 

@@ -24,22 +24,28 @@ eval(src.slice(a, b).replace('class Page', 'globalThis.Page = class Page').repla
     await page.goto(`http://127.0.0.1:${port}/#replay/2025-09-01`);
     await page.click('#tab-replay');
     await page.waitFor(`S.replay.arm && !document.querySelector('#rk').disabled && document.querySelector('#rday').value==='2025-09-01'`, 'replay', 90000);
+    // Deja seleccionados exactamente los escenarios `want`, en ese orden (uno o dos).
+    const checked = () => page.eval(`[...document.querySelectorAll('#rarms input')].filter(i=>i.checked).map(i=>i.value)`);
     const setArms = async want => {
-      for (const v of await page.eval(`[...document.querySelectorAll('#rarms input')].filter(i=>i.checked).map(i=>i.value)`)) {
-        if (await page.eval(`[...document.querySelectorAll('#rarms input')].filter(i=>i.checked).length`) > 1) { await page.click(`#rarms input[value="${v}"]`); await sleep(1500); }
-      }
-      const only = await page.eval(`[...document.querySelectorAll('#rarms input')].find(i=>i.checked).value`);
+      while ((await checked()).length > 1) { await page.click(`#rarms input[value="${(await checked()).at(-1)}"]`); await sleep(1500); }
+      const only = (await checked())[0];
       if (only !== want[0]) { await page.click(`#rarms input[value="${want[0]}"]`); await sleep(1500); await page.click(`#rarms input[value="${only}"]`); await sleep(1500); }
-      await page.click(`#rarms input[value="${want[1]}"]`);
-      await page.waitFor(`S.replay.sel.length===2 && MAPS[1]?.ready && S.replay.sel[0].arm==='${want[0]}' && S.replay.sel[1].arm==='${want[1]}'`, 'escenarios ' + want, 90000);
-      if (await page.eval(`document.querySelector('#showDetours').checked`)) await page.click('#showDetours');
+      if (want[1]) await page.click(`#rarms input[value="${want[1]}"]`);
+      await page.waitFor(`S.replay.sel.length===${want.length} && ${want.length === 2 ? 'MAPS[1]?.ready' : "document.querySelector('#map2').hidden"} && ` +
+        want.map((a, j) => `S.replay.sel[${j}].arm==='${a}'`).join(' && '), 'escenarios ' + want, 90000);
+      // Como en los pies de figura: sin viajes desviados ni cambios de dañadas; solo zonas y órdenes.
+      for (const id of ['#showDetours', '#showDamaged', '#showTrips', '#showNums'])
+        if (await page.eval(`!!document.querySelector('${id}')?.checked`)) await page.click(id);
     };
     if (!(await page.eval(`document.querySelector('#view-replay .zones-on').checked`)))
       await page.eval(`(()=>{const z=document.querySelector('#view-replay .zones-on'); z.checked=true; z.dispatchEvent(new Event('change')); return true})()`);
     if (!(await page.eval(`document.querySelector('#main').classList.contains('left-collapsed')`))) await page.click('#toggleLeft');
     const shots = [];
-    for (const [A, B, tag] of [['ecobici', 'lgbm_directo', 'eco-lgbm'], ['sin_rebalanceo', 'lgbm_directo', 'sin-lgbm']]) {
-      await setArms([A, B]);
+    const jobs = [[['ecobici', 'lgbm_directo'], 'eco-lgbm', 803], [['sin_rebalanceo', 'lgbm_directo'], 'sin-lgbm', 803], [['sin_rebalanceo'], 'sin', 2077]];
+    for (const [arms, tag, height] of jobs) {
+      await page.send('Emulation.setDeviceMetricsOverride', {width: 2400, height, deviceScaleFactor: 1, mobile: false});
+      await sleep(1000);
+      await setArms(arms);
       await page.waitFor(`S.map.getSource('zones')?._data?.features?.length > 0`, 'zonas', 90000);
       for (const hhmm of ['09:00', '21:00']) {
         const k = await page.eval(`S.replay.dayData.times.indexOf('${hhmm}')`);
@@ -49,7 +55,7 @@ eval(src.slice(a, b).replace('class Page', 'globalThis.Page = class Page').repla
           S.map.fitBounds([[Math.min(...lo),Math.min(...la)],[Math.max(...lo),Math.max(...la)]], {padding:30, animate:false}); return true})()`);
         await sleep(5000);
         const box = await page.eval(`(()=>{const st=S.replay.dayData._stations.filter(s=>s.lat!=null);
-          return MAPS.slice(0,2).map(M=>{const r=M.map.getContainer().getBoundingClientRect(); const xs=st.map(s=>M.map.project([s.lon,s.lat]).x);
+          return MAPS.slice(0,S.replay.sel.length).map(M=>{const r=M.map.getContainer().getBoundingClientRect(); const xs=st.map(s=>M.map.project([s.lon,s.lat]).x);
             return {left:r.left, width:r.width, top:r.top, height:r.height, x0:Math.min(...xs), x1:Math.max(...xs)}})})()`);
         const name = `${tag}-${hhmm.replace(':', '')}.png`;
         await page.shot(name);

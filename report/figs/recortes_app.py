@@ -4,10 +4,11 @@
     uv run python3 report/figs/recortes_app.py <dir>     # escribe report/figs/app-caso/*.jpg
     uv run python3 report/figs/recortes_app.py <dir> --check
 
-Por cada captura: el JPG completo (`<nombre>.jpg`) y, para Ecobici contra
-LightGBM directo, la versión de columnas (`<nombre>-col.jpg`): de la captura
-sin controles (`-limpio.png`) se toma cada mapa entre la estación más al oeste
-y la más al este, ±25 px, a toda su altura, y se pegan con 16 px en blanco.
+Por cada captura: el JPG completo (`<nombre>.jpg`) y, salvo para sin
+rebalanceo contra LightGBM directo, la versión de columnas (`<nombre>-col.jpg`):
+de la captura sin controles (`-limpio.png`) se toma cada mapa entre la estación
+más al oeste y la más al este, ±25 px, a toda su altura, y si son dos se pegan
+con 16 px en blanco.
 """
 from __future__ import annotations
 
@@ -34,15 +35,17 @@ def generate(src: Path) -> dict[Path, bytes]:
     for c in json.loads((src / 'cajas.json').read_text()):
         name = c['name']
         files[OUT / name.replace('.png', '.jpg')] = jpg(Image.open(src / name).convert('RGB'))
-        if not name.startswith('eco-lgbm'):
+        if name.startswith('sin-lgbm'):
             continue
         clean = Image.open(src / name.replace('.png', '-limpio.png')).convert('RGB')
         parts = [clean.crop((int(b['left'] + b['x0'] - MARGEN), int(b['top']),
                              int(b['left'] + b['x1'] + MARGEN), int(b['top'] + b['height'])))
                  for b in c['box']]
-        col = Image.new('RGB', (sum(p.width for p in parts) + SEPARACION, parts[0].height), 'white')
-        col.paste(parts[0], (0, 0))
-        col.paste(parts[1], (parts[0].width + SEPARACION, 0))
+        col = Image.new('RGB', (sum(p.width for p in parts) + SEPARACION * (len(parts) - 1), parts[0].height), 'white')
+        x = 0
+        for part in parts:
+            col.paste(part, (x, 0))
+            x += part.width + SEPARACION
         files[OUT / name.replace('.png', '-col.jpg')] = jpg(col)
     return files
 
