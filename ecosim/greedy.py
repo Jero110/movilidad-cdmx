@@ -38,7 +38,10 @@ cuesta además α·D[i, j] (minutos-estación por km):
 - el costo del paquete suma α·D[i, j] por cada donante que toma.
 
 gain[i] no cambia: es el ahorro del receptor si las bicis fueran gratis.
-Con alfa = 0 (o D = None) se usa el procedimiento de arriba, sin cambios.
+Un tramo con D[i, j] = NaN es imposible: el donante j no se toma para i. Así
+llegan las estaciones sin coordenadas y, con alfa > 0, los tramos que pasan del
+tope por calle (`Asignador._distancias`, `C.TOPE_TRAMO_KM`).
+Con alfa = 0 (o D = None) se usa el procedimiento de arriba, sin cambios ni tope.
 
 Devuelve (pick, deliver, paquetes): bicis a recoger y a entregar por
 estación y la lista de paquetes en el orden en que se asignaron. Cada
@@ -115,7 +118,7 @@ def _greedy_alfa(r, u, pc, dc, lam, V, alfa, D):
         J = donors_all[(~used[donors_all]) & (donors_all != i)]
         if len(J) == 0:
             continue
-        # Estación sin coordenadas (D = NaN): tramo imposible, el donante queda al final y nunca se toma.
+        # Tramo imposible (D = NaN: sin coordenadas o más allá del tope): el donante queda al final y nunca se toma.
         leg = np.nan_to_num(lam + alfa * D[i, J], nan=np.inf)
         tot = pc[J][:, 1:] + leg[:, None]
         tot = np.where(ks[None, :] <= r[J][:, None], tot / ks[None, :], np.inf)

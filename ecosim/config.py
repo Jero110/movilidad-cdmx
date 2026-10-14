@@ -70,6 +70,16 @@ PICKUP_MIN = 15
 DELIVERY_MIN = 60
 DELIVERY_SENS_MIN = (45, 60, 75)
 
+# Tope por tramo, solo con α > 0: el traslado de un donante a su receptor tiene
+# DELIVERY_MIN − PICKUP_MIN = 45 min; al peor ritmo del día (hora pico de la tarde,
+# TomTom Traffic Index 2025, Ciudad de México) son 9.5 km por calle. La distancia por
+# calle sale de OSRM sin tráfico entre las estaciones de los días de prueba
+# (docs/planner/runs/ecosim-greedy/osrm_matriz.py); un par fuera de la matriz no tiene tope.
+TRAMO_MIN = DELIVERY_MIN - PICKUP_MIN
+MIN_POR_KM_PICO = 4.73
+TOPE_TRAMO_KM = TRAMO_MIN / MIN_POR_KM_PICO
+OSRM_MATRIZ = Path(__file__).resolve().parent / "osrm_matriz.npz"
+
 # Topes duros: p95 de Ecobici en todo 2025 (`anual_2025` en
 # results/medicion/ecobici_stats.json; `run.cap()` los lee de ahí).
 VISITS_PER_DECISION = 55

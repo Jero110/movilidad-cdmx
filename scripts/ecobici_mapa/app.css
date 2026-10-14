@@ -264,8 +264,8 @@ select:disabled { color: var(--ink-4); background-color: var(--surface-2); curso
 .param b { font-weight: 650; color: var(--ink); }
 
 /* interruptor */
-.toggle { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14px; color: var(--ink-2); min-height: 44px; }
-.toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.toggle { position: relative; display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14px; color: var(--ink-2); min-height: 44px; }
+.toggle input { position: absolute; top: 0; left: 0; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
 .toggle-track { position: relative; width: 36px; height: 20px; border-radius: 10px; background: var(--line-strong); transition: background var(--t-fast); }
 .toggle-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-1); transition: transform var(--t-med) var(--ease); }
 .toggle input:checked + .toggle-track { background: var(--ink); }

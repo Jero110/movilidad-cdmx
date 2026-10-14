@@ -104,15 +104,29 @@ class Plan:
 class Asignador:
     """Política greedy; ninguna agenda histórica ni acceso a viajes futuros."""
 
-    def __init__(self, coords: dict | None = None):
+    def __init__(self, coords: dict | None = None, calle: tuple | None = None):
         """`coords`: {short_name: (lat, lon)}, solo para alfa > 0. Sin ella se usan las
-        coordenadas de `data.stations(día)`; en vivo, las del feed."""
+        coordenadas de `data.stations(día)`; en vivo, las del feed. `calle`: (ids, km) con
+        km[a, b] por calle de a a b, para el tope por tramo; sin ella, `C.OSRM_MATRIZ`."""
         self.last_plan: Plan | None = None
         self.coords = coords
+        self.calle = calle
         self._D = None
 
+    def _km_calle(self, names) -> np.ndarray:
+        """R[i, j]: km por calle del donante j al receptor i; NaN si un par no está en la matriz."""
+        if self.calle is None:
+            m = np.load(C.OSRM_MATRIZ)
+            self.calle = ([str(s) for s in m["ids"]], m["dist_m"] / 1000)
+        ids, km = self.calle
+        ix = {s: k for k, s in enumerate(ids)}
+        idx = np.array([ix.get(str(nm), -1) for nm in names])
+        R = km[np.ix_(idx.clip(0), idx.clip(0))].T
+        return np.where((idx[:, None] >= 0) & (idx[None, :] >= 0), R, np.nan)
+
     def _distancias(self, names, t) -> np.ndarray:
-        """Matriz de km en línea recta (haversine) entre estaciones; NaN si falta una coordenada."""
+        """Matriz de km en línea recta (haversine) entre estaciones; NaN si falta una coordenada
+        o si el tramo pasa del tope por calle (`C.TOPE_TRAMO_KM`): el greedy no toma ese donante."""
         key = (C.window_day(t), tuple(names))
         if self._D is not None and self._D[0] == key:
             return self._D[1]
@@ -127,6 +141,7 @@ class Asignador:
         lat, lon = c[:, 0][:, None], c[:, 1][:, None]
         h = np.sin((lat - lat.T) / 2) ** 2 + np.cos(lat) * np.cos(lat.T) * np.sin((lon - lon.T) / 2) ** 2
         D = 2 * 6371.0 * np.arcsin(np.sqrt(h))
+        D = np.where(self._km_calle(names) > C.TOPE_TRAMO_KM, np.nan, D)
         self._D = (key, D)
         return D
 

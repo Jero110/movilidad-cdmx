@@ -343,3 +343,20 @@ def test_asignador_con_alfa_usa_coordenadas_y_acerca_donantes():
     assert donors(base) and donors(cerca) == {"N"}
     with pytest.raises(ValueError):
         PolicyParams(alfa=-1)
+
+
+def test_alfa_tope_por_calle_no_toma_donante_lejano():
+    stations = {"R": (3, 20), "L": (19, 20), "N": (19, 20)}
+    rates = {"R": (12, 0), "L": (0, 0), "N": (0, 0)}
+    state, fc, _ = fixture(stations, rates, max_bikes_per_visit=20)
+    coords = {"R": (19.43, -99.15), "L": (19.431, -99.15), "N": (19.432, -99.15)}  # los dos a ~0.1 km en línea recta
+    # Por calle, L está a 20 km de R (más que el tope) y N a 1 km; km[a, b] va de a a b.
+    ids, km = ["R", "L", "N"], np.array([[0, 1, 1], [20, 0, 1], [1, 1, 0.0]])
+    p = PolicyParams(n_hours=2, lam=0, max_bikes_per_visit=20, alfa=1.0)
+    orders = Asignador(coords, calle=(ids, km)).decide(T, state, [], fc, p)
+    donors = {o.short_name for o in orders if o.delta < 0}
+    assert donors == {"N"} and sum(o.delta for o in orders) == 0
+    assert C.TOPE_TRAMO_KM == pytest.approx(45 / 4.73)
+    # Con α = 0 no hay tope: el greedy de siempre puede tomar a L.
+    base = Asignador(coords, calle=(ids, km)).decide(T, state, [], fc, PolicyParams(n_hours=2, lam=0, max_bikes_per_visit=20))
+    assert sum(o.delta for o in base) == 0 and {o.short_name for o in base if o.delta < 0} <= {"L", "N"}
