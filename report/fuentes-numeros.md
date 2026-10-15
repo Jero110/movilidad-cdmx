@@ -32,6 +32,14 @@ Comprobar sin escribir: `uv run python3 report/figs/numeros_run3.py --check` (re
 | `\rorDEF` | 40,872 | ecosim/results/resultados.csv (tag=prueba), media por día; arm=oraculo_diario, EF |
 | `\rorDirPct` | 67.0 | ecosim/results/resultados.csv (tag=prueba), media por día; 1 − EF(oraculo_directo)/EF(ecobici) |
 | `\rorDirEF` | 33,684 | ecosim/results/resultados.csv (tag=prueba), media por día; arm=oraculo_directo, EF |
+| `\rlgbmDVsMa` | $+$385 | ecosim/results/resultados.csv (tag=prueba), media por día; media de EF(lgbm_diario) − EF(ma_diaria) por día |
+| `\rlgbmDVsMaIC` | 298 | ecosim/results/resultados.csv (tag=prueba), media por día; semiancho del IC95 t pareado por día |
+| `\rlgbmDVsMaPct` | 0.7 | ecosim/results/resultados.csv (tag=prueba), media por día; |diferencia| / EF(ma_diaria) × 100 |
+| `\rlgbmDVsMaMaxPct` | 1.2 | ecosim/results/resultados.csv (tag=prueba), media por día; extremo del IC95 más lejano de cero / EF(ma_diaria) × 100 |
+| `\rlgbmDirVsMa` | $-$292 | ecosim/results/resultados.csv (tag=prueba), media por día; media de EF(lgbm_directo) − EF(ma_diaria) por día |
+| `\rlgbmDirVsMaIC` | 557 | ecosim/results/resultados.csv (tag=prueba), media por día; semiancho del IC95 t pareado por día |
+| `\rlgbmDirVsMaPct` | 0.5 | ecosim/results/resultados.csv (tag=prueba), media por día; |diferencia| / EF(ma_diaria) × 100 |
+| `\rlgbmDirVsMaMaxPct` | 1.5 | ecosim/results/resultados.csv (tag=prueba), media por día; extremo del IC95 más lejano de cero / EF(ma_diaria) × 100 |
 | `\rmaGana` | 121 | ecosim/results/resultados.csv (tag=prueba), media por día; días con EF(ma_diaria) < EF(ecobici) |
 | `\rmaVisPct` | 9.0 | ecosim/results/resultados.csv (tag=prueba), media por día; 1 − visitas(ma_diaria)/visitas(ecobici) |
 | `\rmaGap` | 16,930 | ecosim/results/resultados.csv (tag=prueba), media por día; EF(ma_diaria) − EF(oraculo_diario) |

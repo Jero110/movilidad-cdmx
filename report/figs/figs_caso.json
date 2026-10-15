@@ -467,9 +467,17 @@
   "valor": "1.6",
   "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, ma_diaria, k=0, neto, MAE"
  },
- "fWapeMaSal": {
-  "valor": "40",
-  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, ma_diaria, k=0, salidas, WAPE × 100"
+ "fMaeNetoMa": {
+  "valor": "1.62",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, ma_diaria, k=0, neto, MAE (dos decimales)"
+ },
+ "fMaeNetoD": {
+  "valor": "1.60",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, lgbm_diario, k=0, neto, MAE (dos decimales)"
+ },
+ "fMaeNetoDir": {
+  "valor": "1.99",
+  "origen": "ecosim/results/pronostico/accuracy_run3.csv, meses 2025-09 a 2025-12, agrupado por n, lgbm_directo, k=0, neto, MAE (dos decimales)"
  },
  "xEco": {
   "valor": "102,135",

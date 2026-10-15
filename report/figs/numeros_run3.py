@@ -143,6 +143,15 @@ def results_macros(b: Book):
                      ('oraculo_diario', 'orD'), ('oraculo_directo', 'orDir')]:
         b.add(key + 'Pct', f'{pct[arm][0]:.1f}', RESULTS_SRC + f'; 1 − EF({arm})/EF(ecobici)')
         b.add(key + 'EF', fmt(mean(by[arm], 'EF')), RESULTS_SRC + f'; arm={arm}, EF')
+    # Cada LightGBM contra la media móvil, pareado por día: ¿se distinguen los pronósticos?
+    e_ma = mean(ma, 'EF')
+    for arm, key in [('lgbm_diario', 'lgbmDVsMa'), ('lgbm_directo', 'lgbmDirVsMa')]:
+        m, half = paired_ci(by[arm], ma)
+        b.add(key, ('$+$' if m > 0 else '$-$') + fmt(abs(m)), RESULTS_SRC + f'; media de EF({arm}) − EF(ma_diaria) por día')
+        b.add(key + 'IC', fmt(half), RESULTS_SRC + '; semiancho del IC95 t pareado por día')
+        b.add(key + 'Pct', f'{abs(m) / e_ma * 100:.1f}', RESULTS_SRC + f'; |diferencia| / EF(ma_diaria) × 100')
+        b.add(key + 'MaxPct', f'{max(abs(m - half), abs(m + half)) / e_ma * 100:.1f}',
+              RESULTS_SRC + '; extremo del IC95 más lejano de cero / EF(ma_diaria) × 100')
     wins = sum(float(x['EF']) < float(y['EF']) for x, y in
                zip(sorted(ma, key=lambda r: r['day']), sorted(eco, key=lambda r: r['day'])))
     b.add('maGana', wins, RESULTS_SRC + '; días con EF(ma_diaria) < EF(ecobici)')
@@ -698,7 +707,7 @@ def generate():
 def check_prose():
     """Las cifras externas citadas en prosa siguen escritas igual en el texto."""
     tex = (OUT / 'reporte-caso.tex').read_text()
-    for literal in ('1,990', '4,139', '114', '34.56', '9,308', '3,500', '687', '19.4', '284,289', '13.5', '05:00', '00:30'):
+    for literal in ('1,990', '4,139', '114', '34.56', '9,308', '3,500', '687', '19.4', '284,289', '05:00', '00:30'):
         assert literal in tex, f'Falta en el texto la cifra externa {literal}'
     med = (R / 'medicion/REPORT.md').read_text()
     for literal in ('4201141', '12:07:09'):
@@ -717,7 +726,9 @@ def main():
         tex = (OUT / 'reporte-caso.tex').read_text()
         latex = {'ef', 'aggedbottom', 'aggedright', 'enewcommand', 'floor', 'ho'}  # \ref, \raggedbottom, \renewcommand, \rfloor, \rho
         used = set(re.findall(r'\\r([A-Za-z]+)', tex)) - latex
-        missing = sorted(u for u in used if u not in b.vals)
+        # Las \rt… del ritmo salen de ritmo_caso.py (numeros-ritmo.tex), con su propio --check.
+        ritmo = set(re.findall(r'\\newcommand\{\\r([A-Za-z]+)\}', (OUT / 'numeros-ritmo.tex').read_text()))
+        missing = sorted(u for u in used if u not in b.vals and u not in ritmo)
         assert not missing, f'Macros usadas sin origen: {missing}'
         check_prose()
         print(f'OK --check: {len(b.vals)} macros, {len(files)} artefactos idénticos a su origen; '

@@ -351,16 +351,15 @@ def forecast_table(b: Book, test_days):
     g['mae'], g['wape'] = g.e / g.n, g.e / g.real
     src = f'ecosim/results/pronostico/accuracy_run3.csv, meses {months[0]} a {months[-1]}, agrupado por n'
     names = {'ma_diaria': 'Media móvil', 'lgbm_diario': 'LightGBM diario', 'lgbm_directo': 'LightGBM directo'}
-    lines = [r'\begin{tabular}{@{}lrrrrrr@{}}', r'\toprule',
-             r' & \multicolumn{2}{c}{Salidas} & \multicolumn{2}{c}{Llegadas} & \multicolumn{2}{c}{Neto} \\',
-             r'Pronóstico & MAE & WAPE, \% & MAE & WAPE, \% & MAE & WAPE, \% \\']
+    lines = [r'\begin{tabular}{@{}lrrr@{}}', r'\toprule',
+             r'Pronóstico & Salidas & Llegadas & Neto \\']
     for k, titulo in ((0, 'Primera hora'), (N_HORAS - 1, f'Hora {N_HORAS} hacia adelante')):
-        lines += [r'\midrule', rf'\multicolumn{{7}}{{@{{}}l}}{{\emph{{{titulo}}}}} \\']
+        lines += [r'\midrule', rf'\multicolumn{{4}}{{@{{}}l}}{{\emph{{{titulo}}}}} \\']
         for var, name in names.items():
             cells = []
             for obj in ('salidas', 'llegadas', 'neto'):
                 r = g.loc[(var, k, obj)]
-                cells += [f'{r.mae:.2f}', f'{100 * r.wape:.0f}']
+                cells.append(f'{r.mae:.2f}')
             lines.append(f'{name} & ' + ' & '.join(cells) + r' \\')
     # Diferencia relativa del error del neto frente a la media móvil (el asignador usa el flujo neto).
     for k, pos in ((0, 'Pri'), (N_HORAS - 1, 'Ult')):
@@ -374,7 +373,8 @@ def forecast_table(b: Book, test_days):
         b.add(f'fMejor{tag}', 'si' if mejor else 'no', f'{src}, {var} menor MAE que ma_diaria en las seis celdas de la tabla')
     b.add('fMeses', len(months), f'{src}, meses de prueba')
     b.add('fMaeMaPri', f"{g.loc[('ma_diaria', 0, 'neto')].mae:.1f}", f'{src}, ma_diaria, k=0, neto, MAE')
-    b.add('fWapeMaSal', f"{100 * g.loc[('ma_diaria', 0, 'salidas')].wape:.0f}", f'{src}, ma_diaria, k=0, salidas, WAPE × 100')
+    for var, tag in (('ma_diaria', 'Ma'), ('lgbm_diario', 'D'), ('lgbm_directo', 'Dir')):
+        b.add(f'fMaeNeto{tag}', f"{g.loc[(var, 0, 'neto')].mae:.2f}", f'{src}, {var}, k=0, neto, MAE (dos decimales)')
     return '\n'.join(lines + [r'\bottomrule', r'\end{tabular}']) + '\n'
 
 

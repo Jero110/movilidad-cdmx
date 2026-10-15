@@ -21,11 +21,11 @@
 \begin{document}
 \raggedbottom
 \title{Pronóstico y asignación para el rebalanceo de Ecobici: un modelo de optimización bajo restricciones logísticas}
-\author{\IEEEauthorblockN{Jerónimo Deli}\IEEEauthorblockA{Ciencia de Datos Aplicada, ITAM\\Ciudad de México}}
+\author{\IEEEauthorblockN{Jerónimo Deli Larios}\IEEEauthorblockA{Instituto Tecnológico Autónomo de México\\Ciudad de México}}
 \maketitle
 
 \begin{abstract}
-La demanda de Ecobici, el sistema de bicicletas públicas de la Ciudad de México, cambia a lo largo del día: en hora pico unas estaciones se quedan sin bicis mientras otras se llenan por completo, y hoy equipos del propio sistema rebalancean durante el día para corregirlo. En este trabajo medimos ese rebalanceo con datos públicos, reconstruimos a partir de ellos su logística y la usamos como restricción de un algoritmo de asignación que, cada quince minutos y a partir de un pronóstico de viajes, decide cuántas bicis recoger y entregar en cada estación. En un mismo simulador, viaje por viaje y durante los cuatro últimos meses de 2025, comparamos el rebalanceo de Ecobici con el asignador alimentado por tres pronósticos y por información perfecta. Con un pronóstico sencillo y el mismo número de visitas que Ecobici en los días en que se ajustó, el asignador reduce casi a la mitad el tiempo con estaciones vacías o llenas; un modelo más complejo no mejora el resultado, y en las estaciones de mayor demanda la ventaja casi desaparece.
+La demanda de Ecobici, el sistema de bicicletas públicas de la Ciudad de México, cambia a lo largo del día. En hora pico unas estaciones se quedan sin bicis y otras se llenan, y los equipos de Ecobici rebalancean durante el día para corregirlo. Medimos ese rebalanceo con datos públicos y reconstruimos su logística. Con esa logística como restricción, construimos un algoritmo de asignación que cada quince minutos usa un pronóstico de viajes para decidir cuántas bicis recoger y entregar en cada estación. Comparamos las dos políticas en un mismo simulador que repite, viaje por viaje, los cuatro últimos meses de 2025. Con un pronóstico sencillo y menos visitas que Ecobici, el asignador reduce en \rmaPct\% el tiempo con estaciones vacías o llenas, y en \caDiezEco\% si además limitamos la distancia de cada traslado. Un modelo de pronóstico más complejo no mejora el resultado.
 \end{abstract}
 \begin{IEEEkeywords}
 Ecobici, rebalanceo, bicicletas compartidas, pronóstico, algoritmo greedy, simulación.
@@ -57,7 +57,7 @@ Reconocemos que la demanda dinámica es la principal causa de que las bicicletas
 Conviene aclarar de dónde sale esta figura. La produce nuestro simulador, que repite los viajes reales de ese día sin que nadie mueva una sola bici. Ecobici ya rebalancea, así que no es lo que se vio en la calle, sino lo que se habría visto sin el trabajo de sus equipos.
 
 \subsection{Cómo medimos el problema}\label{sec:metricas}
-Medimos el problema en minutos-estación. Llamamos $E$ a los minutos-estación con cero bicis disponibles y $F$ a los minutos-estación con cero anclajes libres; un minuto-estación es una estación durante un minuto, de modo que diez estaciones vacías durante una hora suman 600. $\EF$ mide cuánto tiempo el sistema no sirve a quien llega a sacar o a dejar una bici. Como segunda métrica contamos los desvíos, es decir, los viajes que no pueden salir de su estación porque está vacía, o terminar en ella porque está llena, y que el simulador manda a la estación más cercana que sí puede atenderlos; los reportamos por cada 100 salidas. Las dos métricas no miden lo mismo, porque $\EF$ pesa igual un minuto vacío en cualquier estación, mientras que los desvíos se acumulan donde hay más viajes.
+Medimos el problema en minutos-estación. Llamamos $E$ a los minutos-estación con cero bicis disponibles y $F$ a los minutos-estación con cero anclajes libres; un minuto-estación es una estación durante un minuto, de modo que diez estaciones vacías durante una hora suman 600. $\EF$ mide cuánto tiempo el sistema no sirve a quien llega a sacar o a dejar una bici. Además contamos los desvíos, es decir, los viajes que no pueden salir de su estación porque está vacía, o terminar en ella porque está llena, y que el simulador manda a la estación más cercana que sí puede atenderlos. Los reportamos por cada 100 salidas, pero solo como información y no como métrica para comparar con Ecobici (Sección~\ref{sec:viajes}).
 
 Sumamos $E$ y $F$ con el mismo peso porque no encontrar bici y no poder dejarla son, para el usuario, el mismo problema: el sistema no le sirve. Se podría argumentar que quedarse sin bici es más grave, ya que impide empezar el viaje y es la queja más frecuente en la encuesta, pero preferimos no inventar una ponderación que no podemos medir y tratamos ambos minutos como equivalentes.
 
@@ -66,18 +66,17 @@ Con estas métricas se ve la importancia del rebalanceo (Tabla~\ref{tab:diferenc
 \begin{table}[H]
 \centering\footnotesize
 \setlength{\tabcolsep}{4pt}
-\caption{Lo que evita el rebalanceo de Ecobici, con los mismos viajes: sin rebalanceo y con los movimientos medidos de Ecobici. $E$, $F$ y $\EF$ en minutos-estación; desvíos por día; distancia media de un desvío en línea recta.}
+\caption{Lo que evita el rebalanceo de Ecobici, con los mismos viajes: sin rebalanceo y con los movimientos medidos de Ecobici. Media por día en los \rdias{} días de prueba. $E$, $F$ y $\EF$ en minutos-estación; desvíos por día; distancia media de un desvío en línea recta.}
 \label{tab:diferencia}
-\begin{tabular}{@{}lrrrr@{}}
+\begin{tabular}{@{}lrr@{}}
 \toprule
- & \multicolumn{2}{c}{1 sep. 2025} & \multicolumn{2}{c}{Media de \rdias{} días} \\
- & Sin rebal. & Ecobici & Sin rebal. & Ecobici \\
+ & Sin rebalanceo & Ecobici \\
 \midrule
-$E$ & \cdBaseE & \cdEcoE & \rbaseE & \recoE \\
-$F$ & \cdBaseF & \cdEcoF & \rbaseF & \recoF \\
-$\EF$ & \cdBaseEF & \cdEcoEF & \rbaseEF & \recoEF \\
-Desvíos & \cdBaseDesv & \cdEcoDesv & \cmBaseDesv & \cmEcoDesv \\
-Distancia, m & \cdBaseKm & \cdEcoKm & \cmBaseKm & \cmEcoKm \\
+$E$ & \rbaseE & \recoE \\
+$F$ & \rbaseF & \recoF \\
+$\EF$ & \rbaseEF & \recoEF \\
+Desvíos & \cmBaseDesv & \cmEcoDesv \\
+Distancia, m & \cmBaseKm & \cmEcoKm \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -85,29 +84,27 @@ Distancia, m & \cdBaseKm & \cdEcoKm & \cmBaseKm & \cmEcoKm \\
 \subsection{Pregunta, hipótesis y alcance}
 Considerando que trabajamos en un ambiente de información asimétrica, en el que no sabemos exactamente cómo rebalancea Ecobici, cuántas camionetas tiene ni a qué hora salen, nos preguntamos si es posible reconstruir su logística a partir de los patrones de sus datos públicos y, con esa misma logística, construir modelos de pronóstico y algoritmos de asignación que mejoren el sistema. Nuestra hipótesis es que asignar bicis cada quince minutos a partir de un pronóstico de viajes reduce $\EF$ frente al rebalanceo actual de Ecobici con el mismo esfuerzo.
 
-El trabajo se centra en saber si el pronóstico mejora o no el rebalanceo. Decidimos cuántas bicis recoger o entregar en cada estación, con topes de esfuerzo y tiempos de traslado tomados de la operación de Ecobici, pero no trazamos las rutas de las camionetas ni calculamos cuántos vehículos harían falta. Todo el análisis ocurre dentro de un simulador, por lo que el resultado es una comparación entre políticas y no una medición en la calle.
+El trabajo se centra en saber si el pronóstico mejora o no el rebalanceo. Decidimos cuántas bicis recoger o entregar en cada estación, con topes de esfuerzo tomados de la operación de Ecobici, y trazamos por calle cada traslado de una estación a otra para revisar que quepa en el tiempo disponible (Sección~\ref{sec:tramos}). No calculamos cuántas camionetas harían falta. Todo el análisis ocurre dentro de un simulador, por lo que el resultado es una comparación entre políticas y no una medición en la calle.
 
 % ======================================================================
 \section{Supuestos}\label{sec:supuestos}
 \subsection{Planteamiento}
-Dividimos el trabajo en tres partes. La primera consiste en reconstruir lo que hace Ecobici a partir de sus datos públicos. La segunda es la asignación, en la que suponemos conocidos los viajes que saldrán y llegarán a cada estación y buscamos la mejor manera de repartir las bicis. La resolvemos con un procedimiento greedy que arma la decisión por paquetes, cada uno con una estación que recibe y las estaciones que le dan las bicis (Sección~\ref{sec:asignador}), porque hay que repartir un cupo común de visitas entre cientos de estaciones y garantizar que lo que se recoge sea igual a lo que se entrega, dos condiciones que una regla de umbrales por estación no puede imponer. En las tres partes, un minuto vacío y uno lleno pesan lo mismo (Sección~\ref{sec:metricas}). La tercera parte es construir un pronóstico que se acerque lo más posible a ese conocimiento perfecto. Dado lo ruidosa que es la demanda de cada estación, una media móvil es una referencia difícil de superar; aun así probamos LightGBM \cite{ke2017lightgbm}, que capta interacciones entre estación, hora y día sin especificarlas a mano.
+Dividimos el trabajo en tres partes. La primera consiste en reconstruir lo que hace Ecobici a partir de sus datos públicos. La segunda es la asignación, en la que suponemos conocidos los viajes que saldrán y llegarán a cada estación y buscamos la mejor manera de repartir las bicis. La resolvemos con un procedimiento greedy que arma la decisión por paquetes. Cada paquete tiene una estación que recibe bicis y las estaciones que se las dan (Sección~\ref{sec:asignador}). Usamos paquetes porque hay que repartir un número limitado de visitas entre cientos de estaciones, y porque lo que se recoge debe ser igual a lo que se entrega. Una regla de umbrales por estación no puede garantizar ninguna de las dos cosas. La tercera parte es construir un pronóstico que se acerque lo más posible a ese conocimiento perfecto. Dado lo ruidosa que es la demanda de cada estación, una media móvil es una referencia difícil de superar; aun así probamos LightGBM \cite{ke2017lightgbm}, que capta interacciones entre estación, hora y día sin especificarlas a mano.
 
 \subsection{Datos}\label{sec:fuentes}
-Trabajamos con cuatro fuentes públicas. La primera es el estado en vivo de las estaciones, un conjunto de archivos JSON en el estándar GBFS \cite{gbfs} que Ecobici actualiza cada diez segundos con las bicis disponibles, las no rentables y los anclajes libres de cada estación. Ese feed, sin embargo, es efímero: muestra solo el presente y no queda guardado en ningún lado, al menos no para el público. La segunda fuente resuelve ese problema. Max Halford mantiene un repositorio de código abierto, \texttt{bike-sharing-history} \cite{halford_bsh}, que consulta el feed cada unos quince minutos y archiva cada foto, de modo que contamos con un histórico por estación. Como esas fotos no bastan para saber qué pasó entre una y otra, las cruzamos con la tercera fuente, los viajes que Ecobici publica cada mes en datos abiertos \cite{ecobici_datos}, con la bici, las estaciones y la hora exacta de cada viaje (los campos están en el Apéndice~\ref{ap:campos}). La cuarta fuente son las AGEB urbanas del INEGI \cite{inegi_mg2024}, que usamos solo para visualizar.
+Trabajamos con cuatro fuentes públicas. La primera es el estado en vivo de las estaciones, un conjunto de archivos JSON en el estándar GBFS \cite{gbfs} que Ecobici actualiza cada diez segundos con las bicis disponibles, las no rentables y los anclajes libres de cada estación. Ese feed, sin embargo, es efímero: muestra solo el presente y no queda guardado en ningún lado, al menos no para el público. La segunda fuente resuelve ese problema. Max Halford mantiene un repositorio de código abierto, \texttt{bike-sharing-history} \cite{halford_bsh}, que consulta el feed cada unos quince minutos y archiva cada foto, de modo que contamos con un histórico por estación. Como esas fotos no bastan para saber qué pasó entre una y otra, las cruzamos con la tercera fuente, los viajes que Ecobici publica cada mes en datos abiertos \cite{ecobici_datos}, con la bici, las estaciones y la hora exacta de cada viaje (los campos están en el Apéndice~\ref{ap:campos}). La cuarta fuente son las AGEB urbanas del INEGI \cite{inegi_mg2024}, que usamos solo para visualizar. Para estimar cuánto tarda un traslado entre dos estaciones usamos además las distancias por calle de OpenStreetMap \cite{osm} y la velocidad en hora pico que reporta TomTom \cite{tomtom2025} (Sección~\ref{sec:logistica}).
 
-Este cruce es relevante porque estamos en un ambiente de información asimétrica: no conocemos los rebalanceos exactos de Ecobici, ni cuántas camionetas tiene o a qué hora salen, así que todos esos números los inferimos de los datos con los supuestos que siguen. Suponemos que no hay datos no observados más allá de los huecos del histórico de fotos, que aparecen cuando el repositorio tarda más de quince minutos entre una consulta y la siguiente; la mediana entre fotos es de \rhuecoMed{} minutos, pero entre las 18:00 y las 21:59 sube a \rhuecoTarde. No inventamos fotos para cubrir esos huecos. Cuando falta una, el intervalo simplemente es más largo, observamos solo el cambio neto entre las dos fotos que sí existen y la estación conserva el valor de la última foto hasta que llega la siguiente. A veces una estación reporta una foto en blanco, con todos sus campos en cero; esas fotos las ignoramos al medir movimientos, porque no dicen nada sobre la estación. Además, solo usamos los días en los que al menos el \rcovMin\% de las horas tiene alguna foto, para que los huecos no dominen la medición. En 2025 cumplen \cvOkVeinticinco{} de \cvDiasVeinticinco{} días; en la prueba se descarta el \cvDiaExcl{} (\cvOkPrueba{} de \cvDiasPrueba), y el entrenamiento de los pronósticos no se afecta, porque usa los viajes del CSV (Apéndice~\ref{ap:cobertura}). El archivo guarda cada foto unos \rlagS{}~s después del estado que describe, así que restamos ese desfase antes de cruzarla con los viajes; las dos fuentes se unen por número de estación y por hora.
+El histórico de fotos tiene huecos. A veces el repositorio tarda más de quince minutos entre una consulta y la siguiente. La mediana entre fotos es de \rhuecoMed{} minutos, pero entre las 18:00 y las 21:59 sube a \rhuecoTarde. Fuera de esos huecos, suponemos que no hay datos que no veamos. No inventamos fotos para cubrir esos huecos. Cuando falta una, el intervalo simplemente es más largo, observamos solo el cambio neto entre las dos fotos que sí existen y la estación conserva el valor de la última foto hasta que llega la siguiente. A veces una estación reporta una foto en blanco, con todos sus campos en cero; esas fotos las ignoramos al medir movimientos, porque no dicen nada sobre la estación. Además, para que los huecos no dominen la medición, solo usamos los días en los que al menos el \rcovMin\% de las horas tiene alguna foto. De los \cvDiasVeinticinco{} días de 2025 cumplen \cvOkVeinticinco. En los meses de prueba solo se queda fuera un día, el \cvDiaExcl, así que evaluamos \cvOkPrueba{} de \cvDiasPrueba{} días. Este filtro solo aplica a lo que depende de las fotos: los pronósticos se entrenan con los viajes, que no tienen huecos (Apéndice~\ref{ap:cobertura}). El archivo guarda cada foto unos \rlagS{}~s después del estado que describe, así que restamos ese desfase antes de cruzarla con los viajes; las dos fuentes se unen por número de estación y por hora.
 
 \subsection{Rebalanceo de Ecobici}\label{sec:medicion}
 Hay dos maneras de saber si Ecobici rebalanceó. La primera sigue a cada bici por su identificador y detecta cuándo salta de la estación donde terminó un viaje a otra donde empieza el siguiente. Es un método frágil, porque si una bici desaparece varios días no sabemos qué ocurrió en medio, y un salto no dice cuántas bicis se movieron juntas. La segunda, que es la que usamos, compara en cada estación el cambio de bicis entre dos fotos con lo que explican los viajes. Entre dos fotos consecutivas $t_0$ y $t_1$ de la estación $i$,
 \begin{equation}\label{eq:delta}
 \delta_i=\Delta b_i+\Delta d_i-(a_i-s_i),
 \end{equation}
-donde $b$ son las bicis disponibles, $d$ las no rentables, y $a$ y $s$ las llegadas y salidas con hora en $(t_0,t_1]$. Lo que el cambio de bicis no explica con viajes lo atribuimos a Ecobici, y cada $\delta_i\neq0$ cuenta como una visita. El método da un piso del esfuerzo real, porque si en un intervalo traen una bici y se llevan tres solo vemos $-2$.
-
-Ecobici rebalancea siguiendo a la demanda con un pequeño retraso, en una ola de mañana y otra de tarde (Apéndice~\ref{ap:ecobici}).
+donde $b$ son las bicis disponibles, $d$ las no rentables, y $a$ y $s$ las llegadas y salidas con hora en $(t_0,t_1]$. Lo que el cambio de bicis no explica con viajes lo atribuimos a Ecobici, y cada $\delta_i\neq0$ cuenta como una visita. Sumamos las no rentables porque una bici puede cambiar de etiqueta sin moverse: si alguien reporta una falla, la bici deja de estar disponible pero sigue anclada en la misma estación. Si solo miráramos $b$, ese cambio parecería una visita de Ecobici; al sumar $b$ y $d$ da cero. La Tabla~\ref{tab:etiqueta} del Apéndice~\ref{ap:ecobici} muestra tres casos. Este método solo ve el cambio neto de cada estación entre dos fotos: si en un mismo intervalo Ecobici deja dos bicis y se lleva cinco, solo vemos que se llevó tres. Lo que medimos es, entonces, lo mínimo que hizo Ecobici; su esfuerzo real puede ser mayor, así que compararnos con él no nos favorece.
 
 \subsubsection{Cuántas visitas por cada 15 minutos}
-En promedio, Ecobici hace \recoVis{} visitas y mueve \recoBicis{} bicis por día entre las 05:00 y las 00:30, unas \chVisQuince{} visitas y \chPorQuince{} bicis por cuarto de hora. Para fijar un tope de esfuerzo llevamos las visitas de cada intervalo entre fotos a una base de quince minutos (visitas $\times$ 15 / duración del intervalo), en todas las fotos de los \ctopeDias{} días válidos de \ctopePeriodo, incluidas las que no tienen ninguna visita, y tomamos como tope el percentil 95, \ctopeVis{} visitas por decisión; el \cfigVisBajoTope\% de las fotos queda en el tope o por debajo (Fig.~\ref{fig:topes}a).
+En promedio, Ecobici hace \recoVis{} visitas y mueve \recoBicis{} bicis por día entre las 05:00 y las 00:30, unas \chVisQuince{} visitas y \chPorQuince{} bicis por cuarto de hora. Para fijar un tope de esfuerzo llevamos las visitas de cada intervalo entre fotos a una base de quince minutos (visitas $\times$ 15 / duración del intervalo), en todas las fotos de los \ctopeDias{} días válidos de \ctopePeriodo, incluidas las que no tienen ninguna visita, y tomamos como tope el percentil 95, \cfigVisPNoventaCinco, redondeado a \ctopeVis{} visitas por decisión; el \cfigVisBajoTope\% de las fotos queda en el tope o por debajo (Fig.~\ref{fig:topes}a).
 
 
 \begin{figure}[!htb]
@@ -117,32 +114,35 @@ En promedio, Ecobici hace \recoVis{} visitas y mueve \recoBicis{} bicis por día
 \end{figure}
 
 \subsubsection{Cuántas bicis por visita}
-La mitad de las visitas mueve \cfigMedBicis{} bicis o menos, y el \cfigUnaDos\% solo una o dos. El percentil 95 es de \ctopeBicis{} bicis, que usamos como tope por visita; el \cfigBajoTope\% de las \cfigVisitas{} visitas queda en el tope o por debajo (Fig.~\ref{fig:topes}b). Ninguno de los dos porcentajes es exactamente 95: el percentil de visitas es \cfigVisPNoventaCinco{} y lo redondeamos a \ctopeVis, y las bicis por visita son enteras, así que todas las visitas de exactamente \ctopeBicis{} bicis quedan dentro.
+La mitad de las visitas mueve \cfigMedBicis{} bicis o menos, y el \cfigUnaDos\% solo una o dos. El percentil 95 es de \ctopeBicis{} bicis, que usamos como tope. El \cfigBajoTope\% de las \cfigVisitas{} visitas queda en el tope o por debajo (Fig.~\ref{fig:topes}b); no es exactamente el 95\% porque las bicis son enteras y todas las visitas de exactamente \ctopeBicis{} bicis quedan dentro.
 
-
-Usamos el percentil 95 en los dos topes porque describe lo que Ecobici hace en un intervalo cargado sin tomar los extremos, que en parte son netos acumulados durante huecos largos entre fotos y no una sola parada de camioneta. Ambos topes salen de los \ctopeDias{} días válidos de \ctopePeriodo, entre las 05:00 y las 00:30. Son topes de esfuerzo y no describen una flota.
+Este tope tiene un matiz. Solo vemos el cambio neto de cada estación entre dos fotos, así que no sabemos si ese cambio lo hizo una camioneta o varias: es posible que la logística de Ecobici mande más de una a la misma estación en el mismo intervalo. Como no tenemos forma de saberlo, tratamos las \ctopeBicis{} bicis como tope del paquete completo y no de cada camioneta: ningún paquete del asignador mueve más de \ctopeBicis{} bicis, aunque tenga varios donantes. Son topes de esfuerzo y no describen una flota.
 
 \subsubsection{Bodega y bicis no rentables}
-En el largo plazo, el flujo neto de bicis entre la bodega y las estaciones es nulo: de un día al siguiente la flota anclada a las 04:45 cambia en promedio \cbMedia{} bicis (IC95 de \cbLo{} a $+$\cbHi). Por eso nuestro modelo no puede meter ni sacar bicis de bodega: solo las mueve entre estaciones, y cada decisión entrega exactamente lo que recoge. Las bicis no rentables cuentan en la ecuación~\eqref{eq:delta} para que un cambio de etiqueta no parezca una visita, y el simulador aplica cada cambio de etiqueta observado igual para todas las políticas; el detalle de ambos supuestos está en el Apéndice~\ref{ap:ecobici}.
+En el largo plazo, el flujo neto de bicis entre la bodega y las estaciones es nulo: de un día al siguiente la flota anclada a las 04:45 cambia en promedio \cbMedia{} bicis (IC95 de \cbLo{} a $+$\cbHi). Por eso nuestro modelo no puede meter ni sacar bicis de bodega: solo las mueve entre estaciones, y cada decisión entrega exactamente lo que recoge. Los cambios de etiqueta entre disponible y no rentable que se ven en el feed los aplicamos igual en todas las políticas (Apéndice~\ref{ap:ecobici}).
 
-\subsection{Logística de entrega}
-Suponemos que una orden emitida en el minuto $t$ recoge sus bicis en $t+\rpickMin$ y las entrega en $t+\rdelMin$, es decir, quince minutos para llegar a la estación de origen y cargar, y cuarenta y cinco para el traslado y la descarga. Una hora nos parece suficiente, sobre todo si las camionetas están repartidas en distintas zonas de la ciudad, como las microzonas con que opera Ecobici \cite{mbn2026}. Al consultar aplicaciones de tráfico como Waze, los trayectos más largos entre estaciones llegan a unos 70 minutos en hora pico. Consideramos que no hay muchas horas pico en el día y que solo los trayectos más largos pasan de una hora, así que el supuesto nos parece sensato. La ruta por calle entre pares de estaciones al azar lo confirma: la mediana es de \rcalleMed{}~km y, a la velocidad media en hora pico de 13.5 km/h que reporta TomTom \cite{tomtom2025}, el par mediano toma \rpicoMed{} minutos, el percentil 90 \rpicoNoventa{} y el 99 \rpicoNN. Aun así, algunos traslados que propone el asignador unen estaciones lejanas. El supuesto de una hora sigue siendo aceptable, pero para reforzar su validez el asignador también puede preferir donantes cercanos con un costo por kilómetro, $\alpha$, y prohibir los tramos que no caben en los 45 minutos del traslado (Secciones~\ref{sec:asignador} y~\ref{sec:alfa}). Es, además, el supuesto que más pesa: si la entrega ocurre a los \rentregaLarga{} minutos, el $\EF$ de la media móvil sube \rsSetenta{} minutos-estación por día (Sección~\ref{sec:sens}).
+\subsection{Logística de entrega}\label{sec:logistica}
+Suponemos que una orden emitida en el minuto $t$ recoge sus bicis en $t+\rpickMin$ y las entrega en $t+\rdelMin$: quince minutos para llegar a la estación de origen y cargar, y cuarenta y cinco para el traslado y la descarga. Una hora nos parece suficiente, sobre todo si las camionetas están repartidas por zonas de la ciudad, como las microzonas con que opera Ecobici \cite{mbn2026}.
 
-\subsection{Viajes y desvíos}
-El simulador repite cada viaje del registro a su segundo exacto y ninguno se cancela. Por la forma en que lo simulamos, un viaje que no puede salir de su estación porque está vacía sale de la estación más cercana que tenga una bici en ese momento, y uno que no puede terminar en la suya porque está llena termina en la más cercana con un anclaje libre. Es lo más cercano que tenemos para mantener la demanda fija entre políticas: en la realidad parte de esas personas desistiría, y como los registros solo contienen los viajes que sí ocurrieron, la demanda real está censurada \cite{negahban2019}. Por eso tratamos $E$, $F$ y los desvíos como exposición a la falla y no los traducimos a viajes perdidos o ganados. Además, en nuestra simulación hay desvíos falsos. Con los movimientos medidos de Ecobici, los viajes son literalmente los que sí ocurrieron y en la realidad ninguno se desvió, pero el simulador desvía varios, sobre todo por los desfases del feed que describimos a continuación (Sección~\ref{sec:fidelidad}).
+Sin embargo, en los resultados aparecen traslados largos, entre estaciones lejanas. Por eso agregamos al asignador un parámetro $\alpha$, un costo por kilómetro que lo hace preferir traslados cortos (Sección~\ref{sec:asignador}). Con $\alpha>0$ hay además un tope duro por traslado. Para calcularlo obtuvimos la distancia por calle entre cada par de estaciones con OSRM \cite{luxen2011}, un motor de rutas sobre los mapas de OpenStreetMap \cite{osm}, y la convertimos en tiempo con el ritmo de la hora pico de la tarde en la Ciudad de México, el peor del día: \tfMpkPm{} minutos por kilómetro según TomTom \cite{tomtom2025}. A ese ritmo, en 45 minutos se recorren \tfLimKm~km, así que con $\alpha>0$ un donante a más de \tfLimKm~km por calle de su receptor no se toma (Sección~\ref{sec:tramos}).
+
+\subsection{Viajes y desvíos}\label{sec:viajes}
+El simulador repite cada viaje del registro a su segundo exacto. No cancelamos ningún viaje, para mantener la misma demanda que enfrentó Ecobici. Si un viaje no puede salir de su estación porque está vacía, sale de la más cercana que tenga una bici, y si no puede terminar en la suya porque está llena, termina en la más cercana con un anclaje libre; a eso le llamamos desvío. En la realidad parte de esas personas desistiría, pero los registros solo contienen los viajes que sí ocurrieron, así que la demanda real está censurada \cite{negahban2019}. Para hacerlo de otra manera tendríamos que simular qué haría cada persona, lo que está fuera de nuestro alcance.
+
+Por construcción, Ecobici no debería tener desvíos: con su rebalanceo real, esos viajes ocurrieron tal cual. Aun así, al repetir sus movimientos en el simulador aparecen algunos, el \recoDesvPct\% de las salidas, porque las fotos y los viajes no están sincronizados al segundo (Sección~\ref{sec:desfases}). Es un porcentaje bajo y no cambia la comparación. Por eso los desvíos no son una métrica justa contra Ecobici: los reportamos para informar cuántos viajes de cada política son simulados.
 
 \subsection{Desfases entre el feed y los viajes}\label{sec:desfases}
-El feed y los viajes no están sincronizados al segundo. Si una bici sale unos segundos antes de una foto, la foto todavía la muestra anclada; la ecuación~\eqref{eq:delta} da $+1$ en ese intervalo y $-1$ en el siguiente, y aparece un par que se deshace (un ejemplo real está en el Apéndice~\ref{ap:auditoria}). Por eso un movimiento que se deshace exactamente en el intervalo siguiente, en la misma estación, no cuenta como visita. Sin esta regla Ecobici tendría \rvisSinRegla{} visitas por día y con ella \rvisConRegla, el \rvisQuedan\%; la regla reduce el esfuerzo que le medimos, lo que nos pone una vara más alta, y la aplicamos igual a nuestras órdenes (Apéndice~\ref{ap:auditoria}). El mismo desfase hace que nuestra simulación de Ecobici no coincida exactamente con la realidad, como veremos en la Sección~\ref{sec:fidelidad}. Por último, Ecobici presta bicis de 05:00 a 00:30 \cite{ecobici_horario}, y esa es la ventana que simulamos.
+El feed y los viajes no están sincronizados al segundo. Si una bici sale unos segundos antes de una foto, la foto todavía la muestra anclada; la ecuación~\eqref{eq:delta} da $+1$ en ese intervalo y $-1$ en el siguiente, y aparece un par que se deshace (un ejemplo real está en el Apéndice~\ref{ap:auditoria}). Por eso un movimiento que se deshace exactamente en el intervalo siguiente, en la misma estación, no cuenta como visita: es un error de desfase y no una camioneta. Sin esta regla Ecobici tendría \rvisSinRegla{} visitas por día y con ella \rvisConRegla. El detalle está en el Apéndice~\ref{ap:auditoria}. Por último, Ecobici presta bicis de 05:00 a 00:30 \cite{ecobici_horario}, y esa es la ventana que simulamos.
 
 % ======================================================================
 \section{Resultados y discusión}\label{sec:resultados}
 \subsection{El simulador}
-El simulador es sencillo. Cada día arranca a las 05:00 sin viajes en curso, con el estado de cada estación según la primera foto del día, y a partir de ahí ya no vuelve a mirar las fotos: solo reproduce los viajes registrados, cada uno a su segundo exacto. Lo hacemos así porque las fotos ya incorporan el rebalanceo de Ecobici; si el simulador siguiera el estado observado de las estaciones durante el día, ese rebalanceo quedaría mezclado con el de la política evaluada y no sería posible aislar el efecto de esta última. Sobre los viajes aplicamos las recogidas y entregas de la política que se prueba y los cambios de no rentable a rentable observados, que son los mismos para todas. Lo único que puede cambiar entre una política y otra es que un viaje no pueda salir porque su estación está vacía, o no pueda terminar porque está llena; en ese caso lo mandamos a la estación más cercana que sí pueda atenderlo y lo contamos como desvío. Cada minuto contamos qué estaciones están vacías y cuáles llenas para obtener $E$ y $F$.
+Cada día de simulación arranca a las 05:00 sin viajes en curso, con el estado de cada estación según la primera foto del día, y a partir de ahí ya no vuelve a mirar las fotos: solo reproduce los viajes registrados, cada uno a su segundo exacto. Lo hacemos así porque las fotos ya incorporan el rebalanceo de Ecobici; si el simulador siguiera el estado observado de las estaciones durante el día, ese rebalanceo quedaría mezclado con el de la política evaluada y no sería posible aislar el efecto de esta última. Encima de esos viajes, el simulador aplica las recogidas y entregas que ordena la política que se prueba, y también los cambios de etiqueta entre disponible y no rentable que se ven en el feed, iguales para todas las políticas. Lo único que puede cambiar entre una política y otra es que un viaje no pueda salir porque su estación está vacía, o no pueda terminar porque está llena; en ese caso lo mandamos a la estación más cercana que sí pueda atenderlo y lo contamos como desvío. Cada minuto contamos qué estaciones están vacías y cuáles llenas para obtener $E$ y $F$.
 
-Una orden emitida a las 08:00 recoge a las 08:15 y entrega a las 09:00, y el simulador no la aplica a ciegas, porque en ese tiempo los viajes cambiaron el inventario de las estaciones. Cada paquete del asignador (Sección~\ref{sec:asignador}) viaja por separado: las bicis que recogen sus donantes solo van a su receptor. Al llegar a recoger, la camioneta se lleva lo pedido, hasta \ctopeBicis{} bicis por visita; si en la estación ya no hay tantas, se lleva solo las que haya y no completa en otra estación, así que el receptor recibe solo lo que se alcanzó a cargar. Al llegar a entregar, deja las bicis en el destino; las que no caben, o todas si el destino está fuera de servicio, las deja en la estación con anclajes libres más cercana a ese destino. Las bicis nunca vuelven a su estación de origen. Ninguna bici se crea ni se pierde, y una verificación lo comprueba después de cada evento. Esto ocurre poco: con la media móvil, de \coRecogidas{} bicis recogidas por día, faltaron \coFalta{} al llegar a recoger (el \coFaltaPct\% de lo pedido) y \coDevueltas{} no cupieron en su destino (el \coDevueltasPct\%). Para el brazo de Ecobici no hay órdenes: aplicamos sus movimientos medidos $\delta_i$ a la hora de la segunda foto de cada intervalo.
+Una orden emitida a las 08:00 recoge a las 08:15 y entrega a las 09:00. En ese tiempo los viajes ya cambiaron el inventario de las estaciones, así que antes de recoger el simulador revisa cuántas bicis hay, y antes de entregar, cuántos anclajes quedan libres. Cada paquete del asignador (Sección~\ref{sec:asignador}) viaja por separado: puede tener varios donantes, pero un solo receptor, y las bicis que recogen sus donantes solo van a ese receptor. Si al llegar a recoger ya no hay tantas bicis como se pidió, la camioneta se lleva las que haya y no completa en otra estación, así que el receptor recibe solo lo que se alcanzó a cargar. Al llegar a entregar, deja las bicis en el destino; las que no caben, o todas si el destino está fuera de servicio, las deja en la estación con anclajes libres más cercana. Así, todo lo que se recoge se entrega, y no hay bodega de por medio. Los faltantes son pocos: con la media móvil, de \coRecogidas{} bicis recogidas por día, faltaron \coFalta{} al llegar a recoger (el \coFaltaPct\% de lo pedido) y \coDevueltas{} no cupieron en su destino (el \coDevueltasPct\%). Para el brazo de Ecobici no hay órdenes: aplicamos sus movimientos medidos $\delta_i$ a la hora de la segunda foto de cada intervalo.
 
 \subsection{El asignador greedy}\label{sec:asignador}
-Cada quince minutos, en el minuto $t$, el asignador decide de qué estaciones sacar bicis y a cuáles llevarlas para que en las próximas $n$ horas haya menos minutos con estaciones vacías o llenas. La idea es sencilla. Primero proyecta cuántas bicis tendrá cada estación si nadie interviene. Después prueba, estación por estación, qué pasaría si le quitara o le metiera bicis, y cuánto ganaría o perdería en minutos vacíos o llenos. Con eso ordena a las estaciones que más necesitan bicis, los receptores, y a cada una, empezando por la que más lo necesita, le arma un paquete con las estaciones que mejor pueden darle bicis, sus donantes. Sigue así, un paquete a la vez, hasta que llega al límite de visitas o hasta que el siguiente paquete ya no vale la pena. A esta forma de decidir, que en cada paso toma lo que más conviene en ese momento y no vuelve atrás, se le llama greedy. Lo que decide se vuelve órdenes que se recogen en $t+\rpickMin$ y se entregan en $t+\rdelMin$; no se cancelan, y en la decisión siguiente cuentan como órdenes pendientes. Los símbolos están resumidos en el Apéndice~\ref{ap:notacion}.
+Cada quince minutos, en el minuto $t$, el asignador decide de qué estaciones sacar bicis y a cuáles llevarlas para que en las próximas $n$ horas haya menos minutos con estaciones vacías o llenas. Primero proyecta cuántas bicis tendrá cada estación si nadie interviene. Después prueba, estación por estación, qué pasaría si le quitara o le metiera bicis, y cuánto ganaría o perdería en minutos vacíos o llenos. Con eso ordena a las estaciones que más necesitan bicis, los receptores, y a cada una, empezando por la que más lo necesita, le arma un paquete con las estaciones que mejor pueden darle bicis, sus donantes. Sigue así, un paquete a la vez, hasta que llega al límite de visitas o hasta que el siguiente paquete ya no vale la pena. A esta forma de decidir, que en cada paso toma lo que más conviene en ese momento y no vuelve atrás, se le llama greedy. Lo que decide se vuelve órdenes que se recogen en $t+\rpickMin$ y se entregan en $t+\rdelMin$; no se cancelan, y en la decisión siguiente cuentan como órdenes pendientes. Los símbolos están resumidos en el Apéndice~\ref{ap:notacion}.
 
 Lo primero es el flujo. Tomamos el pronóstico de uno de nuestros modelos, que dice cuántos viajes llegarán a cada estación y cuántos saldrán en cada hora, y lo repartimos entre los minutos de esa hora, es decir, lo dividimos entre 60: $f_{im}=(\text{llegadas}-\text{salidas})/60$. Es el flujo neto por minuto de la estación $i$, positivo si recibe más bicis de las que pierde y negativo si pasa lo contrario.
 
@@ -167,7 +167,7 @@ c^E_i(x)=\sum_{m=\rdelMin+1}^{H}\bigl(v_i(s^{+x}_i(m))-v_i(s_i(m))\bigr),
 \end{equation}
 donde $s_i$ es la proyección con el flujo pronosticado, sin cambio, y $s^{+x}_i$ es la misma con las $x$ bicis más desde la entrega ($m=\rdelMin$). Cada minuto aporta $-1$ si con el cambio la estación deja de estar mal, $+1$ si empieza a estarlo y 0 si no cambia. Para recoger $k$ bicis, $c^R_i(k)$ es lo mismo con $k$ bicis menos desde la recogida ($m=\rpickMin$), sumando desde el minuto siguiente. Las dos son el cambio total en minutos-estación por mover esas bicis en una sola visita, no un costo por bici, y un valor negativo es un ahorro. Recoger suele costar minutos, porque la estación se vacía antes, y entregar suele ahorrarlos. El parámetro $n$ es cuántas horas hacia adelante mira el asignador: con $n=1$ no puede actuar, porque la entrega cae justo al final y no alcanza a cambiar nada, y con $n$ mayor ve más consecuencias pero se apoya en pronósticos más inciertos.
 
-Con las tablas ya se puede decidir, pero antes hay dos precios. Mover bicis no es gratis: cada visita de la camioneta cuesta $\lambda$ minutos-estación, una vez por parada y sin importar cuántas bicis mueva, así que una visita solo conviene si ahorra más que eso. Tampoco es gratis la distancia: cada kilómetro en línea recta entre un donante $j$ y su receptor $i$ cuesta $\alpha$ minutos-estación, para que el asignador prefiera donantes cercanos. Cuando $\alpha>0$ va además un tope duro: si la distancia por calle del donante $j$ a su receptor $i$, $\tilde D_{ij}$, pasa de $\bar D=\tfLimKm$~km, lo que se recorre en \tfLimMin{} minutos al peor ritmo de hora pico, ese donante no se toma para $i$. Con $\alpha=0$ no hay tope; así son los resultados principales, donde la distancia no cuenta (Sección~\ref{sec:alfa}).
+Con las tablas ya se puede decidir, pero antes hay dos precios. Mover bicis no es gratis: cada visita de la camioneta cuesta $\lambda$ minutos-estación, una vez por parada y sin importar cuántas bicis mueva, así que una visita solo conviene si ahorra más que eso. Tampoco es gratis la distancia: cada kilómetro entre un donante $j$ y su receptor $i$ cuesta $\alpha$ minutos-estación, para que el asignador prefiera donantes cercanos. Cuando $\alpha>0$ va además un tope duro: si la distancia por calle del donante $j$ a su receptor $i$, $\tilde D_{ij}$, pasa de $\bar D=\tfLimKm$~km, lo que se recorre en \tfLimMin{} minutos al peor ritmo de hora pico, ese donante no se toma para $i$. Con $\alpha=0$ no hay tope; así son los resultados principales, donde la distancia no cuenta. Ninguno de los dos precios se fija de antemano: $\lambda$ se elige en la validación, para que cada pronóstico haga tantas visitas como Ecobici (Sección~\ref{sec:calibracion}), y para $\alpha$ probamos varios valores y comparamos lo que gana y lo que pierde cada uno (Sección~\ref{sec:resultados_alfa}).
 
 El asignador es greedy: en cada paso toma lo que más ahorra, y empieza por el receptor que más ganaría si las bicis le llegaran gratis, es decir, el mejor ahorro de su entrega menos el precio de su propia visita,
 \begin{equation}\label{eq:g}
@@ -186,29 +186,35 @@ De todas las cantidades se queda con la de mayor ahorro, $-C_i(x)$. Si ese ahorr
 
 El asignador se detiene en cualquiera de tres casos. Primero, cuando se acaban las visitas: el tope es $V=\ctopeVis$ por decisión, igual que $B=\ctopeBicis$ bicis por visita, los dos tomados del percentil 95 de lo que hizo Ecobici en 2025 (Sección~\ref{sec:medicion}). Cada estación que visita un paquete cuenta como una visita, y el asignador termina cuando ya no cabe ningún paquete en las que quedan. Segundo, cuando el siguiente receptor tiene $g_i\le0$, porque ni con bicis gratis su entrega pagaría su visita y, como van ordenados, los que siguen tampoco. Tercero, cuando ya no quedan donantes libres. Si un receptor sí ahorra pero su paquete cuesta más de lo que ahorra, ese paquete no se hace y se pasa al siguiente. Por eso hay decisiones que usan muchas menos visitas que el tope.
 
-Lo que sale de cada decisión es una orden por estación visitada, recoger $k_j$ o entregar $x$, con el número de su paquete, de modo que se sabe de dónde a dónde va cada bici. Todas se recogen en $t+\rpickMin$ y se entregan en $t+\rdelMin$, y quince minutos después se repite todo con el estado nuevo. El procedimiento no garantiza la mejor decisión posible, solo una buena y rápida: ordena a los donantes con su mejor cantidad, no con la que se les pide; un donante sirve a un solo receptor por decisión, aunque le sobren bicis; y la distancia entra en línea recta, no por calle.
+Lo que sale de cada decisión es una orden por estación visitada, recoger $k_j$ o entregar $x$, con el número de su paquete, de modo que se sabe de dónde a dónde va cada bici. Todas se recogen en $t+\rpickMin$ y se entregan en $t+\rdelMin$, y quince minutos después se repite todo con el estado nuevo. El procedimiento no garantiza la mejor decisión posible, solo una buena y rápida. Para garantizar la óptima tendríamos que plantear la decisión como un problema de programación entera mixta (MILP), que tarda mucho más en resolverse cada quince minutos, y en nuestras pruebas la diferencia en minutos ahorrados fue pequeña. Además, los supuestos para confirmar que una decisión es la óptima no son sencillos de probar con nuestros datos. Por eso no buscamos el óptimo, sino una decisión que mejore la de Ecobici.
 
 \subsection{Los pronósticos}
-Los pronósticos estiman cuántos viajes saldrán y llegarán a cada estación en cada hora. La forma diaria se calcula una sola vez a las 05:00 para todo el día; la directa se recalcula en cada decisión para las horas siguientes, usando lo que ya pasó ese día. La media móvil, en forma diaria, promedia para cada estación y hora los conteos de los días del mismo tipo (entre semana, o fin de semana y festivo) de las \rsemanasHist{} semanas previas, sin entrenar nada.
+Los pronósticos estiman cuántos viajes saldrán y llegarán a cada estación en cada hora. La diferencia entre las dos formas es cuándo se calculan. La diaria se calcula una sola vez al día, a las 05:00, para todas las horas. La directa se recalcula cada 15 minutos, en cada decisión (78 veces al día), para las \rnDiario{} horas siguientes, usando lo que ya pasó ese día. La media móvil, en forma diaria, promedia para cada estación y hora los conteos de los días del mismo tipo (entre semana, o fin de semana y festivo) de las \rsemanasHist{} semanas previas, sin entrenar nada.
 
-LightGBM diario usa dos modelos de árboles con potenciación de gradiente, uno para salidas y otro para llegadas, con pérdida Poisson porque el objetivo es un conteo. Cada fila es una estación en una hora del día, descrita por la estación, la hora, el día de la semana, si es festivo, los conteos de esa hora hace 7 y 14 días y la media móvil. Sus parámetros son fijos y no se buscaron (\rlgbArboles{} árboles, tasa de \rlgbTasa, \rlgbHojas{} hojas). LightGBM directo agrega cuántas horas adelante se pronostica, los viajes de la estación en el último cuarto de hora y en la última hora, y cuánto va el día por encima o por debajo de un día típico a esa misma hora; todo con información anterior a la decisión.
+LightGBM diario usa dos modelos de árboles con potenciación de gradiente, uno para salidas y otro para llegadas, con pérdida Poisson porque el objetivo es un conteo. Cada fila es una estación en una hora del día, descrita por la estación, la hora, el día de la semana, si es festivo, los conteos de esa hora hace 7 y 14 días y la media móvil. Sus parámetros no se optimizaron: los elegimos con valores de uso común en la industria (\rlgbArboles{} árboles, tasa de aprendizaje de \rlgbTasa{} y \rlgbHojas{} hojas) y los dejamos fijos. LightGBM directo es el mismo modelo con cuatro variables más: cuántas horas adelante se pronostica, los viajes de la estación en el último cuarto de hora y en la última hora, y cuánto va el día por encima o por debajo de un día típico a esa misma hora; todo con información anterior a la decisión.
 
-Para saber qué tan bien pronostica cada uno, medimos cada pronóstico contra los viajes reales de los \cfMeses{} meses de prueba, por estación y por hora. El MAE es el error absoluto medio, en viajes; el WAPE es el error absoluto total entre el total de viajes reales, de modo que un 40\% significa que el pronóstico se equivoca, en conjunto, por una cantidad igual al 40\% de los viajes. La Tabla~\ref{tab:pron} del Apéndice~\ref{ap:ecobici} los da para salidas, llegadas y su neto (lo que usa el asignador), en la primera hora y en la cuarta, la última que mira; la media móvil se equivoca en \cfMaeMaPri{} viajes por estación y hora en el neto y por el \cfWapeMaSal\% del total en las salidas. LightGBM diario es apenas mejor (\cfDifDPri\% menos error en el neto de la primera hora, \cfDifDUlt\% en la cuarta); LightGBM directo, que además usa lo ocurrido ese día, es peor (\cfDifDirPri\% y \cfDifDirUlt\% más error). Como un error chico en una estación crítica puede costar más $\EF$ que varios en una holgada, también los comparamos por el $\EF$ que logran con el asignador.
+Para comparar los pronósticos por sí solos medimos su error contra los viajes reales de los \cfMeses{} meses de prueba con el MAE, el error absoluto medio en viajes por estación y hora. Los tres son muy parecidos: en el neto de la hora siguiente, la media móvil se equivoca en \cfMaeNetoMa{} viajes, LightGBM diario en \cfMaeNetoD{} y LightGBM directo en \cfMaeNetoDir{} (Tabla~\ref{tab:pron} del Apéndice~\ref{ap:ecobici}). Pero el MAE no es la métrica que importa: no dice dónde están los errores, y un error en una estación a punto de vaciarse o llenarse pesa mucho más que uno en una holgada. Lo que importa es cuánto ayuda cada pronóstico a bajar $\EF$, y por eso los comparamos sobre todo por el $\EF$ que logran con el asignador.
 
 
-Los modelos nunca ven el futuro: cada mes se pronostica con modelos entrenados en meses anteriores (Sección~\ref{sec:calibracion} y Apéndice~\ref{ap:ventanas}). Construimos además dos oráculos que reciben los conteos reales de cada hora del día. No son una estrategia posible: marcan el techo de lo que lograría el mismo asignador con un pronóstico perfecto.
+Los modelos nunca ven el futuro: usamos una ventana deslizante, en la que cada mes se pronostica con modelos entrenados solo con los meses anteriores (Apéndice~\ref{ap:ventanas}). Construimos además dos oráculos que reciben los conteos reales de cada hora del día. No son una estrategia posible: marcan el techo de lo que lograría el mismo asignador con un pronóstico perfecto.
 
 \subsection{Entrenamiento, validación y prueba}\label{sec:calibracion}
-Separamos los días en tres bloques consecutivos, para que nada de lo que se evalúa haya servido para ajustar algo. El \emph{entrenamiento} son los viajes de enero a julio de 2025, con los que se entrenan los LightGBM que se usan en la validación. La \emph{validación} son todos los días de \rselMes{} con al menos el \rcovMin\% de sus horas cubiertas por fotos, \rselDias{} en total; ahí, y solo ahí, se eligen $n$ y $\lambda$, que después se congelan. La \emph{prueba} son todos los días válidos de \rpruebaPeriodo, \rdias{} en total, y es móvil: cada mes los LightGBM se vuelven a entrenar con los \rtrainMeses{} meses anteriores, de modo que el de septiembre ya incluye agosto como historia, y la media móvil solo usa las \rsemanasHist{} semanas previas a cada día (Fig.~\ref{fig:ventanas}). En la prueba no se ajustó nada. No usamos 2026: el archivo de fotos de ese año es más sucio, y preferimos la comparación más justa contra Ecobici.
+Separamos los días en tres bloques consecutivos, para que nada de lo que se evalúa haya servido para ajustar algo. El \emph{entrenamiento} son los viajes de enero a julio de 2025, con los que se entrenan los LightGBM que se usan en la validación. La \emph{validación} son los \rselDias{} días de \rselMes, todos con fotos suficientes; ahí, y solo ahí, se eligen $n$ y $\lambda$, que después se congelan. La \emph{prueba} son todos los días válidos de \rpruebaPeriodo, \rdias{} en total, y es móvil: cada mes los LightGBM se vuelven a entrenar con los \rtrainMeses{} meses anteriores, de modo que el de septiembre ya incluye agosto como historia, y la media móvil solo usa las \rsemanasHist{} semanas previas a cada día (Fig.~\ref{fig:ventanas}). En la prueba no se ajustó nada. No usamos 2026: el archivo de fotos de ese año es más sucio, y preferimos la comparación más justa contra Ecobici.
 
-Elegimos $n$ con los dos oráculos: el primer horizonte cuyo siguiente ya no mejora $\EF$ de forma demostrable, $n=\rnDiario$ para la forma diaria y $n=\rnDirecto$ para la directa. Para comparar con el mismo esfuerzo, a cada brazo le buscamos la $\lambda$ con la que hace tantas visitas por día como Ecobici en la validación, \rselEcoVis; quedaron \rlamMa{} para la media móvil, \rlamLgbmD{} y \rlamLgbmDir{} para los dos LightGBM, y \rlamOrD{} y \rlamOrDir{} para los oráculos (el procedimiento de ambos está en el Apéndice~\ref{ap:ventanas}). Con esas $\lambda$, el mejor pronóstico real en la validación fue la \rmejorReal.
+Elegimos $n$ y $\lambda$ para cada brazo por separado. Para $n$ nos quedamos con el primer horizonte cuyo siguiente ya no mejora $\EF$ de forma demostrable, y los cinco brazos dan el mismo, $n=\rnDiario$. Para comparar con el mismo esfuerzo, a cada brazo le buscamos la $\lambda$ con la que hace tantas visitas por día como Ecobici en la validación, \rselEcoVis; quedaron \rlamMa{} para la media móvil, \rlamLgbmD{} y \rlamLgbmDir{} para los dos LightGBM, y \rlamOrD{} y \rlamOrDir{} para los oráculos (el procedimiento de ambos está en el Apéndice~\ref{ap:ventanas}).
 
 \subsection{Resultados}
-La Tabla~\ref{tab:principal} resume los siete brazos. Sin rebalanceo, el sistema acumula \rbaseEF{} minutos-estación vacíos o llenos por día y el rebalanceo medido de Ecobici lo baja a \recoEF. La media móvil con el asignador llega a \rmaEF, \rmaPct\% menos que Ecobici (IC95 de \rmaPctLo{} a \rmaPctHi\%), con menos tiempo vacío (\rmaE{} contra \recoE) y mucho menos tiempo lleno (\rmaF{} contra \recoF). Gana en los \rmaGana{} días con \rmaVis{} visitas y \rmaBicis{} bicis movidas por día, frente a \recoVis{} y \recoBicis{} de Ecobici, y la mejora se mantiene en \rdicMes, el último mes de prueba (\rdicPct\%). Nuestra hipótesis se cumple.
+La Tabla~\ref{tab:principal} resume los siete brazos. El rebalanceo de Ecobici ya hace un trabajo considerable: sin él, el sistema acumularía \rbaseEF{} minutos-estación vacíos o llenos por día, y con él baja a \recoEF, menos de la mitad.
+
+Para saber cuánto margen queda, corrimos el mismo asignador con los dos oráculos, que conocen los viajes reales. Con información perfecta, $\EF$ bajaría entre \rorDPct\% y \rorDirPct\% frente a Ecobici; ése es el techo. Con nuestros tres pronósticos, $\EF$ baja alrededor de 43\% frente a Ecobici. LightGBM directo es el que más baja, \rlgbmDirPct\%; la media móvil baja \rmaPct\% y LightGBM diario, \rlgbmDPct\%. Sin embargo, sus intervalos de confianza se traslapan (todos son IC95 pareados por día; Apéndice~\ref{ap:ic}).
+
+Comparados contra la media móvil de la misma forma, LightGBM directo queda en \rlgbmDirVsMa{} $\pm$ \rlgbmDirVsMaIC{} minutos-estación por día y LightGBM diario en \rlgbmDVsMa{} $\pm$ \rlgbmDVsMaIC. Dado lo que vemos en los intervalos y lo poco que cambia $\EF$, nos quedamos con la media móvil por la navaja de Ockham: un modelo mucho más sencillo consigue el mismo resultado. Es la que usamos en el resto del análisis y en las conclusiones.
+
+La media móvil no solo baja $\EF$: lo hace con menos visitas que Ecobici, \rmaVis{} contra \recoVis{} por día (\rmaVisPct\% menos), y gana en los \rmaGana{} días de prueba. También mueve un poco menos bicis (\rmaBicis{} contra \recoBicis). LightGBM directo mueve algunas más, pero eso no nos preocupa, porque el esfuerzo está en la visita: mover dos bicis en una misma parada cuesta casi lo mismo que mover una. La mejora se mantiene en \rdicMes, el último mes de prueba (\rdicPct\%). Nuestra hipótesis se cumple.
 
 \begin{table*}[!htb]
 \centering\footnotesize
-\caption{Medias por día en \rdias{} días de prueba, con $n=\rnDiario$ horas en los cinco brazos con asignador. $E$, $F$ y $\EF$ en minutos-estación; Desv.: viajes desviados por cada 100 salidas; m/desv.: distancia media de un desvío. Última columna: reducción de $\EF$ frente a Ecobici, con IC95, en porcentaje del $\EF$ medio de Ecobici.}
+\caption{Medias por día en \rdias{} días de prueba, con $n=\rnDiario$ horas en los cinco brazos con asignador. $E$, $F$ y $\EF$ en minutos-estación; Desv.: viajes desviados por cada 100 salidas; m/desv.: distancia media de un desvío. Última columna: reducción de $\EF$ frente a Ecobici, con IC95 pareado por día (Apéndice~\ref{ap:ic}), en porcentaje del $\EF$ medio de Ecobici.}
 \label{tab:principal}
 \input{tablas/principal-caso.tex}
 \end{table*}
@@ -221,52 +227,31 @@ La Tabla~\ref{tab:principal} resume los siete brazos. Sin rebalanceo, el sistema
 \input{tablas/alfa-caso.tex}
 \end{table*}
 
-Los intervalos de la última columna comparan cada brazo con Ecobici día por día: para cada uno de los \rdias{} días calculamos la diferencia de $\EF$, y el intervalo es la media de esas diferencias más o menos el cuantil 0.975 de una $t$ de Student con un grado de libertad menos que el número de días, por su error estándar. Pareamos por día porque ambos brazos ven los mismos viajes, y así la variación entre días no ensancha el intervalo.
-
-Los tres pronósticos reales empatan en $\EF$: sus intervalos se traslapan, LightGBM diario y directo no superan de forma apreciable a la media móvil, y su exactitud tampoco es mejor de forma apreciable (Tabla~\ref{tab:pron}), así que la ventaja viene de asignar con un pronóstico razonable y no de un modelo más complejo. Con los viajes reales, el mismo asignador llega a \rorDEF{} con el oráculo diario y a \rorDirEF{} con el directo. La distancia de \rmaGap{} minutos-estación entre la media móvil y su oráculo es lo que cuesta no conocer el futuro, y la diferencia de \roracleDirectGap{} entre los dos oráculos indica que, con información perfecta, actualizar el pronóstico cada quince minutos sí vale la pena; LightGBM directo no aprovecha esa ventaja y queda a \rlgbmDirGap{} de su oráculo.
-
-El promedio podría esconder que la política solo gana en las horas tranquilas, así que comparamos Ecobici con LightGBM directo el \rejDia{} en las dos horas pico. Entre las 8:45 y las 9:00 (Fig.~\ref{fig:nueve}, en el Apéndice~\ref{ap:mapas}), Ecobici deja \csEcoNueveEF{} minutos-estación vacíos o llenos y LightGBM directo \csLgbmNueveEF.
-
-Entre las 20:45 y las 21:00 (Fig.~\ref{fig:veintiuno}, en el Apéndice~\ref{ap:mapas}) la diferencia es de \csEcoVeintiunoEF{} contra \csLgbmVeintiunoEF, y en el día completo de \cdEcoEF{} contra \cdLgbmEF{} (Tabla~\ref{tab:dia}, en el Apéndice~\ref{ap:mapas}). Los desvíos van en sentido contrario: en el cuarto de hora de las 9:00 son \csEcoNueveDesv{} con Ecobici y \csLgbmNueveDesv{} con LightGBM, y en el día \cdEcoDesv{} contra \cdLgbmDesv.
-
-
-Las dos métricas no cuentan lo mismo. Con la media móvil hay \rmaDesvPct{} desvíos por cada 100 salidas, contra \recoDesvPct{} de Ecobici simulado, aunque el oráculo directo desvía menos (\rorDirDesvPct). Nuestra explicación es que la política baja $\EF$ llenando estaciones de poca demanda y se queda corta en las de mucha, donde el pronóstico falla más. En los \rcfDias{} días guardados minuto a minuto, el décimo de estaciones con más viajes (\rdTop{} de \rdEst, con el \rdTopViajes\% de las salidas y llegadas) baja $\EF$ solo \rdEFTopRed\% frente a Ecobici simulado, contra \rdEFRestoRed\% en el resto; ahí sus minutos vacíos incluso suben (\rdETopMa{} contra \rdETopEco) y ahí cae el \rdMaExtraTop\% de sus desvíos de más.
+\subsubsection{Distancia de los traslados}\label{sec:resultados_alfa}
+Con $\alpha=0$, algunos traslados unen estaciones lejanas y no caben en los 45 minutos del supuesto (Sección~\ref{sec:tramos}). La Tabla~\ref{tab:alfa} agrega la restricción de distancia: el costo por kilómetro $\alpha$ y, con $\alpha>0$, el tope de \tfLimKm~km por traslado. Repetimos la media móvil con $\alpha\in\{\caAlfas\}$ y la misma $n$ y $\lambda$. Con $\alpha=10$ queda \caDiezEco\% por debajo de Ecobici. En $\EF$ es algo peor que con $\alpha=0$ (\caDiezEF\% más), pero los kilómetros de los traslados bajan \caDiezKm\% y las visitas quedan \caDiezVisEco\% por debajo de las de Ecobici, porque desaparecen los traslados largos. Lo único que sube son los desvíos, \caDiezDesv\% frente a $\alpha=0$, y eso no nos preocupa: por construcción Ecobici debería tener pocos desvíos, y siempre va a tener menos que nuestros pronósticos, así que los reportamos por transparencia y completitud, no como métrica (Sección~\ref{sec:viajes}). Por eso recomendamos $\alpha=10$ con el tope.
 
 \subsection{Amenazas a la validez}\label{sec:amenazas}
-Aquí revisamos si los experimentos se quedan dentro de los supuestos de la Sección~\ref{sec:supuestos}: para cada uno, si se cumple y con qué evidencia.
+Al correr nuestro pronóstico y asignador revisamos si los resultados se alinean con los supuestos de la Sección~\ref{sec:supuestos}. Para cada supuesto decimos cómo lo checamos y si se mantiene.
 
 \subsubsection{Fidelidad del simulador}\label{sec:fidelidad}
-Se cumple. Al repetir en el simulador los movimientos medidos de Ecobici, su $\EF$ queda en \recoEF{} minutos-estación por día, contra \rfdFeedEF{} en las fotos de los mismos \rdias{} días, un 2.3\% menos. La única diferencia está en los desvíos: en la realidad no hay, y el simulador desvía el \recoDesvPct\% de las salidas, un porcentaje bajo que se debe al desfase entre las fotos y los viajes (Sección~\ref{sec:desfases} y Apéndice~\ref{ap:fidelidad}), no a cómo se mueven las bicis. Por eso leemos los desvíos como una comparación entre brazos con los mismos viajes.
+Repetimos en el simulador los movimientos medidos de Ecobici y comparamos con lo que muestran las fotos. Se mantiene: su $\EF$ simulado queda en \recoEF{} minutos-estación por día, contra \rfdFeedEF{} en las fotos de los mismos \rdias{} días, un 2.3\% menos (Apéndice~\ref{ap:fidelidad}). La única diferencia relevante está en los desvíos: en la realidad no hay, y el simulador desvía el \recoDesvPct\% de las salidas por el desfase entre las fotos y los viajes (Sección~\ref{sec:viajes}).
 
-\subsubsection{Los supuestos, uno por uno}\label{sec:sens}
-\emph{Visitas por cuarto de hora y bicis por visita: se cumple.} Ninguna decisión pasa de \ctopeVis{} visitas ni ninguna visita de \ctopeBicis{} bicis, porque son topes del asignador, y el ritmo de la media móvil es el de Ecobici: la mediana de visitas por cuarto de hora es \rtQuinceMaMed{} en los dos, el percentil 95 es \rtQuinceMaP{} contra \rtQuinceEcoP, y en tres horas sus bicis movidas casi se enciman, con un percentil 95 de \rtTresBMaP{} contra \rtTresBEcoP{} (Apéndice~\ref{ap:ritmo}). No le pedimos a la operación nada fuera de su logística.
+\subsubsection{Esfuerzo: visitas y bicis por visita}
+Revisamos las distribuciones de visitas y de bicis movidas que deja el asignador, en ventanas de 15 y 30 minutos, de 1 y 3 horas y en el día completo, y las comparamos con las de Ecobici (Apéndice~\ref{ap:ritmo}). Se mantiene: las distribuciones de la media móvil y de Ecobici casi se enciman, y sus medianas son prácticamente iguales, con la de la media móvil igual o menor en casi todas las ventanas; en 15 minutos, \rtQuinceMaMed{} visitas en los dos. En las ventanas de 30 minutos a 3 horas la media móvil tiene un poco más de masa al final de su distribución, pero es solo porque el tope duro corta la cola y la concentra en los últimos valores posibles; sus máximos quedan por debajo de los de Ecobici. Las bicis movidas se ven casi idénticas. Además, en la prueba la media móvil hizo \rmaVisPct\% menos visitas que Ecobici. No le pedimos a la operación nada fuera de su logística.
 
-\emph{Logística de entrega: con $\alpha=0$ no siempre se cumple; con $\alpha>0$ y el tope, sí.} Con $\alpha=0$ el \tfCeroPCuarentaCinco\% de los tramos pasa de 45 minutos; con $\alpha>0$ y el tope ninguno pasa (Sección~\ref{sec:tramos}). Si la entrega tardara \rentregaLarga{} minutos en lugar de \rdelMin, $\EF$ cambiaría \rsSetenta{} minutos-estación por día y seguiría \cxLargaPct\% por debajo de Ecobici (Apéndice~\ref{ap:sens}).
+\subsubsection{Logística de entrega}\label{sec:alfa}\label{sec:tramos}\label{sec:sens}
+La checamos calculando cuánto tarda cada traslado de un donante a su receptor: la distancia por calle de OSRM \cite{luxen2011} sobre OpenStreetMap \cite{osm}, sin tráfico, por los minutos por kilómetro de TomTom para la Ciudad de México en 2025 \cite{tomtom2025} según la hora, \tfMpkAm{} de 7 a 10, \tfMpkPm{} de 17 a 20 y \tfMpkDia{} el resto del día (las horas pico las supusimos nosotros). Con $\alpha=0$ no siempre se mantiene: el traslado promedio tarda \tfCeroMin{} minutos, pero el \tfCeroPCuarentaCinco\% pasa de 45 y el más largo tarda \tfCeroMax. Con $\alpha>0$ aplicamos a todas las horas el tope de \tfLimKm~km, lo que se recorre en 45 minutos al ritmo de la tarde, el peor del día, y así se mantiene para todos: ningún traslado pasa de 45 minutos (Apéndice~\ref{ap:tramos}). El tope no cuesta: con $\alpha=10$, $\EF$ cambia \caTopeDiezEF\% frente al mismo $\alpha$ sin tope (\caTopeDiezAbs{} $\pm$ \caTopeDiezIC{} minutos-estación por día, IC95 pareado). También probamos qué pasa si la entrega tarda \rentregaLarga{} minutos en lugar de \rdelMin: con la media móvil y $\alpha=0$, $\EF$ sube \rsSetenta{} minutos-estación por día y sigue \cxLargaPct\% por debajo de Ecobici (Apéndice~\ref{ap:sens}).
 
-\emph{Bodega y bicis no rentables: casi no pesa.} Si además de los cambios de etiqueta en sitio aplicamos como flujo externo las bicis dañadas que el feed muestra entrando o saliendo de cada estación, $\EF$ cambia \rsDan{} minutos-estación por día. Quitar o no los pares $\pm1$, que son desfase de relojes y no camionetas, solo cambia cuántas visitas le contamos a Ecobici (de \recoVis{} a \rsSinRegla{} por día), no su $\EF$, porque cada par suma cero (Apéndice~\ref{ap:auditoria}).
-
-\emph{Esfuerzo comparable: se cumple, con menos visitas.} En la prueba la media móvil hizo \rmaVisPct\% menos visitas que Ecobici, aunque $\lambda$ se fijó para igualarlas en \rselMes.
-
-\subsubsection{Tiempo de los tramos, costo por kilómetro y tope}\label{sec:alfa}\label{sec:tramos}
-La logística deja \rdelMin{} $-$ \rpickMin{} $=$ 45 minutos para el traslado y la descarga de cada tramo de un donante a su receptor. Para medirlo calculamos la distancia por calle entre cada par de estaciones con OSRM \cite{luxen2011} sobre OpenStreetMap \cite{osm}, sin tráfico, y la convertimos en tiempo con los minutos por kilómetro de TomTom para la Ciudad de México en 2025 \cite{tomtom2025} según la hora de salida: \tfMpkAm{} de 7 a 10, \tfMpkPm{} de 17 a 20 y \tfMpkDia{}, el promedio del día, el resto; las horas pico las supusimos nosotros y los tiempos son de automóvil.
-
-Sin costo por kilómetro ni tope ($\alpha=0$), el supuesto puede fallar: aunque el tramo promedio tarda \tfCeroMin{} minutos, el \tfCeroPCuarentaCinco\% pasa de 45 (\tfCeroNoDia{} tramos por día) y el más largo tarda \tfCeroMax. El costo por kilómetro baja el promedio pero no el máximo: con $\alpha=10$ y sin tope, el más largo tomaría \tfSinDiezMax{} minutos. Por eso, con $\alpha>0$, el asignador lleva el tope de $\bar D=\tfLimKm$~km por calle (Sección~\ref{sec:asignador}), lo que se recorre en 45 minutos al peor ritmo del día, el de la hora pico de la tarde, aplicado a todas las horas. Con $\alpha>0$ y el tope ningún tramo pasa de 45 minutos (Tabla~\ref{tab:tramos} y Apéndice~\ref{ap:tramos}), y la media móvil con $\alpha=10$ sigue \caDiezEco\% por debajo de Ecobici, así que el supuesto se cumple.
-
-Repetimos la media móvil en los \caDias{} días de prueba con $\alpha\in\{\caAlfas\}$, el tope cuando $\alpha>0$ y la misma $n$ y $\lambda$ (Tabla~\ref{tab:alfa}); $\alpha=0$ es la media móvil de la Tabla~\ref{tab:principal}. El tope no cuesta: con $\alpha=10$, $\EF$ cambia \caTopeDiezEF\% frente al mismo $\alpha$ sin tope (\caTopeDiezAbs{} $\pm$ \caTopeDiezIC{} minutos-estación por día, IC95 pareado). Recomendamos $\alpha=10$ con el tope: los kilómetros bajan \caDiezKm\%, $\EF$ sube solo \caDiezEF\% y los desvíos \caDiezDesv\%.
-
-\begin{table}[h]
-\centering\footnotesize
-\caption{Tiempo de los tramos donante $\to$ receptor en los \caDias{} días de prueba, media móvil por valor de $\alpha$; con $\alpha>0$, con el tope duro de \tfLimMin{} minutos.}
-\label{tab:tramos}
-\input{tablas/tramos-caso.tex}
-\end{table}
+\subsubsection{Demanda no observada}
+Mantenemos la demanda tal como la tuvo Ecobici: todas las políticas enfrentan exactamente los mismos viajes. Eso tiene un costo. Si nuestra política deja una bici en una estación con mucha demanda que en la realidad estaba vacía, en el simulador nadie la toma, porque el registro no tiene salidas de esa estación en esa hora, justamente porque no había bicis. En la realidad alguien se la llevaría y la estación volvería a vaciarse. Esa demanda está censurada \cite{negahban2019}. Con ella, parte de la mejora en $\EF$ podría perderse, pero a cambio la política serviría más viajes de los que hoy hace Ecobici. Es un intercambio entre $\EF$ y viajes, y desde la política pública los dos cumplen el mismo propósito: que la gente pueda hacer más viajes. A largo plazo, además, se corrige solo: esos viajes quedarían en el registro y la media móvil, que usa las \rsemanasHist{} semanas previas, los incorporaría a su pronóstico.
 
 \subsection{La aplicación}
 La aplicación (\url{https://github.com/Jero110/movilidad-cdmx}), de donde salen las Figs.~\ref{fig:sin} y~\ref{fig:nueve}, tiene tres vistas. \emph{Ahora} muestra el feed en vivo sobre el mapa de AGEB; \emph{Replay} reproduce un día de prueba foto por foto, con dos brazos lado a lado y el cuadre de cada foto, y \emph{Predicción} toma el feed del momento: quien coordina elige el pronóstico y $\alpha$, y cada quince minutos el asignador le dice qué bicis mover, de qué estación a cuál y a qué hora, con una barra para regresar a los pasos anteriores.
 
 % ======================================================================
+\vfill\null\newpage
 \section{Conclusiones}
-En simulación, asignar cada quince minutos con un pronóstico sencillo deja \rmaPct\% menos minutos vacíos o llenos que el rebalanceo actual de Ecobici, con \rmaVisPct\% menos visitas, en los \rdias{} días de prueba, y con el costo por kilómetro y el tope de \tfLimMin{} minutos por tramo la mejora sigue en \caDiezEco\%, con \caDiezVisEco\% menos visitas. No hace falta una gran predicción: la media móvil es de lo más sencillo y LightGBM, diario o directo, no le gana; sus intervalos de confianza se traslapan y en la práctica dan lo mismo. Usamos un greedy y no un asignador óptimo. El óptimo tarda mucho más en correr y necesita más supuestos. Aun así, el greedy vence a Ecobici: con un pronóstico fácil y un algoritmo rápido, la mejora es de alrededor de 40\% bajo supuestos comparables a lo que Ecobici hace hoy (Sección~\ref{sec:amenazas}). Con un pronóstico perfecto, el mismo asignador llega a \rorDPct\%. En las estaciones de mucha demanda la mejora es menor (\rdEFTopRed\% contra \rdEFRestoRed\% en el resto): con la infraestructura actual y una logística creíble, mantenerlas siempre funcionales es casi imposible.
+En simulación, asignar cada quince minutos con un pronóstico sencillo deja \rmaPct\% menos minutos vacíos o llenos que el rebalanceo actual de Ecobici, con \rmaVisPct\% menos visitas, en los \rdias{} días de prueba, y con el costo por kilómetro y el tope de \tfLimMin{} minutos por tramo la mejora sigue en \caDiezEco\%, con \caDiezVisEco\% menos visitas. No hace falta una gran predicción: la media móvil es de lo más sencillo y LightGBM, diario o directo, no le gana; sus intervalos de confianza se traslapan y en la práctica dan lo mismo. Usamos un greedy y no un asignador óptimo. El óptimo tarda mucho más en correr y necesita más supuestos. Aun así, el greedy vence a Ecobici: con un pronóstico fácil y un algoritmo rápido, la mejora es de alrededor de 40\% bajo supuestos comparables a lo que Ecobici hace hoy (Sección~\ref{sec:amenazas}). Con un pronóstico perfecto, el mismo asignador llega a \rorDPct\%. En las estaciones de mucha demanda la mejora es menor (\rdEFTopRed\% contra \rdEFRestoRed\% en el resto; Apéndice~\ref{ap:demanda}): con la infraestructura actual y una logística creíble, mantenerlas siempre funcionales es casi imposible.
 
 A Ecobici y a SEMOVI: su trabajo ya es significativo. Su rebalanceo baja los minutos-estación vacíos o llenos de \rbaseEF{} a \recoEF{} por día, menos de la mitad de lo que habría sin él. Para llevarlo más lejos les recomendamos lo siguiente. Medir el servicio con una sola cifra, los minutos-estación vacíos y llenos, que es lo que vive el usuario, y usarla como función objetivo del asignador. Ponerle precio a cada visita, $\lambda$, para que la camioneta solo se detenga donde ahorra más de lo que cuesta, y a cada kilómetro, $\alpha$, con un tope por tramo que respete los tiempos de su logística: así la media móvil hizo menos visitas que Ecobici, dejó menos minutos vacíos o llenos y ningún traslado se salió de su tiempo. Y decidir cada quince minutos con un algoritmo ligero, como un greedy, alimentado por un pronóstico sencillo, como la media móvil: con ellos se logran muy buenos resultados.
 
@@ -277,7 +262,8 @@ Como trabajo futuro queda corroborar los supuestos con quienes operan el sistema
 \bibliographystyle{IEEEtranN}
 \bibliography{referencias}
 
-\clearpage
+\onecolumn
+
 \appendices
 \section{Campos de datos}\label{ap:campos}
 \begin{center}\footnotesize
@@ -306,7 +292,7 @@ Campo & Significado \\
 \section{Auditoría de pares y validación}\label{ap:auditoria}
 La Tabla~\ref{tab:pares} muestra cuántas visitas de Ecobici quedan según el tamaño de los pares que se quitan en los \rrefDias{} días de referencia; ``Entran'' y ``Salen'' son bicis por día. Un ejemplo real es la estación 002 el 3 de septiembre de 2025: la ecuación da $+1$ entre las fotos de 11:48 y 12:08 y $-1$ entre las de 12:08 y 12:25, porque la bici 4201141 salió a las 12:07:09, segundos antes de la segunda foto, sin que hubiera ninguna camioneta. Los pares casi no aparecen en intervalos sin viajes y crecen con el número de viajes, como se espera de un desfase de relojes. En los \rcurvaDias{} días de prueba, sin la regla Ecobici sumaría \rsSinRegla{} visitas por día y, quitando solo los pares de una bici, \rsSoloUno; su $\EF$ no cambia (\rsEcoEF), porque un par suma cero.
 
-\begin{table}[h]
+\begin{table}[H]
 \centering\footnotesize
 \setlength{\tabcolsep}{4pt}
 \caption{Efecto de quitar pares que se deshacen. Media por día.}
@@ -314,40 +300,26 @@ La Tabla~\ref{tab:pares} muestra cuántas visitas de Ecobici quedan según el ta
 \input{tablas/pares-run3.tex}
 \end{table}
 
-\begin{table}[h]
-\centering\footnotesize
-\caption{Tres cambios posibles en una estación con 5 disponibles y 2 no rentables.}
-\label{tab:etiqueta}
-\begin{tabular}{@{}lcrrr@{}}
-\toprule
-Qué pasó & Foto siguiente & $\Delta b$ & $\Delta d$ & $\delta$ \\
-\midrule
-alguien reporta una bici & 4 y 3 & $-1$ & $+1$ & 0 \\
-la camioneta se lleva 3 disponibles & 2 y 2 & $-3$ & 0 & $-3$ \\
-la camioneta se lleva la no rentable & 5 y 1 & 0 & $-1$ & $-1$ \\
-\bottomrule
-\end{tabular}
-\end{table}
 
 
 \section{Cobertura de las fotos}\label{ap:cobertura}
 El filtro del \rcovMin\% solo afecta lo que depende de las fotos. En 2025 se excluyen \cvExcVeinticinco{} de \cvDiasVeinticinco{} días, \cvExcJul{} de ellos en julio. En la prueba descarta \cvDifPrueba{} día, el \cvDiaExcl, y quedan \cvOkPrueba{} de \cvDiasPrueba; los topes usan los mismos \cvOkVeinticinco{} días válidos de 2025. Los pronósticos no lo usan: se entrenan con los viajes del CSV, así que los \cvExcVeinticinco{} días excluidos de 2025 sí entran al entrenamiento.
 
 \section{Ecobici real contra simulado: método}\label{ap:fidelidad}
-Los \rcfDias{} días son los que tienen guardada la simulación minuto a minuto de los siete brazos. Las fotos reales son las del archivo, sin las fotos en blanco y con la hora del estado, \rlagS~s antes del registro.
+Los \rcfDias{} días son los que tienen guardada la simulación minuto a minuto de los siete brazos. Las fotos reales son las del archivo, sin las fotos en blanco y con la hora del estado, \rlagS~s antes del registro. La Tabla~\ref{tab:desv16} da los desvíos de cada brazo en esos días.
 
-En los \rcfDias{} días guardados minuto a minuto encontramos tres causas. (1) La resolución de las fotos: el movimiento de Ecobici se aplica a la hora de la segunda foto, mientras que los viajes entran a su minuto, y por eso el \rcUnoSal\% de las salidas desviadas ocurre en una estación que recibió una entrega en ese cuarto de hora, contra el \rcUnoTSal\% de todas las salidas. (2) Salidas desde estaciones que el feed marca vacías: son el \rcDosPct\% de las salidas reales, y en el \rcDosNR\% había bicis no rentables que se liberaron entre fotos. (3) Arrastre: el inventario simulado no se vuelve a igualar con el feed, y a las 07:00 difieren \rcTresSiete{} de \rcTresEst{} estaciones y a las \rcTresPicoHora, \rcTresPico.
-
-Un caso extremo de la primera causa es la estación \rejEst, en Buenavista: el \rejDia{} entre las \rejDesde{} y las \rejHasta{} el simulador espera una entrega de \rejMovB{} bicis que solo registra a las \rejMovBHora{} y desvía \rejDesv{} salidas en cadena. Para la primera causa, una salida desviada cuenta si su estación original tuvo una entrega de Ecobici en el mismo cuarto de hora, y una llegada desviada si tuvo una recogida; el \rcUnoLle\% de las llegadas desviadas está en ese caso, contra el \rcUnoTLle\% de todas. Para la segunda, cada salida real se cruza con la última foto de su estación anterior a la salida; quedan \rcDosSalidas{} salidas (Tabla~\ref{tab:cero}) y la foto tenía \rcDosEdad{} minutos de antigüedad mediana. Para la tercera, en cada cuarto de hora la referencia es la última foto más las llegadas y menos las salidas registradas desde esa foto; a las \rcTresPicoHora{} la diferencia media es de \rcTresPicoDif{} bicis por estación. Las estaciones de mucha demanda son el décimo con más salidas y llegadas, las horas pico son \rdPicoHoras, y un desvío de más es la diferencia entre los desvíos del brazo y los de Ecobici simulado en el mismo grupo. Por hora la evidencia es débil: el \rdMaExtraPico\% de los desvíos de más de la media móvil cae en las seis horas pico, contra el \rdEcoPico\% de los de Ecobici simulado. Hay una explicación alternativa, parcial: los viajes registrados ocurrieron con el rebalanceo real de Ecobici, lo que favorece a Ecobici simulado; pero el oráculo directo usa esos mismos viajes y desvía menos, así que eso no lo explica todo.
-
-\begin{table}[h]
+\begin{table}[H]
 \centering\footnotesize
 \caption{Desvíos por brazo en los \rcfDias{} días. \%: desvíos por cada 100 salidas.}
 \label{tab:desv16}
 \input{tablas/desvios16-run3.tex}
 \end{table}
 
-\begin{table}[h]
+En los \rcfDias{} días guardados minuto a minuto encontramos tres causas. (1) La resolución de las fotos: el movimiento de Ecobici se aplica a la hora de la segunda foto, mientras que los viajes entran a su minuto, y por eso el \rcUnoSal\% de las salidas desviadas ocurre en una estación que recibió una entrega en ese cuarto de hora, contra el \rcUnoTSal\% de todas las salidas. (2) Salidas desde estaciones que el feed marca vacías: son el \rcDosPct\% de las salidas reales, y en el \rcDosNR\% había bicis no rentables que se liberaron entre fotos. (3) Arrastre: el inventario simulado no se vuelve a igualar con el feed, y a las 07:00 difieren \rcTresSiete{} de \rcTresEst{} estaciones y a las \rcTresPicoHora, \rcTresPico.
+
+Un caso extremo de la primera causa es la estación \rejEst, en Buenavista: el \rejDia{} entre las \rejDesde{} y las \rejHasta{} el simulador espera una entrega de \rejMovB{} bicis que solo registra a las \rejMovBHora{} y desvía \rejDesv{} salidas en cadena. Para la primera causa, una salida desviada cuenta si su estación original tuvo una entrega de Ecobici en el mismo cuarto de hora, y una llegada desviada si tuvo una recogida; el \rcUnoLle\% de las llegadas desviadas está en ese caso, contra el \rcUnoTLle\% de todas. Para la segunda, cada salida real se cruza con la última foto de su estación anterior a la salida; quedan \rcDosSalidas{} salidas (Tabla~\ref{tab:cero}) y la foto tenía \rcDosEdad{} minutos de antigüedad mediana. Para la tercera, en cada cuarto de hora la referencia es la última foto más las llegadas y menos las salidas registradas desde esa foto; a las \rcTresPicoHora{} la diferencia media es de \rcTresPicoDif{} bicis por estación. Las estaciones de mucha demanda son el décimo con más salidas y llegadas, las horas pico son \rdPicoHoras, y un desvío de más es la diferencia entre los desvíos del brazo y los de Ecobici simulado en el mismo grupo. Por hora la evidencia es débil: el \rdMaExtraPico\% de los desvíos de más de la media móvil cae en las seis horas pico, contra el \rdEcoPico\% de los de Ecobici simulado. Hay una explicación alternativa, parcial: los viajes registrados ocurrieron con el rebalanceo real de Ecobici, lo que favorece a Ecobici simulado; pero el oráculo directo usa esos mismos viajes y desvía menos, así que eso no lo explica todo.
+
+\begin{table}[H]
 \centering\footnotesize
 \setlength{\tabcolsep}{4pt}
 \caption{Salidas reales desde una estación que la última foto marcaba con 0 disponibles. Con no rent.: de esas, las de estaciones con no rentables. Antig.: antigüedad mediana de la foto.}
@@ -356,11 +328,11 @@ Un caso extremo de la primera causa es la estación \rejEst, en Buenavista: el \
 \end{table}
 
 \section{Sensibilidades}\label{ap:sens}
-La Tabla~\ref{tab:sens} da el detalle de las sensibilidades de la Sección~\ref{sec:sens}, con el cambio de cada variante frente a su caso base y frente a Ecobici.
+La Tabla~\ref{tab:sens} da el detalle de las sensibilidades de la Sección~\ref{sec:amenazas}, con el cambio de cada variante frente a su caso base y frente a Ecobici.
 
-\begin{table}[h]
+\begin{table}[H]
 \centering\footnotesize
-\setlength{\tabcolsep}{3.5pt}
+\setlength{\tabcolsep}{5pt}
 \caption{Sensibilidades en los \cxDias{} días de prueba. $\EF$ en minutos-estación por día. Cambio: de la media móvil frente a su caso base, $\pm$ semiancho del IC95 $t$ pareado por día; vs.\ Ecobici: $\EF$ de la media móvil frente al de Ecobici, en porcentaje; última columna: cambio del oráculo directo. Caso base: entrega a los \rdelMin{} min.}
 \label{tab:sens}
 \input{tablas/sens-caso.tex}
@@ -369,19 +341,19 @@ La Tabla~\ref{tab:sens} da el detalle de las sensibilidades de la Sección~\ref{
 \section{Ritmo del rebalanceo}\label{ap:ritmo}
 Para revisar que el asignador no concentre visitas en poco tiempo, comparamos el ritmo de la media móvil ($\alpha=0$) con el de Ecobici en los \rtDias{} días de prueba. Contamos las visitas y las bicis que el simulador aplica en cada cuarto de hora (una recogida cuenta cuando se recoge y una entrega cuando se entrega) y las sumamos en ventanas de 15 y 30 minutos, de 1 y 3 horas, que empiezan en cada cuarto de hora del día, y en el día completo (Fig.~\ref{fig:ritmo} y Tabla~\ref{tab:ritmo}). En visitas, la media móvil va más despacio que Ecobici en todas las ventanas: en 15 minutos su percentil 95 es \rtQuinceMaP{} contra \rtQuinceEcoP{} y su máximo \rtQuinceMaMax{} contra \rtQuinceEcoMax; en 3 horas el máximo es \rtTresMaMax{} contra \rtTresEcoMax. El tope de \ctopeVis{} visitas se aplica por decisión y no por cuarto de hora, y por eso unas pocas ventanas de 15 minutos lo pasan: en una misma foto coinciden las recogidas de una decisión y las entregas de otra anterior. En bicis movidas las dos distribuciones casi se enciman; en 3 horas el percentil 95 es \rtTresBMaP{} contra \rtTresBEcoP, porque la media móvil hace menos visitas pero un poco más cargadas.
 
-\begin{figure*}[!htb]
+\begin{figure}[H]
 \centering\includegraphics[width=\textwidth]{figs/caso-ritmo.pdf}
 \caption{Ritmo del rebalanceo en los \rtDias{} días de prueba: visitas (arriba) y bicis movidas (abajo) aplicadas en ventanas móviles de 15 minutos a 3 horas y en el día completo. Gris: Ecobici medido; azul: media móvil con $\alpha=0$; líneas punteadas: medianas. En las ventanas móviles, la última barra incluye los valores mayores al percentil 99.5.}
 \label{fig:ritmo}
-\end{figure*}
+\end{figure}
 
-\begin{table*}[!htb]
+\begin{table}[H]
 \centering\footnotesize
 \setlength{\tabcolsep}{4pt}
 \caption{Mediana, percentil 95 y máximo de visitas y bicis movidas por ventana en los \rtDias{} días de prueba. Eco.: Ecobici medido; MM: media móvil con $\alpha=0$.}
 \label{tab:ritmo}
 \input{tablas/ritmo-caso.tex}
-\end{table*}
+\end{table}
 
 \section{Notación del asignador}\label{ap:notacion}
 \begin{center}\footnotesize
@@ -410,26 +382,42 @@ $k_j$, $C_i(x)$ & bicis que da el donante $j$ en el paquete; costo neto del paqu
 
 \section{Tiempo de los tramos: detalle}\label{ap:tramos}
 Las distancias por calle salen de una matriz de las \tfEstaciones{} estaciones, pedida al servidor público de OSRM (perfil de automóvil, sin tráfico) en bloques de 50 por 50, y no son simétricas porque hay calles de un solo sentido: el tramo va del donante al receptor. Los kilómetros de Ecobici son una cota inferior: emparejamos sus recogidas con sus entregas de la misma foto o de la hora siguiente de la forma que sume menos kilómetros, lo que cubre el \caEcoEmpar\% de sus bicis recogidas, así que sus kilómetros reales son al menos esos. El cociente calle sobre línea recta se calcula sin los tramos de menos de 200 m. Con el tope duro, un tramo es imposible si su distancia por calle, del donante al receptor, pasa de \tfLimKm{} km. El tope solo va con $\alpha>0$; la columna $\alpha=0$ es la media móvil de la Tabla~\ref{tab:principal}, sin tope. Sin el tope, con $\alpha=10$ el tramo más largo mediría \tfSinDiezKmMax{} km por calle y pasaría de 45 minutos el \tfSinDiezPCuarentaCinco\% de los tramos.
-\begin{center}\footnotesize
+
+\begin{table}[H]
+\centering\footnotesize
+\caption{Tiempo de los tramos donante $\to$ receptor en los \caDias{} días de prueba, media móvil por valor de $\alpha$; con $\alpha>0$, con el tope duro de \tfLimMin{} minutos.}
+\label{tab:tramos}
+\input{tablas/tramos-caso.tex}
+\end{table}
+
+\begin{table}[H]
+\centering\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\caption{Tramos, distancias por calle y tramos largos en los \caDias{} días de prueba, media móvil por valor de $\alpha$.}
+\label{tab:tramosap}
 \input{tablas/tramos-apendice-caso.tex}
-\end{center}
+\end{table}
 
 \section{El 1 de septiembre de 2025}\label{ap:mapas}
-\begin{figure}[h]
-\centering\includegraphics[width=\columnwidth]{figs/app-caso/eco-lgbm-0900-col.jpg}
+El promedio podría esconder que la política solo gana en las horas tranquilas, así que comparamos Ecobici con LightGBM directo el \rejDia{} en las dos horas pico. Entre las 8:45 y las 9:00 (Fig.~\ref{fig:nueve}), Ecobici deja \csEcoNueveEF{} minutos-estación vacíos o llenos y LightGBM directo \csLgbmNueveEF.
+
+\begin{figure}[H]
+\centering\includegraphics[width=0.55\textwidth]{figs/app-caso/eco-lgbm-0900-col.jpg}
 \caption{Replay del \rejDia{} a las 9:00 en nuestra aplicación: Ecobici medido (izquierda) y LightGBM directo (derecha). Mismos colores que la Fig.~\ref{fig:sin}; las etiquetas $+N$ y $-N$ son las bicis entregadas y recogidas en esa foto.}
 \label{fig:nueve}
 \end{figure}
 
-La Fig.~\ref{fig:veintiuno} es la comparación de la Fig.~\ref{fig:nueve} a las 21:00, la Tabla~\ref{tab:dia} da el día completo de las capturas y la Fig.~\ref{fig:sinlgbm} compara LightGBM directo con no rebalancear; entre las 8:45 y las 9:00 son \csBaseNueveEF{} contra \csLgbmNueveEF{} minutos-estación vacíos o llenos, y \csBaseNueveDesv{} contra \csLgbmNueveDesv{} desvíos.
+Entre las 20:45 y las 21:00 (Fig.~\ref{fig:veintiuno}) la diferencia es de \csEcoVeintiunoEF{} contra \csLgbmVeintiunoEF.
 
-\begin{figure}[h]
-\centering\includegraphics[width=\columnwidth]{figs/app-caso/eco-lgbm-2100-col.jpg}
+\begin{figure}[H]
+\centering\includegraphics[width=0.55\textwidth]{figs/app-caso/eco-lgbm-2100-col.jpg}
 \caption{Replay del \rejDia{} a las 21:00: Ecobici medido (izquierda) y LightGBM directo (derecha).}
 \label{fig:veintiuno}
 \end{figure}
 
-\begin{table}[h]
+En el día completo la diferencia es de \cdEcoEF{} contra \cdLgbmEF{} (Tabla~\ref{tab:dia}). Los desvíos van en sentido contrario: en el cuarto de hora de las 9:00 son \csEcoNueveDesv{} con Ecobici y \csLgbmNueveDesv{} con LightGBM, y en el día \cdEcoDesv{} contra \cdLgbmDesv.
+
+\begin{table}[H]
 \centering\footnotesize
 \setlength{\tabcolsep}{4pt}
 \caption{El \rejDia, día completo. Mismas unidades que la Tabla~\ref{tab:principal}; desvíos por día.}
@@ -437,19 +425,21 @@ La Fig.~\ref{fig:veintiuno} es la comparación de la Fig.~\ref{fig:nueve} a las 
 \input{tablas/dia-caso.tex}
 \end{table}
 
-\begin{figure*}[h]
+La Fig.~\ref{fig:sinlgbm} compara LightGBM directo con no rebalancear: entre las 8:45 y las 9:00 son \csBaseNueveEF{} contra \csLgbmNueveEF{} minutos-estación vacíos o llenos, y \csBaseNueveDesv{} contra \csLgbmNueveDesv{} desvíos.
+
+\begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{figs/app-caso/sin-lgbm-0900.jpg}\\[2pt]
 \includegraphics[width=\textwidth]{figs/app-caso/sin-lgbm-2100.jpg}
 \caption{Replay del \rejDia: sin rebalanceo (A) contra LightGBM directo (B), a las 9:00 (arriba) y a las 21:00 (abajo), con el cuadre de cada foto a la derecha.}
 \label{fig:sinlgbm}
-\end{figure*}
+\end{figure}
 
 \section{Rebalanceo de Ecobici, bodega, no rentables y exactitud}\label{ap:ecobici}
 Los datos indican que Ecobici rebalancea siguiendo a la demanda con un pequeño retraso, como se ve en la Fig.~\ref{fig:hora}.
 
-\begin{figure}[h]
-\centering\includegraphics[width=\columnwidth]{figs/caso-por-hora.pdf}
+\begin{figure}[H]
+\centering\includegraphics[width=0.6\textwidth]{figs/caso-por-hora.pdf}
 \caption{Bicis que entrega y recoge Ecobici por hora (eje izquierdo) y salidas de viajes (eje derecho), media de \rdias{} días. Movimientos medidos con la ecuación~\eqref{eq:delta}, sin pares, a la hora de la segunda foto. La hora 24 va de 00:00 a 00:30.}
 \label{fig:hora}
 \end{figure}
@@ -460,28 +450,66 @@ Hay dos olas. La de la mañana alcanza su máximo a las \chPicoHora, con unas \c
 Las bicis se averían y se reparan, así que entran y salen del sistema a través de la bodega. Nuestros datos indican que, en el largo plazo, ese flujo neto es nulo, y lo verificamos de dos formas. Por identificadores, el número de bicis distintas que se usan cada día casi no cambia (en promedio \cbActivasSep{} en septiembre, \cbActivasOct{} en octubre y \cbActivasNov{} en noviembre de 2025), y en esos tres meses aparecen solo \cbIdsNuevos{} bicis que no habíamos visto antes. Por totales, entre las 04:30 y las 05:00 el sistema está cerrado y todas las bicis están ancladas, así que la foto más cercana a las 04:45 cuenta la flota completa en estaciones. De un día al siguiente ese total cambia en promedio \cbMedia{} bicis, con un IC95 de \cbLo{} a $+$\cbHi{} en \cbPares{} pares de días consecutivos: en el largo plazo, la diferencia es cero. 
 
 \subsection{Bicis no rentables}
-El feed distingue las bicis ancladas disponibles ($b$) de las no rentables ($d$). No rentable no significa descompuesta, porque el contador sube y baja todo el día: muchas bicis quedan bloqueadas un rato al llegar o se reportan con una falla que se repara ahí mismo. Un cambio de no rentable a rentable no es rebalanceo, ya que es la misma bici en la misma estación con otra etiqueta, y si lo contáramos como movimiento cada reporte de falla aparecería como una visita de Ecobici. Por eso la ecuación~\eqref{eq:delta} suma disponibles y no rentables, de modo que un cambio de etiqueta da cero, como muestra la Tabla~\ref{tab:etiqueta} del Apéndice~\ref{ap:auditoria} para una estación con cinco disponibles y dos no rentables, sin viajes de por medio.
+El feed distingue las bicis ancladas disponibles ($b$) de las no rentables ($d$). No rentable no significa descompuesta, porque el contador sube y baja todo el día: muchas bicis quedan bloqueadas un rato al llegar o se reportan con una falla que se repara ahí mismo. Un cambio de no rentable a rentable no es rebalanceo, ya que es la misma bici en la misma estación con otra etiqueta, y si lo contáramos como movimiento cada reporte de falla aparecería como una visita de Ecobici. Por eso la ecuación~\eqref{eq:delta} suma disponibles y no rentables, de modo que un cambio de etiqueta da cero. La Tabla~\ref{tab:etiqueta} lo muestra para una estación con cinco disponibles y dos no rentables, sin viajes de por medio: la columna $\delta$ coincide con el movimiento esperado en los tres casos, y sin sumar $d$ el primero parecería una visita y el tercero se perdería.
+
+\begin{table}[H]
+\centering\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\caption{Tres cambios posibles en una estación con $b=5$ disponibles y $d=2$ no rentables, sin viajes de por medio. $b$ y $d$: foto siguiente; $\delta$: ecuación~\eqref{eq:delta}; sin $d$: lo que daría si no sumáramos las no rentables; esperada: el movimiento real de Ecobici.}
+\label{tab:etiqueta}
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+Qué pasó & $b$ & $d$ & $\Delta b$ & $\Delta d$ & $\delta$ & Sin $d$ & Esperada \\
+\midrule
+alguien reporta una bici & 4 & 3 & $-1$ & $+1$ & 0 & $-1$ & 0 \\
+se llevan 3 disponibles & 2 & 2 & $-3$ & 0 & $-3$ & $-3$ & $-3$ \\
+se llevan la no rentable & 5 & 1 & 0 & $-1$ & $-1$ & 0 & $-1$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 
 En los \rdias{} días de prueba cambian de etiqueta unas \retiquetasDia{} bicis por día, y en el \renSitioPct\% de esos cambios el total de la estación no se altera. El simulador aplica cada cambio de etiqueta observado en la misma estación y a la misma hora para todas las políticas; una estación con cero disponibles y tres no rentables cuenta como vacía, y el asignador solo mueve bicis disponibles. El supuesto es conservador para nuestras políticas, porque en la realidad Ecobici puede llevarse una bici dañada y devolverla reparada donde le convenga.
 
-\begin{table}[h]
+\subsection{Exactitud de los pronósticos}
+La Tabla~\ref{tab:pron} da el MAE de cada pronóstico para salidas, llegadas y el neto, en la primera hora y en la cuarta desde cada decisión.
+
+\begin{table}[H]
 \centering\footnotesize
 \setlength{\tabcolsep}{3.5pt}
-\caption{Exactitud de cada pronóstico en los \cfMeses{} meses de prueba, por estación y por hora. MAE en viajes; WAPE en porcentaje; neto: llegadas menos salidas.}
+\caption{Exactitud de cada pronóstico en los \cfMeses{} meses de prueba, por estación y por hora. MAE en viajes; neto: llegadas menos salidas.}
 \label{tab:pron}
 \input{tablas/pronostico-caso.tex}
 \end{table}
 
 \section{Ventanas de entrenamiento y prueba}\label{ap:ventanas}
-\begin{figure}[h]
-\centering\includegraphics[width=\columnwidth]{figs/caso-ventanas.pdf}
+Separamos 2025 en tres etapas consecutivas, para que nada de lo que se evalúa haya servido para ajustar algo:
+\begin{enumerate}
+\item Entrenamiento: con los viajes de enero a julio de 2025 se entrenan los LightGBM.
+\item Validación: los \rselDias{} días de agosto de 2025. Ahí se eligen $n$, las horas que mira hacia adelante el asignador, y $\lambda$, el precio por visita.
+\item Prueba: de septiembre a diciembre de 2025, \rdias{} días. Ahí no se ajusta nada.
+\end{enumerate}
+La prueba usa una ventana deslizante: antes de cada mes, los LightGBM se vuelven a entrenar con los \rtrainMeses{} meses anteriores, de modo que el de septiembre ya incluye agosto como historia, y la media móvil solo usa las \rsemanasHist{} semanas previas a cada día. Así ningún modelo se entrena con datos del mes que pronostica (Fig.~\ref{fig:ventanas}).
+
+\begin{figure}[H]
+\centering\includegraphics[width=0.7\textwidth]{figs/caso-ventanas.pdf}
 \caption{Dónde entrenamos y dónde probamos. Cada fila es un mes evaluado: en gris claro, los meses con que se entrenan los LightGBM (siete para la validación de agosto, ocho para cada mes de prueba); en color, el mes evaluado. La media móvil solo usa las cuatro semanas previas a cada día.}
 \label{fig:ventanas}
 \end{figure}
 
-Para elegir $n$ corrimos el asignador con los dos oráculos, que marcan hasta dónde puede llegar con información perfecta, con $n$ de 2 a \rnMax{} horas y $\lambda\in\{\rlamGridN\}$; $n=1$ equivale a no rebalancear. Para cada día promediamos $\EF$ sobre las tres $\lambda$ y, para $n=1,2,\dots$, calculamos el IC95 $t$ pareado por día de la diferencia entre $n+1$ y $n$. Nos quedamos con el primer $n$ cuyo siguiente no mejora de forma demostrable, es decir, cuyo límite superior es mayor o igual a cero: $n=\rnDiario$ para la forma diaria y $n=\rnDirecto$ para la directa.
+Para elegir $n$ corrimos el asignador con cada uno de los cinco brazos, con varios horizontes y $\lambda\in\{\rlamGridN\}$; $n=1$ equivale a no rebalancear. Para cada día promediamos $\EF$ sobre las tres $\lambda$ y, para $n=1,2,\dots$, calculamos el IC95 $t$ pareado por día de la diferencia entre $n+1$ y $n$. Nos quedamos con el primer $n$ cuyo siguiente no mejora de forma demostrable, es decir, cuyo límite superior es mayor o igual a cero. Los cinco brazos dan $n=\rnDiario$: en la media móvil, en LightGBM diario y en los dos oráculos, pasar de 4 a 5 horas no mejora de forma demostrable, y en LightGBM directo 5 horas es peor.
 
 Para elegir $\lambda$ y comparar con el mismo esfuerzo, buscamos para cada uno de los cinco brazos con asignador la $\lambda$ con la que hace tantas visitas por día como Ecobici en la validación, \rselEcoVis. Corrimos cada brazo con su $n$ en una rejilla de $\lambda$ de 10 a 120 minutos-estación; como las visitas bajan al subir $\lambda$, interpolamos linealmente entre los dos puntos que encierran el objetivo, corrimos la $\lambda$ resultante para confirmarla y la aceptamos si sus visitas quedaban a menos del 1\% del objetivo; si no, sumamos ese punto a la curva y repetimos. La confirmación tomó a lo más \rlamRondasMax{} rondas, y ningún brazo quedó a más del \rlamDifMax\% del objetivo. Quedaron \rlamMa{} para la media móvil, \rlamLgbmD{} y \rlamLgbmDir{} para los dos LightGBM, y \rlamOrD{} y \rlamOrDir{} para los oráculos.
+
+\section{Estaciones de mucha demanda}\label{ap:demanda}
+Con la media móvil hay \rmaDesvPct{} desvíos por cada 100 salidas, contra \recoDesvPct{} de Ecobici simulado, aunque el oráculo directo desvía menos (\rorDirDesvPct). Nuestra explicación es que la política baja $\EF$ llenando estaciones de poca demanda y se queda corta en las de mucha, donde el pronóstico falla más. En los \rcfDias{} días guardados minuto a minuto, el décimo de estaciones con más viajes (\rdTop{} de \rdEst, con el \rdTopViajes\% de las salidas y llegadas) baja $\EF$ solo \rdEFTopRed\% frente a Ecobici simulado, contra \rdEFRestoRed\% en el resto; ahí sus minutos vacíos incluso suben (\rdETopMa{} contra \rdETopEco) y ahí cae el \rdMaExtraTop\% de sus desvíos de más.
+
+\section{Intervalos de confianza}\label{ap:ic}
+Comparamos cada brazo con Ecobici día por día, porque los dos ven los mismos viajes: para cada uno de los $n=\rdias$ días de prueba, $\Delta_d=(E+F)_d^{\text{brazo}}-(E+F)_d^{\text{Ecobici}}$. El intervalo es
+\[
+\bar\Delta\pm t_{0.975,\,n-1}\,\frac{s}{\sqrt n},
+\]
+con $\bar\Delta$ la media de las diferencias y $s$ su desviación estándar. Suponemos que $\bar\Delta$ se distribuye aproximadamente normal por el teorema central del límite, y usamos la $t$ de Student porque $s$ se estima con los mismos datos. Parear por día quita la variación entre días, que afecta igual a los dos brazos. En la Tabla~\ref{tab:principal} el intervalo se expresa en porcentaje del $\EF$ medio de Ecobici; las comparaciones entre pronósticos, contra la media móvil, y las de la Tabla~\ref{tab:sens} se calculan igual.
 
 \section{Cómo reproducir y uso de IA}\label{ap:repro}
 El código, la aplicación y las instrucciones están en \url{https://github.com/Jero110/movilidad-cdmx}. Todos los comandos se corren con \texttt{uv run} desde la raíz.
