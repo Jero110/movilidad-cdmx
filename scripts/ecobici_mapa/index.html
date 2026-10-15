@@ -31,6 +31,7 @@
   <symbol id="i-map" viewBox="0 0 24 24"><path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></symbol>
   <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></symbol>
   <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+  <symbol id="i-center" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/></symbol>
   <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor" stroke="none"/></symbol>
 </svg>
 
@@ -90,14 +91,14 @@
         <select id="rday" disabled><option>Cargando…</option></select>
       </div>
       <fieldset class="field">
-        <legend>Escenario <span class="legend-hint">elige 1, o 2 para comparar</span></legend>
+        <legend>Escenario <span class="legend-hint">1 o 2 para comparar</span></legend>
         <div class="arm-list" id="rarms" aria-describedby="rarmsHint"><span class="skeleton block"></span></div>
         <p class="hint" id="rarmsHint" aria-live="polite"></p>
       </fieldset>
       <div class="field" id="ralfaField" hidden>
         <label for="ralfa">Costo por km (α)</label>
         <select id="ralfa"></select>
-        <p class="hint" id="ralfaHint">Minutos-estación que cuesta cada km del tramo donante → receptor. Con α más alto el asignador elige donantes más cercanos: menos km y algo más de E+F.</p>
+        <p class="hint" id="ralfaHint">Minutos-estación por km del tramo donante → receptor. Con α más alto se eligen donantes más cercanos: menos km y algo más de E+F.</p>
       </div>
       <div class="scenario" id="rspec" aria-live="polite"></div>
       <div class="note error" id="rerror" role="alert" hidden></div>
@@ -112,12 +113,12 @@
         <span>Viajes de la foto</span>
       </label>
       <label class="toggle">
-        <input type="checkbox" id="showDetours" checked>
+        <input type="checkbox" id="showDetours">
         <span class="toggle-track" aria-hidden="true"></span>
         <span>Viajes desviados</span>
       </label>
       <label class="toggle">
-        <input type="checkbox" id="showDamaged" checked>
+        <input type="checkbox" id="showDamaged">
         <span class="toggle-track" aria-hidden="true"></span>
         <span>Cambios de dañadas</span>
       </label>
@@ -146,6 +147,7 @@
       <dl class="provenance" id="dataInfo">
         <div><dt>Viajes publicados hasta</dt><dd id="lastPublished"><span class="skeleton w-8"></span></dd></div>
         <div><dt>Modelos actualizados</dt><dd id="modelsUpdated"><span class="skeleton w-8"></span></dd></div>
+        <div><dt>Pronóstico</dt><dd id="liveModel"><span class="skeleton w-8"></span></dd></div>
       </dl>
 
       <div class="session" id="session" hidden>
@@ -163,22 +165,23 @@
 
       <div id="assignForm">
         <h2 class="form-title" id="assignFormTitle" hidden>Nueva asignación</h2>
-        <fieldset class="field">
-          <legend>Pronóstico</legend>
-          <div class="choices" id="models"><span class="skeleton block"></span><span class="skeleton block"></span></div>
-        </fieldset>
         <div class="field">
-          <label for="ahours">Emitir órdenes durante</label>
+          <label for="ahours">Mover bicis durante</label>
           <select id="ahours">
             <option value="1">1 hora</option><option value="2" selected>2 horas</option>
-            <option value="3">3 horas</option><option value="4">4 horas</option>
+            <option value="3">3 horas</option><option value="6">6 horas</option>
+            <option value="12">12 horas</option><option value="20">Todo el día (hasta las 00:30)</option>
           </select>
-          <p class="hint">Después sigue corriendo hasta que llega la última entrega (45 min más).</p>
+          <p class="hint" id="ahoursHint">Cada orden se recoge 15 min después de emitirse y se entrega a los 60; la última bici se entrega dentro de ese tiempo.</p>
         </div>
         <div class="field">
           <label for="aalfa">Costo por km (α)</label>
           <select id="aalfa"></select>
           <p class="hint">Minutos-estación por km de cada tramo donante → receptor. Con α más alto, donantes más cercanos: menos km y algo más de E+F. 0 = sin costo por km.</p>
+        </div>
+        <div class="note warn" id="anight" hidden>
+          <svg class="ico"><use href="#i-info"/></svg>
+          <span id="anightTxt"></span>
         </div>
         <button class="btn primary block" id="startAssign"><span class="btn-label">Iniciar</span></button>
       </div>
@@ -227,6 +230,7 @@
         <button class="icon-btn" id="prev" aria-label="Retroceder 15 minutos" title="−15 min (←)"><svg class="ico"><use href="#i-back"/></svg></button>
         <button class="icon-btn play" id="play" aria-label="Reproducir" title="Reproducir (espacio)"><svg class="ico"><use href="#i-play"/></svg></button>
         <button class="icon-btn" id="next" aria-label="Avanzar 15 minutos" title="+15 min (→)"><svg class="ico"><use href="#i-fwd"/></svg></button>
+        <button class="icon-btn speed" id="speed" type="button" aria-label="Velocidad de reproducción: 1×" title="Velocidad: 1 foto cada 1.1 s">1×</button>
       </div>
       <div class="dock-line">
         <input type="range" id="rk" min="0" max="77" value="0" aria-label="Línea de tiempo del día" disabled>

@@ -213,7 +213,8 @@ def test_pronostico_y_asignacion_en_vivo_con_feed_y_reloj_simulados(tmp_path, mo
         time.sleep(0.05)
     assert s["estado"] == "terminada", s.get("error")
     assert {"estado", "model", "inicio", "horas", "pasos", "totales", "siguiente_paso"} <= set(s)
-    assert len(s["pasos"]) >= 4 and s["inicio"] == "2025-10-01T10:00"
+    # Reloj en 10:03: el primer paso corre al iniciar y decide para la siguiente marca, 10:15.
+    assert len(s["pasos"]) >= 4 and s["inicio"] == "2025-10-01T10:15" and s["pasos"][0]["t_feed"] == "2025-10-01T10:03:00"
     for p in s["pasos"]:
         assert {"t", "t_feed", "emitidas", "aplicadas", "bicis_a_mover", "visitas", "salidas_est", "llegadas_est"} <= set(p)
         for o in p["emitidas"] + p["aplicadas"]:

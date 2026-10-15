@@ -228,24 +228,24 @@ async function run(base) {
   // Cambiar el ancho arrastrando el borde y con el teclado; se guarda por pestaña y el mapa se ajusta.
   const checkResize = async (label, side) => {
     const sel = side === 'left' ? '#resizeLeft' : '#resizeRight', panel = side === 'left' ? '#leftPanel' : '#rightPanel';
-    const w = () => page.eval(`Math.round(document.querySelector('${panel}').getBoundingClientRect().width)`);
+    const wNow = () => page.eval(`Math.round(document.querySelector('${panel}').getBoundingClientRect().width)`);
+    // El ancho se anima (grid-template-columns, 220 ms) y con la CPU cargada la animación tarda en empezar: se espera
+    // a que el ancho llegue al valor esperado (hasta 5 s) en vez de dormir un tiempo fijo; si no llega, se lee el último.
+    const w = async (want, tol = 1) => { let v = await wNow(); for (let i = 0; i < 80 && (want === undefined ? i < 4 : Math.abs(v - want) > tol); i++) { await sleep(60); v = await wNow(); } return v; };
     const w0 = await w();
     const r = await page.eval(`(()=>{const b=document.querySelector('${sel}').getBoundingClientRect(); return {x:b.x+b.width/2, y:b.y+b.height/3}})()`);
     const dx = side === 'left' ? 80 : -80;
     await page.drag(r.x, r.y, r.x + dx, r.y);
-    await sleep(400);
-    const w1 = await w();
+    const w1 = await w(w0 + 80, 2);
     const fit = await page.eval(`MAPS.filter(M=>M&&!M.map.getContainer().hidden).every(M=>Math.abs(M.map.getCanvas().clientWidth-M.map.getContainer().clientWidth)<=1)`);
     if (Math.abs(w1 - w0 - 80) > 2 || !fit) throw new Error(`${label}: arrastrar el borde ${side}: ${w0} → ${w1}, mapa ajustado ${fit}`);
     await page.eval(`(document.querySelector('${sel}').focus(), document.querySelector('${sel}').dispatchEvent(new KeyboardEvent('keydown', {key: '${side === 'left' ? 'ArrowLeft' : 'ArrowRight'}', bubbles: true})), true)`);
-    await sleep(300);
-    const w2 = await w();
+    const w2 = await w(w1 - 16, 0);
     const saved = await page.eval(`JSON.parse(localStorage.getItem('ecobici.paneles'))[S.tab]`);
     const aria = await page.eval(`+document.querySelector('${sel}').getAttribute('aria-valuenow')`);
     if (w2 !== w1 - 16 || aria !== w2) throw new Error(`${label}: flecha sobre el borde ${side}: ${w1} → ${w2} (aria ${aria})`);
     await page.eval(`(document.querySelector('${sel}').dispatchEvent(new MouseEvent('dblclick', {bubbles: true})), true)`);
-    await sleep(300);
-    const w3 = await w();
+    const w3 = await w(w0);
     if (Math.abs(w3 - w0) > 1) throw new Error(`${label}: doble clic no restablece el ancho ${w0} (queda ${w3})`);
     await page.eval(`(document.activeElement?.blur(), true)`);
     ok(`${label}: el borde ${side === 'left' ? 'izquierdo' : 'derecho'} cambia el ancho arrastrando (${w0} → ${w1} px), con flechas (→ ${w2} px, aria-valuenow ${aria}), lo guarda (${JSON.stringify(saved)}) y doble clic lo restablece`);
@@ -348,6 +348,13 @@ async function run(base) {
       skipped.push('zonas (GET /api/zonas no responde 200)');
       console.log('  ⚠ OMITIDO: zonas en Ahora, el servidor no publica GET /api/zonas');
     }
+    {  // Botón de centrar: desde lejos, encuadra todas las estaciones.
+      await page.eval(`(S.map.jumpTo({center:[-99.3,19.25], zoom:15}), document.querySelector('.map-home').click(), true)`);
+      await page.waitFor(`!S.map.isMoving()`, 'encuadre del botón de centrar', 5000);
+      const fit = await page.eval(`(()=>{const b=S.map.getBounds(), st=S.view.stations.filter(s=>Number.isFinite(+s.lon)); return {fuera:st.filter(s=>!b.contains([+s.lon,+s.lat])).length, n:st.length, z:+S.map.getZoom().toFixed(2)}})()`);
+      if (fit.fuera || fit.z > 13.2) throw new Error(`el botón de centrar no encuadra todas las estaciones: ${JSON.stringify(fit)}`);
+      ok(`botón de centrar: encuadra las ${fit.n} estaciones (zoom ${fit.z})`);
+    }
 
     // Replay
     await page.click('#tab-replay');
@@ -393,12 +400,14 @@ async function run(base) {
     if (!alertTxt || !/3 estaciones/.test(alertTxt) || await page.eval(`!!document.querySelector('#cuadreAlert')`)) throw new Error(`aviso de descuadre: ${alertTxt}`);
     ok(`sin insignia "Cuadra"; si una foto llegara con cuadre_ok=false sale el aviso: "${alertTxt}"`);
     ok(`foto ${await page.eval(`S.replay.dayData.times[24]`)}: acumulados = suma de snap[0..24] (E+F acumulado ${p24.rows.EF.acum} = EF_acum del backend)`);
-    // Valores por defecto: todo apagado salvo "Viajes desviados"; +N/−N siempre visibles.
+    // Valores por defecto: todo apagado salvo "Zonas de la ciudad"; +N/−N siempre visibles.
     const defs = await page.eval(`(()=>({nums:document.querySelector('#showNums').checked, trips:document.querySelector('#showTrips').checked, detours:document.querySelector('#showDetours').checked, zones:document.querySelector('#view-replay .zones-on').checked,
       now:S.map.getSource('trips')._data.features.filter(f=>f.properties.k==='now').length, numImgs:S.map.getSource('st')._data.features.filter(f=>f.properties.img).length,
       deltas:S.map.getSource('st')._data.features.filter(f=>f.properties.dimg).length}))()`);
-    if (defs.nums || defs.trips || !defs.detours || defs.zones || defs.now || defs.numImgs) throw new Error(`valores por defecto del Replay: ${JSON.stringify(defs)}`);
-    ok(`por defecto: Bicis por estación, Viajes de la foto y Zonas apagados; Viajes desviados prendido; bolitas de colores y ${defs.deltas} estaciones con +N/−N`);
+    const dmg = await page.eval(`[document.querySelector('#showDamaged').checked, document.querySelector('#showEmit').checked, document.querySelector('#showArrive').checked]`);
+    if (defs.nums || defs.trips || defs.detours || !defs.zones || defs.now || defs.numImgs || dmg.some(Boolean)) throw new Error(`valores por defecto del Replay: ${JSON.stringify({...defs, dmg})}`);
+    await page.waitFor(`S.map.getSource('zones')._data.features.length > 0`, 'zonas del Replay al arrancar', 30000);
+    ok(`por defecto solo "Zonas de la ciudad" prendido (${await page.eval(`S.map.getSource('zones')._data.features.length`)} AGEB); bolitas de colores y ${defs.deltas} estaciones con +N/−N`);
     // Interruptor "Bicis por estación": de bolitas de color a números con fondo blanco y tono del estado.
     await page.click('#showNums');
     const nm = await page.eval(`(()=>{const f=S.map.getSource('st')._data.features; return {num:f.filter(x=>x.properties.anchor==='num'&&x.properties.img.startsWith('num|')).length, n:f.length, okState:f.every(x=>x.properties.img.split('|')[1]===Object.keys(ST_COLOR).find(k=>ST_COLOR[k]===x.properties.color))}})()`);
@@ -416,18 +425,18 @@ async function run(base) {
     if (tr.now > tr.expected) throw new Error(`más líneas (${tr.now}) que viajes que llegaron en la foto (${tr.expected})`);
     ok(`viajes en el mapa: ${tr.now} que llegaron en la foto y ${tr.detour} desvíos; sin viajes de otras fotos`);
     await page.click('#showTrips');  // vuelve al valor por defecto (apagado) para las capturas
-    {  // "Cambios de dañadas": prendido por defecto; al apagarlo salen solo +N/−N; las etiquetas azules usan el mismo zoom que +N/−N
-      const on = await page.eval(`document.querySelector('#showDamaged').checked`);
+    {  // "Cambios de dañadas": apagado por defecto; al prenderlo salen las etiquetas azules con el mismo zoom que +N/−N
+      const off = !(await page.eval(`document.querySelector('#showDamaged').checked`));
       const nL = () => page.eval(`S.map.getSource('st')._data.features.filter(f=>String(f.properties.dimg||'').split('|').some(p=>p[0]==='L')).length`);
       const iconExpr = await page.eval(`JSON.stringify(S.map.getLayoutProperty('st-delta','icon-image'))`);
-      if (!on || iconExpr !== '["get","dimg"]') throw new Error(`cambios de dañadas: prendido=${on}, icon-image=${iconExpr}`);
-      const con = await nL();
-      await page.click('#showDamaged');
+      if (!off || iconExpr !== '["get","dimg"]') throw new Error(`cambios de dañadas: apagado=${off}, icon-image=${iconExpr}`);
       const sin = await nL();
+      await page.click('#showDamaged');
+      const con = await nL();
       const leg = await page.eval(`document.querySelector('#sideLegend').textContent`);
       await page.click('#showDamaged');
       if (!con || sin || /al acercar/.test(leg)) throw new Error(`cambios de dañadas: con=${con} sin=${sin} leyenda="${leg}"`);
-      ok(`Replay: "Cambios de dañadas" prendido por defecto (${con} etiquetas azules) y apagado (${sin}); mismo zoom que +N/−N, sin "al acercar"`);
+      ok(`Replay: "Cambios de dañadas" apagado por defecto (${sin}) y prendido (${con} etiquetas azules); mismo zoom que +N/−N, sin "al acercar"`);
     }
     // Órdenes emitidas / que llegaron: de dónde a dónde, apagadas por defecto e independientes entre sí.
     if (!(await page.eval(`!!S.replay.arm.pares`))) {
@@ -471,6 +480,29 @@ async function run(base) {
       const le = await page.eval(`({pkg:document.querySelectorAll('#rpList li.pkg').length, txt:document.querySelector('#rpList').textContent})`);
       if (!le.pkg || !/Recoge en/.test(le.txt) || !/entrega en/.test(le.txt)) throw new Error(`lista "Emitidas" del Replay: ${JSON.stringify(le)}`);
       ok(`Replay: "Órdenes emitidas" (${e1.emit} líneas en la foto con un paquete de 2 donantes) y "Órdenes que llegaron" (${e2.arrive} traslados + ${e2.reloc} reubicaciones al destino cercano) apagadas por defecto, independientes, con leyenda y listas por paquete`);
+      // Picar una línea deja su ficha fija; picar en un punto vacío del mapa o su × la cierra y quita el resalte.
+      await page.click('#showEmit');
+      const pin = await page.eval(`(async()=>{const M=MAPS[0], map=M.map;
+        await new Promise(r=>{ if (!map.isMoving() && map.loaded()) r(); else map.once('idle', r); });
+        const libre=q=>!map.queryRenderedFeatures(q,{layers:ST_LAYERS}).length;
+        let pt=null, ll=null;
+        for (const f of map.getSource('orders')._data.features.filter(x=>x.geometry.type==='LineString')) {
+          for (const c of f.geometry.coordinates) { const q=map.project(c);
+            if (q.x>20 && q.y>20 && q.x<map.getCanvas().clientWidth-20 && q.y<map.getCanvas().clientHeight-20 && map.queryRenderedFeatures(q,{layers:['ord-hit']}).length && libre(q)) { pt=q; ll=c; break; } }
+          if (pt) break;
+        }
+        if(!pt) return {sin:true};
+        const fire=(pt,ll)=>map.fire('click',{point:pt,lngLat:maplibregl.LngLat.convert(ll),originalEvent:new MouseEvent('click')});
+        const vacio=[[8,8],[map.getCanvas().clientWidth-8,8],[8,map.getCanvas().clientHeight-8]].map(p=>new maplibregl.Point(...p)).find(q=>!map.queryRenderedFeatures(q,{layers:['ord-hit',...ST_LAYERS]}).length);
+        fire(pt,ll); const a=M.pinned.isOpen();
+        fire(vacio, map.unproject(vacio)); const b=M.pinned.isOpen(), hb=JSON.stringify(map.getFilter('ord-hl'));
+        fire(pt,ll); const a2=M.pinned.isOpen(), btn=M.pinned.getElement()?.querySelector('.maplibregl-popup-close-button');
+        btn?.click(); const c=M.pinned.isOpen();
+        return {a,b,a2,btn:!!btn,c,hb}})()`);
+      if (pin.sin) skipped.push('cerrar una orden picando el mapa (sin líneas visibles)');
+      else if (!pin.a || pin.b || !pin.a2 || !pin.btn || pin.c || !/-1/.test(pin.hb)) throw new Error(`orden fija del Replay: ${JSON.stringify(pin)}`);
+      else ok('Replay: picar una orden deja su ficha; picar en otra parte del mapa o su × la cierra y quita el resalte');
+      await page.click('#showEmit');
       if (shots) {
         const focus = (k, pick) => page.eval(`(()=>{const a=S.replay.arm, st=S.replay.dayData._stations; const g=${pick}; const i=g; S.map.jumpTo({center:[st[i].lon, st[i].lat], zoom:13.4}); return true})()`);
         await page.click('#showDetours');   // sin desvíos, para ver bien las órdenes
@@ -604,6 +636,7 @@ async function run(base) {
     if (zonasOk && !sync.zones) throw new Error('la coropleta no aplica al segundo mapa');
     // Interruptores separados de viajes y desvíos; aplican a los dos mapas.
     if (!(await page.eval(`document.querySelector('#showTrips').checked`))) await page.click('#showTrips');
+    if (!(await page.eval(`document.querySelector('#showDetours').checked`))) await page.click('#showDetours');  // apagado por defecto
     const kinds = () => page.eval(`MAPS.map(M=>{const f=M.map.getSource('trips')._data.features; return {now:f.filter(x=>x.properties.k==='now').length, detour:f.filter(x=>x.properties.k==='detour').length}})`);
     await page.eval(`(()=>{const n=S.replay.dayData.times.length; let k=20; for(let j=8;j<n;j++){ if(S.replay.sel.every(a=>(a.desvios?.[j]||[]).some(d=>d[2]!==d[3]))){k=j;break} } S.replay.k=k; document.querySelector('#rk').value=k; renderReplay(); return k})()`);
     const both = await kinds();
@@ -626,7 +659,7 @@ async function run(base) {
     await sleep(400);
     await checkRightToggle('Replay con 2 escenarios y ancho cambiado');
     await page.eval(`(document.querySelector('#resizeRight').dispatchEvent(new MouseEvent('dblclick', {bubbles: true})), true)`);
-    await sleep(400);
+    await page.waitFor(`Math.abs(Math.round(document.querySelector('#rightPanel').getBoundingClientRect().width) - parseFloat(document.querySelector('#main').style.getPropertyValue('--right-w-compare'))) <= 1`, 'el panel derecho vuelve a su ancho de fábrica', 15000);
     await checkPanels('Replay con 2 escenarios', true);
     await checkResize('Replay con 2 escenarios', 'right');
     const k0 = await page.eval(`S.replay.k`);
@@ -644,16 +677,31 @@ async function run(base) {
 
     // Predicción: una sola vista de asignación en vivo (sin subpestañas), con la barra de pasos arriba.
     await page.click('#tab-prediccion');
-    await page.waitFor(`S.live.models && document.querySelectorAll('input[name="model"]').length > 0`, 'modelos cargados', 30000);
-    const models = await page.eval(`[...document.querySelectorAll('input[name="model"]')].map(i=>({key:i.value, ok:!i.disabled}))`);
-    if (!models.some(m => m.ok)) throw new Error('ningún modelo disponible');
+    await page.waitFor(`S.live.models && /\\w/.test(document.querySelector('#liveModel').textContent)`, 'modelos cargados', 30000);
+    // Sin elegir modelo: siempre la media móvil; solo se eligen α y las horas de trabajo (con la cuenta de la última entrega).
+    const mf = await page.eval(`({radios:document.querySelectorAll('input[name="model"]').length, model:document.querySelector('#liveModel').textContent, ok:!!modelInfo('ma_diaria')?.disponible, horas:[...document.querySelectorAll('#ahours option')].map(o=>o.value).join(','), hint:document.querySelector('#ahoursHint').textContent})`);
+    if (mf.radios || !mf.ok || mf.horas !== '1,2,3,6,12,20') throw new Error(`formulario de Predicción: ${JSON.stringify(mf)}`);
     const pub = await page.eval(`document.querySelector('#lastPublished').textContent + ' · ' + document.querySelector('#modelsUpdated').textContent`);
-    ok(`modelos: ${models.map(m => `${m.key}${m.ok ? '' : ' (deshabilitado)'}`).join(', ')}; viajes publicados y modelos: ${pub}`);
+    ok(`Predicción sin elegir modelo (${mf.model}); horas 1, 2, 3, 6, 12 y todo el día; "${mf.hint}"; viajes publicados y modelos: ${pub}`);
     const pv = await page.eval(`(()=>({subtabs:!!document.querySelector('#view-prediccion .segmented'), form:!document.querySelector('#assignForm').hidden, dock:document.querySelector('#assignDock').hidden, emit:document.querySelector('#showEmitA').checked, arrive:document.querySelector('#showArriveA').checked}))()`);
     if (pv.subtabs || !pv.form || !pv.dock || !pv.emit || pv.arrive) throw new Error(`Predicción al entrar: ${JSON.stringify(pv)}`);
     ok('Predicción: una sola vista; formulario visible, sin barra de pasos hasta iniciar; "Órdenes actuales" prendido y "Órdenes aplicadas en el paso" apagado');
-    if (await page.eval(`!!modelInfo('lgbm_directo')?.disponible`)) await page.click('input[name="model"][value="lgbm_directo"]');
-    await page.eval(`document.querySelector('#ahours').value='1'`);
+    // Entre las 00:30 y las 05:00 Ecobici no opera: el servidor rechaza iniciar y la UI lo explica sin pedirlo.
+    if (flag('--fixtures')) await page.eval(`(window.fueraDeHorario = () => false, true)`);  // el simulado acepta a cualquier hora
+    const noche = await page.eval(`fueraDeHorario()`);
+    if (noche) {
+      const n0 = errors.length;
+      if (await page.eval(`document.querySelector('#anight').hidden`)) throw new Error('de noche el formulario debe avisar que no hay órdenes');
+      await page.click('#startAssign');
+      const msg = await page.eval(`(()=>{const e=document.querySelector('#aerror'); return e.hidden ? null : e.textContent})()`);
+      if (!msg || !/05:00/.test(msg) || await page.eval(`!!S.live.sessionId`)) throw new Error(`de noche iniciar debe explicar el horario y no crear sesión: ${msg}`);
+      if (errors.length !== n0) throw new Error(`de noche iniciar no debe dar errores de consola ni requests fallidos: ${errors.slice(n0).join(' | ')}`);
+      ok(`Predicción de noche: el formulario y el aviso explican el horario ("${msg.trim()}"), sin sesión, sin errores de consola ni requests fallidos`);
+      skipped.push('asignación en vivo (de noche el servidor rechaza iniciar: Ecobici opera de 05:00 a 00:30; probar de día o con --fixtures)');
+    } else {
+    await page.eval(`(()=>{const s=document.querySelector('#ahours'); s.value='1'; s.dispatchEvent(new Event('change')); return true})()`);
+    const h1 = await page.eval(`document.querySelector('#ahoursHint').textContent`);
+    if (!/última bici se entrega/.test(h1) || !/solo en el paso/.test(h1)) throw new Error(`con 1 hora la cuenta debe decir que solo emite un paso: ${h1}`);
     await page.eval(`(()=>{const s=document.querySelector('#aalfa'); if (!s || s.value!=='0') throw new Error('selector α de Asignación debe arrancar en 0'); s.value='1'; return true})()`);
     await page.click('#startAssign');
     await page.waitFor(`S.live.session && (S.live.session.pasos||[]).length >= 1 || !document.querySelector('#aerror').hidden`, 'primer paso de la asignación', 300000);
@@ -661,6 +709,26 @@ async function run(base) {
     if (aerr) throw new Error(`asignación: ${aerr}`);
     const a1 = await page.eval(`(()=>{const s=S.live.session,p=s.pasos[0]; return {id:S.live.sessionId, estado:s.estado, model:s.model, t:p.t, emitidas:p.emitidas.length, bicis:p.bicis_a_mover, title:document.querySelector('#apTitle').textContent, rows:document.querySelectorAll('#apList .row').length, form:document.querySelector('#assignForm').hidden, dock:!document.querySelector('#assignDock').hidden, paso:document.querySelector('#astepTxt').textContent, run:document.querySelector('#arun').innerText.replace(/\\n+/g,' · '), pron:!!S.live.forecast}})()`);
     if (!a1.dock || !/^Paso 1 de \d+/.test(a1.paso) || !a1.run || !a1.pron) throw new Error(`barra de pasos de la asignación: ${JSON.stringify(a1)}`);
+    // Las horas de la barra de pasos no se enciman y la línea conserva su ancho (el resumen va en su propia fila).
+    const tk = await page.eval(`(()=>{const b=[...document.querySelectorAll('#aticks span')].map(s=>s.getBoundingClientRect()); let enc=0; for(let i=1;i<b.length;i++) if(b[i].left<b[i-1].right+2) enc++; return {n:b.length, enc, w:Math.round(document.querySelector('#ak').getBoundingClientRect().width)}})()`);
+    if (tk.enc || tk.w < 200) throw new Error(`horas de la barra de pasos: ${JSON.stringify(tk)}`);
+    // Km por calle: total del paso en el panel y en cada traslado de "Mover" (cuando el servidor los da).
+    const km = await page.eval(`(()=>{const p=S.live.session.pasos[0]; return {srv:p.km_calle, tile:document.querySelector('#apStats [data-stat="km_calle"] b')?.textContent||null, rows:[...document.querySelectorAll('#apList .row.move .r-sub')].filter(e=>/ km$/.test(e.textContent)).length, total:document.querySelectorAll('#apList .row.move').length}})()`);
+    if (km.srv != null && (!km.tile || km.rows !== km.total)) throw new Error(`km por calle de la asignación: ${JSON.stringify(km)}`);
+    if (km.srv != null) ok(`Asignación: ${km.tile} km de distancia en el paso y en ${km.rows} de ${km.total} traslados`);
+    // Mover va de lo que más evita a lo que menos, según el pronóstico (mismo orden que pairsOf + porAhorro).
+    const orden = await page.eval(`(()=>{const xs=pairsOf(livePackages(currentStep().emitidas)); const ev=xs.map(x=>x.evita); const want=xs.slice().sort(porAhorro).map(x=>x.id); const got=[...document.querySelectorAll('#apList .row.move .r-sub')].map(e=>e.textContent.split(' · ')[0]); return {conDato:ev.every(v=>v!=null), ok:JSON.stringify(got)===JSON.stringify(want.slice(0,got.length)), desc:want.map(id=>xs.find(x=>x.id===id).evita).every((v,i,a)=>!i||a[i-1]>=v)}})()`);
+    if (orden.conDato && (!orden.ok || !orden.desc)) throw new Error(`orden de "Mover" por lo que evita: ${JSON.stringify(orden)}`);
+    // Una orden para quien maneja: al picarla, el panel muestra de dónde a dónde, bicis, horas, km e id, y se regresa a todas.
+    if (km.total) {
+      await page.click('#apList .row.move');
+      await page.waitFor(`!!document.querySelector('#apList .order-detail')`, 'orden abierta en el panel');
+      const od = await page.eval(`(()=>{const d=document.querySelector('#apList .order-detail'); return {id:document.querySelector('#apTitle').textContent, legs:d.querySelectorAll('.od-leg').length, bikes:d.querySelector('.od-bikes b').textContent, tabs:document.querySelector('#apTabs').hidden, popup:MAPS[0].pinned.isOpen()}})()`);
+      if (!/^Orden \d{4}-\d+-\S+$/.test(od.id) || od.legs !== 2 || !od.tabs || od.popup) throw new Error(`orden abierta: ${JSON.stringify(od)}`);
+      await page.click('#apList .od-back');
+      await page.waitFor(`!document.querySelector('#apList .order-detail') && !document.querySelector('#apTabs').hidden`, 'regresa a todas las órdenes');
+      ok(`Asignación: picar un traslado abre la ${od.id} en el panel (${od.bikes} bicis, recoger y entregar, sin globo en el mapa) y se regresa a todas`);
+    }
     if (a1.estado === 'corriendo' && !a1.form) throw new Error('el formulario debe ocultarse mientras la sesión corre');
     ok(`asignación ${a1.id} (${a1.model}) ${a1.estado}: paso ${a1.t} con ${a1.emitidas} órdenes (${a1.bicis} bicis); barra "${a1.paso}" · "${a1.run}"; panel "${a1.title}" con ${a1.rows} filas`);
     if (shots) {
@@ -707,8 +775,10 @@ async function run(base) {
         const le = await page.eval(`({rows:document.querySelectorAll('#apList .row[data-pk]').length, txt:document.querySelector('#apList').textContent})`);
         if (le.rows !== wantE || !/→ a /.test(le.txt)) throw new Error(`lista "Mover": ${JSON.stringify({rows: le.rows, wantE})}`);
         await page.eval(`(document.querySelector('#apList .row[data-pk]').click(), true)`);
-        await page.waitFor(`!!document.querySelector('.maplibregl-popup.ord') && document.querySelector('#apList .row.on')`, 'ficha del traslado elegido', 15000);
+        // La orden se abre en el panel y su línea queda resaltada en el mapa (sin globo encima).
+        await page.waitFor(`!!document.querySelector('#apList .order-detail') && !JSON.stringify(S.map.getFilter('ord-hl')).endsWith('-1]]') && !document.querySelector('.maplibregl-popup.ord')`, 'orden elegida en el panel y resaltada en el mapa', 15000);
         if (shots) { await sleep(2000); await page.shot('ord-03-prediccion-emitidas.png'); }
+        await page.click('#apList .od-back');
         let msg = `Asignación: "Órdenes actuales" dibuja ${e1.emit} traslados del paso ${ks.em + 1}, uno por renglón de "Mover"; al pulsar un renglón el mapa va a su línea`;
         if (ks.arr >= 0) {
           await page.eval(`(goAssignStep(${ks.arr}), true)`);
@@ -782,6 +852,7 @@ async function run(base) {
     if (!fin.form || !fin.title || !fin.stop) throw new Error(`tras detener o terminar se debe poder iniciar otra: ${JSON.stringify(fin)}`);
     ok(`asignación ${fin.pill.toLowerCase()}; el formulario "Nueva asignación" vuelve para iniciar otra`);
 
+    }
     // El plegado y el ancho se recuerdan por pestaña (localStorage) al recargar.
     await page.click('#tab-replay');
     await sleep(400);

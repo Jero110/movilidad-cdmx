@@ -10,6 +10,8 @@ uv run python3 server.py --no-browser --no-live # sin bitácora del feed
 ```
 
 Opciones: `--port`, `--host`, `--no-browser`, `--no-live`, `--results-dir`.
+Arranca siempre en su puerto (8000 por defecto): si otro proceso ya escucha ahí (un servidor viejo de la demo),
+lo detiene primero.
 
 Preparar los datos (desde la raíz del repo):
 
@@ -30,9 +32,11 @@ uv run python -m ecosim.actualizar       # cada mes: baja el mes nuevo y reentre
 | Predicción: pronósticos | modelos de producción (`ecosim/actualizar.py`) | estimado |
 | Predicción: viajes del día (forma directa y `salidas_est`/`llegadas_est`) | cambios del feed entre lecturas (`live.infer_flows`) | estimado (`"viajes_del_dia": "inferidos_feed"`) |
 | Predicción: órdenes de asignación | `Asignador` sobre el estado del feed | recomendación; no se ejecuta |
+| Predicción: minutos-estación que evita cada paquete (`evita`), y el orden de las listas | costos del greedy con el pronóstico, sin λ ni α (`live._evita_por_paquete`) | estimado: lo que espera el asignador |
+| Predicción: km por calle de cada traslado | ruta más corta por calle de OSRM sobre OpenStreetMap, sin tráfico (`ecosim/osrm_matriz.npz`, la del tope por tramo) | estimado |
 
-En vivo no se calcula E+F ni ahorro: Ecobici sigue operando y no hay contra
-qué comparar.
+En vivo no se mide E+F ni ahorro: Ecobici sigue operando y no hay contra
+qué comparar. Lo único que se muestra es lo que el asignador espera evitar según el pronóstico (`evita`).
 
 ## Contratos JSON
 
@@ -213,14 +217,18 @@ lectura va a la bitácora del día, `data/derived/ecosim/live/gbfs/{día}.jsonl`
     (`disparo: "sin_cambio_feed"`, `feed_atrasado: true`). Si el feed quedó más de
     15 min atrás de `t`, ese paso no emite órdenes y lo dice en `nota`.
 - `GET /api/live/assign/{id}` →
-  `{"estado": "corriendo"|"terminada"|"detenida"|"error", "fase": "emitiendo"|"cerrando", "model", "inicio", "horas", "fin_emision", "params", "inicio_estado": estado, "pasos": [{"t", "t_feed", "disparo": "inicio"|"cambio_feed"|"sin_cambio_feed", "espera_s", "feed_atrasado", "estado_feed": estado, "lecturas_desde_paso": [lectura], "emitidas": [orden], "aplicadas": [orden], "bicis_a_mover", "visitas", "salidas_est", "llegadas_est", "ventana_est", "saltos_camioneta", "nota"}], "totales": {"bicis_a_mover", "visitas", "recogidas", "entregadas"}, "pendientes": [orden], "siguiente_paso", "error", "nota"}`,
+  `{"estado": "corriendo"|"terminada"|"detenida"|"error", "fase": "emitiendo"|"cerrando", "model", "inicio", "horas", "fin_emision", "ultimo_paso_emite" (opcional: último paso que emite; null si ya el primero no puede), "ultima_entrega" (opcional: hora de la última entrega posible), "params", "inicio_estado": estado, "pasos": [{"t", "t_feed", "disparo": "inicio"|"cambio_feed"|"sin_cambio_feed", "espera_s", "feed_atrasado", "estado_feed": estado, "lecturas_desde_paso": [lectura], "emitidas": [orden], "km_calle", "aplicadas": [orden], "bicis_a_mover", "visitas", "salidas_est", "llegadas_est", "ventana_est", "saltos_camioneta", "nota"}], "totales": {"bicis_a_mover", "visitas", "recogidas", "entregadas"}, "pendientes": [orden], "siguiente_paso", "error", "nota"}`,
   con `orden = {"short_name", "accion": "recoger"|"entregar", "n", "emitida", "recoge", "entrega"}`
+  (en `emitidas`, cada orden trae `evita`: minutos-estación que su paquete evita según el pronóstico; y cada
+  recogida, `id` del traslado (p. ej. "0930-3-252") y `km_calle`: km por calle de su estación al receptor del
+  paquete; `km_calle` del paso es la suma; null si el par no está en la matriz OSRM)
   y `estado = {"t_feed", "bicis_disponibles", "no_rentables", "anclajes_libres", "estaciones_vacias", "estaciones_llenas"}`.
   - `inicio_estado`: el feed con que arrancó la sesión; `estado_feed`: el del paso;
     `lecturas_desde_paso`: las lecturas del feed entre el paso anterior y este.
-  - Durante `horas` emite órdenes (fase `emitiendo`); después sigue cada 15 min
-    sin emitir hasta que se aplica la última entrega pendiente (fase `cerrando`)
-    y termina con recogidas = entregadas.
+  - `inicio` es la siguiente marca de 15 min al iniciar (el primer paso corre en ese momento con la foto del feed).
+    `horas` es el tiempo de trabajo: emite órdenes (fase `emitiendo`) mientras su entrega caiga a más tardar en
+    `inicio` + `horas` y antes de las 00:30 (con 1 h, solo el primer paso); después sigue cada 15 min sin emitir
+    hasta que se aplica la última entrega pendiente (fase `cerrando`) y termina con recogidas = entregadas.
   - `aplicadas` = órdenes cuya recogida (`recoge`) o entrega (`entrega`) toca en ese paso.
   - `salidas_est`/`llegadas_est`: viajes estimados del feed en `ventana_est` (los 15 min previos).
 - `POST /api/live/assign/{id}/stop` detiene la sesión antes del siguiente paso.

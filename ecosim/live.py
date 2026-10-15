@@ -111,6 +111,12 @@ def floor15(t: datetime) -> datetime:
     return t.replace(minute=t.minute - t.minute % STEP, second=0, microsecond=0)
 
 
+def ceil15(t: datetime) -> datetime:
+    """Siguiente marca de 15 min (la misma si ya cae en una, al minuto)."""
+    m = t.replace(second=0, microsecond=0)
+    return m if m.minute % STEP == 0 else floor15(m) + timedelta(minutes=STEP)
+
+
 def iso_min(t) -> str:
     return pd.Timestamp(t).strftime("%Y-%m-%dT%H:%M")
 
@@ -486,7 +492,8 @@ def preparar(modelo: str, t_feed: datetime, log_df: pd.DataFrame, prod: Producci
     day = C.window_day(t)
     start, end = C.day_bounds(day)
     if not start <= t < end:
-        raise LookupError(f"fuera del horario de servicio (05:00–00:30): feed a las {iso_s(t_feed)}")
+        raise LookupError(f"fuera del horario de servicio (05:00–00:30): feed a las {iso_s(t_feed)}. "
+                          "Ecobici no opera ahora, así que no hay pronóstico ni órdenes; vuelve desde las 05:00.")
     st, rows, fuera = _estado(log_df, prod, t_feed)
     forma = MODELOS[modelo][0]
     hoy = feed = None
@@ -773,6 +780,52 @@ class LiveLoop:
 # asignación en tiempo real, disparada por el feed
 # ---------------------------------------------------------------------------
 
+_CALLE: tuple | None = None
+
+
+def km_calle(a: str, b: str) -> float | None:
+    """Km por calle de la estación `a` a la `b` (OSRM sin tráfico, `C.OSRM_MATRIZ`, la misma del tope por tramo);
+    None si el par no está en la matriz."""
+    global _CALLE
+    if _CALLE is None:
+        m = np.load(C.OSRM_MATRIZ)
+        _CALLE = ({str(s): i for i, s in enumerate(m["ids"])}, m["dist_m"] / 1000)
+    idx, km = _CALLE
+    i, j = idx.get(str(a)), idx.get(str(b))
+    if i is None or j is None or not np.isfinite(km[i, j]):
+        return None
+    return round(float(km[i, j]), 2)
+
+
+def id_orden(emitida: str, paquete: int, donante: str) -> str:
+    """ID de un traslado (un donante → el receptor de su paquete): hora del paso, paquete y estación donante,
+    p. ej. "0930-3-252". Único en la sesión."""
+    return f"{emitida[11:13]}{emitida[14:16]}-{int(paquete)}-{donante}"
+
+
+def _con_km(ordenes: list[dict]) -> float:
+    """Pone `id` y `km_calle` (del donante al receptor de su paquete) en cada recogida y devuelve el total del paso."""
+    recv = {(o["emitida"], o["paquete"]): o["short_name"] for o in ordenes if o["accion"] == "entregar"}
+    total = 0.0
+    for o in ordenes:
+        r = recv.get((o["emitida"], o["paquete"]))
+        if o["accion"] == "recoger" and r is not None:
+            o["id"] = id_orden(o["emitida"], o["paquete"], o["short_name"])
+            o["km_calle"] = km_calle(o["short_name"], r)
+            total += o["km_calle"] or 0.0
+    return round(total, 1)
+
+
+def _evita_por_paquete(plan) -> dict[int, float]:
+    """Minutos-estación vacíos o llenos que, según el pronóstico, evita cada paquete en la ventana del asignador:
+    −(costo de entregar x en el receptor + Σ costo de recoger k en cada donante), sin el precio de visita (λ) ni el
+    costo por km (α). Es lo que espera el greedy, no algo medido. Paquete numerado como en `Asignador.decide`."""
+    if plan is None:
+        return {}
+    return {p: round(float(-(plan.delivery_cost[i, x] + sum(plan.pickup_cost[j, k] for j, k in ds))), 1)
+            for p, (i, x, ds) in enumerate(plan.paquetes, start=1)}
+
+
 def _orden(o: K.Order) -> dict:
     return {"short_name": o.short_name, "accion": "recoger" if o.delta < 0 else "entregar", "n": abs(int(o.delta)),
             "emitida": iso_min(o.issued_at), "recoge": iso_min(o.pickup_at), "entrega": iso_min(o.delivery_at),
@@ -804,17 +857,35 @@ class Sesion:
         self.fz = fz
         self.model = forecast["model"]
         self.stop_event = threading.Event()
+        self._save_lock = threading.Lock()
         self.pending: list[K.Order] = []
         self.asignador = Asignador()
         self.params = params_for(self.model, self.fz or frozen())
         self.params.alfa = validar_alfa(alfa)
         self.prev_t_feed: str | None = None
-        inicio = floor15(self.clock())
-        fin = min(inicio + timedelta(hours=horas), C.day_bounds(C.window_day(inicio))[1])
+        # El primer paso corre al iniciar, con la foto del feed de ese momento, y decide para la siguiente marca de
+        # 15 min: nada se ordena hacia atrás y la primera ronda tiene de 15 a 29 min para salir. Los siguientes pasos
+        # van cada 15 min sobre la rejilla del pronóstico, como en el replay.
+        ahora = self.clock()
+        inicio = ceil15(ahora)
+        abre, cierra = C.day_bounds(C.window_day(inicio))
+        if not (abre <= ahora and inicio < cierra):
+            raise ValueError(f"fuera del horario de servicio (05:00–00:30): son las {iso_min(self.clock())[11:]} y Ecobici "
+                             "no opera; no hay órdenes que emitir. Vuelve a iniciar desde las 05:00.")
+        # `horas` es el tiempo de trabajo: la última bici se entrega a más tardar en inicio + horas. El último paso que
+        # emite es el que entrega (t + entrega_min) en ese límite, y su entrega cae antes del cierre de las 00:30
+        # (con 1 h solo emite el primer paso).
+        ent = timedelta(minutes=self.params.delivery_min)
+        fin = min(inicio + timedelta(hours=horas), cierra)
+        ultimo = min(fin - ent, cierra - ent - timedelta(minutes=STEP))
+        self.ultimo_emite = ultimo if ultimo >= inicio else None
+        fin = ultimo + timedelta(minutes=STEP) if self.ultimo_emite else fin  # fin_emision: los pasos t < fin emiten
         self.state = {
             "id": sid, "estado": "corriendo", "fase": "emitiendo", "model": self.model,
             "forecast_id": forecast["id"], "horizonte_pronostico": forecast.get("horizonte"),
             "inicio": iso_min(inicio), "horas": int(horas), "fin_emision": iso_min(fin),
+            "ultimo_paso_emite": iso_min(self.ultimo_emite) if self.ultimo_emite else None,
+            "ultima_entrega": iso_min(self.ultimo_emite + ent) if self.ultimo_emite else None,
             "params": {"n": self.params.n_hours, "lambda": self.params.lam,
                        "visitas_por_decision": self.params.visits_per_decision,
                        "bicis_por_visita": self.params.max_bikes_per_visit,
@@ -836,10 +907,12 @@ class Sesion:
         return self.params.alfa
 
     def _save(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.state, ensure_ascii=False))
-        tmp.replace(self.path)
+        # El hilo de la sesión y las peticiones (α, detener) guardan a la vez: un solo escritor a la vez.
+        with self._save_lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.state, ensure_ascii=False))
+            tmp.replace(self.path)
 
     def _evento_sesion(self):
         s = self.state
@@ -886,10 +959,12 @@ class Sesion:
         aplicadas = [o for o in self.pending if _efectiva(o) <= t]
         self.pending = [o for o in self.pending if _efectiva(o) > t]
         emitidas: list[K.Order] = []
+        evita: dict[int, float] = {}
         nota = None
         if t < datetime.fromisoformat(self.state["fin_emision"]):
             try:
-                if abs((t_feed - t).total_seconds()) > 60 * STEP:
+                # Al iniciar, la foto puede ser de hasta ~15 min antes de la marca (se decide para la siguiente).
+                if abs((t_feed - t).total_seconds()) > 60 * STEP * (2 if disparo == "inicio" else 1):
                     nota = f"feed desfasado: lectura de {iso_s(t_feed)} para el paso {iso_min(t)}; no se emite"
                 else:
                     _, _, st, vista, ref = preparar(self.model, t_feed, log_df, prod, t=t)
@@ -900,10 +975,17 @@ class Sesion:
                                                  if m[1] is not None and m[2] is not None}
                     emitidas = self.asignador.decide(t, sim_state, list(self.pending), vista, self.params)
                     plan = self.asignador.last_plan
+                    evita = _evita_por_paquete(plan)
                     if plan is None:
-                        nota = "sin decisión: la entrega caería después de las 00:30"
+                        nota = ("no se emite: la entrega a los 60 min caería después de las 00:30, cuando cierra la operación"
+                                if t + timedelta(minutes=self.params.delivery_min) >= C.day_bounds(day)[1]
+                                else "el asignador no decidió en este paso")
+                    elif not emitidas:
+                        nota = "el asignador no encontró traslados que convengan en este paso"
             except LookupError as exc:
                 nota = str(exc)
+        else:
+            nota = "ya no se emiten órdenes; este paso solo aplica las pendientes"
         flows, info = infer_flows(log_df, prod.universe, start, t_feed)
         q = int((t - start).total_seconds() // 900) - 1
         sal = lle = None
@@ -921,7 +1003,9 @@ class Sesion:
         paso = {"t": iso_min(t), "t_feed": iso_s(t_feed), "alfa": self.params.alfa, "disparo": disparo, "espera_s": espera_s,
                 "feed_atrasado": atrasado, "estado_feed": estado,
                 "lecturas_desde_paso": [] if disparo == "inicio" else self.loop.lecturas_entre(self.prev_t_feed, lect["t_feed"]),
-                "emitidas": [_orden(o) for o in emitidas], "aplicadas": [_orden(o) for o in aplicadas],
+                "emitidas": (em := [{**_orden(o), "evita": evita.get(int(o.paquete))} for o in emitidas]),
+                "km_calle": _con_km(em),
+                "aplicadas": [_orden(o) for o in aplicadas],
                 "bicis_a_mover": sum(-o.delta for o in emitidas if o.delta < 0), "visitas": len(emitidas),
                 "salidas_est": sal, "llegadas_est": lle,
                 "ventana_est": [iso_min(t - timedelta(minutes=STEP)), iso_min(t)],
@@ -938,7 +1022,6 @@ class Sesion:
 
     def run(self):
         t = datetime.fromisoformat(self.state["inicio"])
-        fin = datetime.fromisoformat(self.state["fin_emision"])
         self._evento_sesion()
         try:
             primero = True
@@ -952,9 +1035,10 @@ class Sesion:
                         break
                     self.paso(t, *espera)
                 fase = self.state["fase"]
-                if t + timedelta(minutes=STEP) >= fin:
+                cerrando = self.ultimo_emite is None or t >= self.ultimo_emite
+                if cerrando:
                     self.state["fase"] = "cerrando"
-                if t + timedelta(minutes=STEP) >= fin and not self.pending:
+                if cerrando and not self.pending:
                     self.state["estado"], self.state["siguiente_paso"] = "terminada", None
                     self._save()
                     self._evento_sesion()
@@ -996,6 +1080,16 @@ class Asignaciones:
                 s.update(estado="error", error="el servidor se reinició con la sesión corriendo", siguiente_paso=None)
                 p.write_text(json.dumps(s, ensure_ascii=False))
 
+    def _vigente(self, s: dict) -> dict:
+        """Una sesión "corriendo" que este servidor no corre y cuyo siguiente paso pasó hace más de 20 min ya no la avanza
+        nadie: se muestra como error (el JSON no se toca; otro proceso podría estar escribiéndolo)."""
+        nxt = s.get("siguiente_paso")
+        if s.get("estado") == "corriendo" and s.get("id") not in self.sesiones:
+            now = (self.clock or self.loop.clock)()
+            if not nxt or datetime.fromisoformat(nxt) < now - timedelta(minutes=20):
+                return {**s, "estado": "error", "error": "la sesión dejó de avanzar (el servidor que la corría se detuvo)", "siguiente_paso": None}
+        return s
+
     def start(self, forecast_id: str, horas: int, thread: bool = True, alfa: float = 0.0) -> str:
         if not isinstance(horas, int) or not 1 <= horas <= MAX_SESSION_H:
             raise ValueError(f"horas debe ser un entero entre 1 y {MAX_SESSION_H}")
@@ -1019,7 +1113,7 @@ class Asignaciones:
         p = self.dir / f"{sid}.json"
         if not p.exists():
             raise KeyError(sid)
-        return json.loads(p.read_text())
+        return self._vigente(json.loads(p.read_text()))
 
     def cambiar_alfa(self, sid: str, alfa) -> dict:
         s = self.sesiones.get(sid)
@@ -1029,16 +1123,28 @@ class Asignaciones:
         return s.state
 
     def stop(self, sid: str) -> dict:
+        """Detener siempre se puede. Si este servidor no la corre (se reinició, o quedó de otro proceso), una sesión
+        "corriendo" se marca "detenida" en su JSON; KeyError solo si la sesión no existe."""
         s = self.sesiones.get(sid)
-        if s is None:
+        if s is not None:
+            s.stop_event.set()
+            return s.state
+        path = self.dir / f"{sid}.json"
+        if not path.exists():
             raise KeyError(sid)
-        s.stop_event.set()
-        return s.state
+        with self.lock:
+            st = json.loads(path.read_text())
+            if st.get("estado") == "corriendo":
+                st.update(estado="detenida", siguiente_paso=None)
+                tmp = path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(st, ensure_ascii=False))
+                tmp.replace(path)
+        return st
 
     def listar(self) -> list[dict]:
         out = []
         for p in sorted(self.dir.glob("*.json"), reverse=True) if self.dir.exists() else []:
-            s = self.sesiones[p.stem].state if p.stem in self.sesiones else json.loads(p.read_text())
+            s = self.sesiones[p.stem].state if p.stem in self.sesiones else self._vigente(json.loads(p.read_text()))
             out.append({k: s.get(k) for k in ("id", "estado", "fase", "model", "inicio", "horas", "siguiente_paso")})
         return out
 

@@ -111,10 +111,10 @@ const S = {
   sel: null,         // índice de estación seleccionada (mismo índice en los dos mapas)
   cardSide: 0,       // de qué mapa es la ficha abierta
   snapshot: null,
-  zones: {on: {ahora: false, replay: false, pronostico: false, asignacion: false}, geo: null},  // interruptor independiente por vista
+  zones: {on: {ahora: false, replay: true, pronostico: false, asignacion: false}, geo: null},  // interruptor independiente por vista; en el Replay, prendido por defecto
   nums: {replay: false, pronostico: false, asignacion: false},  // "Bicis por estación", independiente por vista
   replay: {index: null, days: {}, arms: {}, dayData: null, sel: [], keys: [], k: 0, timer: null, list: 'emitidas', side: 0, token: 0, alfa: 0},
-  live: {models: null, sessionId: null, session: null, poll: null, clock: null, step: -1, follow: true, list: 'emitidas', open: null},
+  live: {models: null, sessionId: null, session: null, poll: null, clock: null, step: -1, follow: true, list: 'emitidas', open: null, detail: null},
 };
 // Escenario principal del Replay (el primero elegido).
 Object.defineProperty(S.replay, 'arm', {get() { return this.sel[0] || null; }});
@@ -329,6 +329,7 @@ function zonesGeo(v) {
 function zoneTooltip(p) {
   return `AGEB ${esc(p.cvegeo)} · ${esc(ST_LABEL[p.st])}<small>${esc(p.alcaldia)}${p.alcaldia ? ' · ' : ''}${fmt(p.b)} bicis disponibles / ${fmt(p.cap)} de capacidad<br>Estaciones: ${esc(p.est)}</small>`;
 }
+let zonasEspera = false;
 function syncZonesUI() {
   $$('[data-zones]').forEach(box => { $('.zones-on', box).checked = !!S.zones.on[box.dataset.zones]; });
 }
@@ -361,6 +362,26 @@ function mapState(text, kind = 'center') {
   $('#mapStateText').textContent = text;
 }
 
+/** Botón sobre el zoom que encuadra todas las estaciones (con dos mapas, el otro lo sigue); sin estaciones, la vista inicial. */
+function homeControl() {
+  return {
+    onAdd(map) {
+      const el = document.createElement('div');
+      el.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+      el.innerHTML = `<button type="button" class="map-home" aria-label="Ver todas las estaciones" title="Ver todas las estaciones"><svg class="ico" aria-hidden="true"><use href="#i-center"/></svg></button>`;
+      el.firstChild.onclick = () => {
+        const cs = (S.view?.stations || S.snapshot?.stations || []).filter(s => Number.isFinite(+s.lon) && Number.isFinite(+s.lat)).map(s => [+s.lon, +s.lat]);
+        if (!cs.length) { if (REDUCED) map.jumpTo(HOME); else map.flyTo({...HOME, speed: 1.6, curve: 1.3, essential: true}); return; }
+        const b = cs.reduce((bb, c) => bb.extend(c), new maplibregl.LngLatBounds(cs[0], cs[0]));
+        // Arriba deja libre la barra de tiempo o de pasos; a la derecha, los botones del mapa.
+        map.fitBounds(b, {padding: {top: 100, bottom: 30, left: 30, right: 60}, duration: REDUCED ? 0 : 700});
+      };
+      return el;
+    },
+    onRemove() {},
+  };
+}
+
 async function createMap(container, view) {
   const map = new maplibregl.Map({
     container, style: MAP_STYLE, center: view.center, zoom: view.zoom,
@@ -369,6 +390,7 @@ async function createMap(container, view) {
   const M = {map, side: MAPS.length, view: null, popup: null, hit: -1, ready: false};
   map.touchZoomRotate.disableRotation();
   map.addControl(new maplibregl.NavigationControl({showCompass: false}), 'bottom-right');
+  map.addControl(homeControl(), 'bottom-right');
   map.on('styleimagemissing', e => makeImage(map, e.id));
   await Promise.race([
     new Promise((res, rej) => { map.once('load', res); map.once('error', e => rej(e.error || new Error('Error del mapa'))); }),
@@ -531,9 +553,22 @@ function addLayers(M) {
   map.on('mouseleave', 'ord-hit', () => { resalta(-1); if (M.hit === -1) { map.getCanvas().style.cursor = ''; M.popup.remove(); } });
   map.on('click', 'ord-hit', e => {
     if (sobreEstacion(e.point)) return;
+    if (M.view?.mode === 'asignacion' && e.features[0].properties.pk) { M.popup.remove(); openOrder(e.features[0].properties.pk); return; }
     M.popup.remove();
     M.pinned.setLngLat(e.lngLat).setHTML(e.features[0].properties.tip).addTo(map);
   });
+  // La orden elegida se cierra al picar en otra parte del mapa (no en una línea ni en una estación) o con su ×.
+  const suelta = () => {
+    M.pinned.remove();
+    resalta(-1);
+    if (S.live?.focus) { S.live.focus = null; $$('#apList .row.on').forEach(b => b.classList.remove('on')); }
+  };
+  map.on('click', e => {
+    if (!M.pinned.isOpen() && !S.live?.focus) return;
+    if (map.queryRenderedFeatures(e.point, {layers: ['ord-hit', ...ST_LAYERS]}).length) return;
+    suelta();
+  });
+  map.getContainer().addEventListener('click', e => { if (e.target.closest('.ord .maplibregl-popup-close-button')) suelta(); });
   map.on('mousemove', 'zones-fill', e => {
     if (M.hit !== -1 || map.queryRenderedFeatures(e.point, {layers: ST_LAYERS}).length) return;
     const p = e.features[0]?.properties;
@@ -545,6 +580,12 @@ function addLayers(M) {
 
 /** Dibuja el modo activo en cada mapa. Cada vista dice qué estaciones y propiedades dibujar. */
 function renderMap() {
+  // Zonas prendidas (el Replay las trae por defecto) y aún sin cargar: se piden una vez y se vuelve a pintar.
+  const modo = S.tab === 'prediccion' ? 'asignacion' : S.tab;
+  if (S.zones.on[modo] && !S.zones.geo && !zonasEspera) {
+    zonasEspera = true;
+    loadZonas().then(() => renderMap(), e => { S.zones.on[modo] = false; syncZonesUI(); toast(e.message, true); }).finally(() => { zonasEspera = false; });
+  }
   const views = buildViews();
   const prevMode = S.view?.mode;
   S.views = views;
@@ -577,6 +618,7 @@ function paint(M, v) {
   M.map.getSource('zones').setData(zonesGeo(v));
   M.map.setFilter('st-sel', ['==', ['get', 'i'], S.sel ?? -1]);
   M.popup?.remove(); M.hit = -1;
+  v.afterPaint?.(M);
 }
 
 function buildViews() {
@@ -609,15 +651,25 @@ function markSel() {
 function openStation(i, {fly = true, side = null} = {}) {
   if (!S.view?.stations[i]) return;
   S.sel = i;
+  if (document.activeElement && document.activeElement !== document.body && !$('#card').contains(document.activeElement)) cardOpener = document.activeElement;
   if (side !== null) S.cardSide = side;
   markSel();
   if (fly) flyTo(S.view.stations[i]);
   renderCard();
+  // Con los paneles apilados (≤ 900 px) el mapa y la ficha quedan debajo del panel: se lleva la vista hasta ahí.
+  if (matchMedia('(max-width: 900px)').matches) $('.stage').scrollIntoView({behavior: REDUCED ? 'auto' : 'smooth', block: 'start'});
 }
+let cardOpener = null;
 function closeCard() {
+  const focused = $('#card').contains(document.activeElement);
   $('#card').hidden = true;
   S.sel = null;
   markSel();
+  // Si el foco estaba en la ficha, vuelve a quien la abrió (o a la búsqueda / al mapa) en vez de perderse.
+  if (focused) {
+    const back = cardOpener?.isConnected && cardOpener.offsetParent !== null ? cardOpener : (S.tab === 'ahora' ? $('#q') : $('#map canvas'));
+    back?.focus({preventScroll: true});
+  }
 }
 $('#cardClose').onclick = closeCard;
 
@@ -663,9 +715,9 @@ function zoneLegend(compact) {
   if (!S.view?.zone || !S.zones.on[S.view.mode]) return '';
   if (compact) return `<div class="legend-row"><span class="legend-item"><i class="sw sq normal"></i>Zonas AGEB con los mismos colores</span></div>`;
   return `<div class="legend-zones" id="zoneLegend">
-    <span class="legend-title">Zonas (AGEB urbanas del INEGI): estado sumando sus estaciones</span>
+    <span class="legend-title">Zonas (AGEB urbanas del INEGI): estado según la suma de sus estaciones</span>
     <div class="legend-row">${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' sq')}</div>
-    <span>Mismos colores y cortes que las estaciones, con bicis y anclajes libres de la AGEB.</span>
+    <span>Colores y cortes de las estaciones, sobre las bicis y los anclajes libres de la AGEB.</span>
   </div>`;
 }
 /** Leyenda de las líneas de órdenes que estén prendidas (la flecha marca el sentido: origen → destino). */
@@ -673,8 +725,8 @@ function ordersLegend(emitSel, arriveSel, reloc) {
   const e = $(emitSel)?.checked, a = $(arriveSel)?.checked;
   if (!e && !a) return '';
   const items = [
-    e ? '<span class="legend-item"><i class="line-sw emit"></i>orden emitida: de dónde se recoge a dónde se entrega</span>' : '',
-    a ? '<span class="legend-item"><i class="line-sw arrive"></i>se recogió o llegó en la foto: bicis movidas del origen al destino</span>' : '',
+    e ? '<span class="legend-item"><i class="line-sw emit"></i>orden emitida: de dónde recoger a dónde entregar</span>' : '',
+    a ? '<span class="legend-item"><i class="line-sw arrive"></i>se recogió o llegó en la foto: del origen al destino</span>' : '',
     a && reloc ? '<span class="legend-item"><i class="line-sw reloc"></i>no cupieron: del destino a la estación cercana</span>' : '',
   ].join('');
   return `<div class="legend-row">${items}</div>`;
@@ -713,12 +765,12 @@ function legendParts(mode) {
   const e = $('#showEmitA').checked, a = $('#showArriveA').checked;
   const ord = e || a ? `<div class="legend-row">${e ? '<span class="legend-item"><i class="line-sw emit"></i>mover: de dónde recoger (tenue) a dónde llevar (intenso)</span>' : ''}${a ? '<span class="legend-item"><i class="line-sw arrive"></i>órdenes que se recogen o llegan en este paso</span>' : ''}</div>` : '';
   return {  // asignación
-    full: `<span class="legend-title">Qué mover en este paso</span>
-      <div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>llevar aquí</span><span class="legend-item"><i class="chip minus">−N</i>recoger aquí</span></div>
+    full: `<span class="legend-title">Órdenes que llegan en este paso</span>
+      <div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>entregar aquí</span><span class="legend-item"><i class="chip minus">−N</i>recoger aquí</span></div>
       ${ord}
       <span class="legend-title">Estado actual de la estación</span>
       <div class="legend-row">${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}${numChip}</div>`,
-    compact: `<div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>llevar</span><span class="legend-item"><i class="chip minus">−N</i>recoger</span>${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}</div>${ord}`,
+    compact: `<div class="legend-row"><span class="legend-item"><i class="chip plus">+N</i>entregar</span><span class="legend-item"><i class="chip minus">−N</i>recoger</span>${stateItems(['vacia', 'pocas', 'normal', 'llena'], ' faint')}</div>${ord}`,
   };
 }
 function renderLegend() {
@@ -757,10 +809,24 @@ const PANEL_W = {
   right: {min: 280, max: 640, def: () => ($('#main').classList.contains('comparing') ? (innerWidth <= 1180 ? 400 : 452) : (innerWidth <= 1180 ? 300 : 340)),
     key: () => ($('#main').classList.contains('comparing') ? 'rwc' : 'rw')},
 };
-function panelWidth(side) {
-  const v = (panelPrefs[S.tab] || {})[PANEL_W[side].key()];
-  return Number.isFinite(v) ? v : PANEL_W[side].def();
+/** Anchos efectivos: lo guardado (o el de fábrica) dentro de los límites de cada panel, y recortado para que el mapa conserve
+ *  al menos 320 px cuando la ventana es más angosta que cuando se guardó (primero cede el derecho, luego el izquierdo). */
+function effWidths() {
+  const p = panelPrefs[S.tab] || {}, hasRight = S.tab !== 'ahora';
+  const fit = side => {
+    const {min, max} = PANEL_W[side], v = p[PANEL_W[side].key()];
+    return Math.max(min, Math.min(max, Number.isFinite(v) ? v : PANEL_W[side].def()));
+  };
+  let l = fit('left'), r = fit('right');
+  if (innerWidth > 900) {  // con ≤ 900 px los paneles se apilan
+    const lc = !!p.left, rc = !hasRight || !!p.right;
+    let over = (lc ? 0 : l) + (rc ? 0 : r) - (innerWidth - 320);
+    if (over > 0 && !rc) { const cut = Math.min(over, r - PANEL_W.right.min); r -= cut; over -= cut; }
+    if (over > 0 && !lc) l -= Math.min(over, l - PANEL_W.left.min);
+  }
+  return {left: l, right: r};
 }
+const panelWidth = side => effWidths()[side];
 function clampWidth(side, w) {
   const {min, max} = PANEL_W[side];
   const other = side === 'left' ? ($('#rightPanel').hidden ? 0 : $('#rightPanel').getBoundingClientRect().width) : $('#leftPanel').getBoundingClientRect().width;
@@ -768,7 +834,7 @@ function clampWidth(side, w) {
 }
 function applyWidths() {
   const main = $('#main');
-  const lw = panelWidth('left'), rw = panelWidth('right');
+  const {left: lw, right: rw} = effWidths();
   main.style.setProperty('--left-w', `${lw}px`);
   main.style.setProperty(main.classList.contains('comparing') ? '--right-w-compare' : '--right-w', `${rw}px`);
   for (const [side, w] of [['left', lw], ['right', rw]]) {
@@ -838,6 +904,7 @@ document.addEventListener('keydown', e => {
   if (e.key === '[') { togglePanel('left'); e.preventDefault(); }
   else if (e.key === ']' && S.tab !== 'ahora') { togglePanel('right'); e.preventDefault(); }
 });
+window.addEventListener('resize', applyWidths);
 // El mapa (o los dos) se ajusta mientras la columna se abre o se cierra.
 let resizeRaf = 0;
 new ResizeObserver(() => {
@@ -857,22 +924,23 @@ function stateMarker(mode, st, bikes, op) {
 
 const HELP = {
   ahora: ['Cada pin es una estación; el número son las bicis que se pueden rentar ahora mismo.',
-    'El color dice el estado: <b>vacía</b>, <b>pocas</b> (1 a 3), <b>normal</b>, <b>llena</b> (sin anclajes libres) o <b>inactiva</b>.',
+    'El color dice el estado: vacía, pocas (1 a 3), normal, llena (sin anclajes libres) o inactiva.',
     'Busca por número o nombre, o pica un pin, para ver todos los datos que publica Ecobici de esa estación.',
-    'Los datos del feed se actualizan solos cada 30 segundos. <b>Zonas de la ciudad</b> colorea las AGEB urbanas del INEGI con el mismo estado que los pines, sumando sus estaciones.',
+    'El feed se actualiza cada 30 segundos. Zonas de la ciudad colorea las AGEB urbanas del INEGI con el estado de sus estaciones sumadas, igual que los pines.',
     'Las flechas de los bordes del mapa (o las teclas [ y ]) ocultan y muestran los paneles; la leyenda queda sobre el mapa.'],
-  replay: ['Reproduce un día ya simulado en fotos cada 15 minutos, desde las 05:00. Elige el día y uno o dos escenarios (políticas de rebalanceo); con dos, los mapas se ven lado a lado y se mueven juntos.',
-    'En el mapa, <span class="k-plus">+N</span> son bicis entregadas y <span class="k-minus">−N</span> recogidas; en azul, <span class="k-pm">+N/−N</span> son bicis que pasan a rentables o a no rentables sin moverse. Cada estación es una bolita con el color de su estado; <b>Bicis por estación</b> muestra en su lugar el número de bicis.',
+  replay: ['Reproduce un día ya simulado en fotos cada 15 minutos, desde las 05:00. Elige el día y uno o dos escenarios (políticas de rebalanceo); con dos, los mapas van lado a lado y se mueven juntos.',
+    'En el mapa, <span class="k-plus">+N</span> son bicis entregadas y <span class="k-minus">−N</span> recogidas; en azul, <span class="k-pm">+N/−N</span> son bicis que pasan a rentables o a no rentables sin moverse. Cada estación es una bolita con el color de su estado; Bicis por estación muestra en su lugar el número de bicis.',
     'El panel derecho da cada número de la foto y su acumulado desde las 05:00. La ficha de cada estación muestra su cuenta: bicis anteriores − salidas + llegadas + entregadas − recogidas ± etiquetas = bicis actuales.',
-    '<b>Zonas de la ciudad</b> colorea las AGEB urbanas del INEGI con el mismo estado que los pines (vacía, pocas, normal, llena), sumando sus estaciones; cambia con cada foto.',
-    '<b>Órdenes emitidas</b> dibuja, en la foto en que se emitieron, una línea naranja de cada estación donde se recoge a la estación donde se entrega (la flecha marca el sentido). <b>Órdenes que llegaron</b> dibuja lo que el simulador realmente movió en la foto (azul): los traslados que se recogieron y los que se entregaron y, punteado, las bicis que no cupieron y se dejaron en la estación cercana. Pasa o pica una línea para ver origen, destino, bicis y horas.',
-    'Pica una estación para ver su cuenta. Teclado: ← y → mueven 15 minutos, la barra espaciadora reproduce o pausa, y [ y ] ocultan los paneles.'],
-  asignacion: ['Elige el pronóstico, cuántas horas emitir órdenes y el costo por km (α), y pulsa <b>Iniciar</b>. El asignador (greedy) decide cada 15 minutos qué bicis mover y de dónde a dónde.',
-    'La barra de arriba tiene un paso por cada 15 minutos de la sesión. Se va llenando conforme corre; puedes regresar a cualquier paso ya calculado (← y →). Al lado dice cuánto lleva corriendo y cuánto le falta.',
-    'A la derecha, <b>Mover</b> es la lista de trabajo del paso: de qué estación recoger, a cuál llevar, cuántas bicis y a qué hora. Pica una fila para ir a esa línea en el mapa.',
-    '<b>Órdenes</b> es el historial: todas las órdenes de la sesión agrupadas por paso; pica un paso para abrir sus órdenes y verlas en el mapa. En el mapa, <b>Órdenes actuales</b> dibuja cada traslado de origen (tenue) a destino (intenso). <b>Órdenes aplicadas en el paso</b> dibuja los traslados emitidos antes que se recogen o se entregan en este paso.',
-    'Cada orden recoge 15 minutos después de emitirse y entrega una hora después. Es una demo: Ecobici sigue operando y nadie ejecuta estas órdenes.',
-    'El cálculo vive en el servidor: puedes recargar la página sin perder la sesión. Al detenerla o terminar, puedes iniciar otra.'],
+    'Zonas de la ciudad colorea las AGEB urbanas del INEGI con el estado de sus estaciones sumadas (vacía, pocas, normal, llena); cambia con cada foto.',
+    'Órdenes emitidas dibuja, en la foto en que se emitieron, una línea naranja de cada estación donde se recoge a la estación donde se entrega (la flecha marca el sentido). Órdenes que llegaron dibuja lo que el simulador realmente movió en la foto (azul): los traslados que se recogieron y los que se entregaron y, punteado, las bicis que no cupieron y se dejaron en la estación cercana. Pasa o pica una línea para ver origen, destino, bicis y horas.',
+    'Pica una estación para ver su cuenta. Teclado: ← y → mueven 15 minutos, la barra espaciadora reproduce o pausa, y [ y ] ocultan los paneles. El botón 1× junto a reproducir sube la velocidad hasta 8×.'],
+  asignacion: ['Elige el costo por km (α) y durante cuántas horas mover bicis, y pulsa Iniciar. El asignador (greedy) decide cada 15 minutos qué bicis mover y de dónde a dónde, con el pronóstico de media móvil. Las horas cuentan hasta la entrega de la última bici: con 1 hora solo hay una ronda de órdenes.',
+    'El primer paso corre al pulsar Iniciar, con la foto del feed de ese momento, y decide para el siguiente cuarto de hora: si inicias a las 9:16, es el de las 9:30, y la primera ronda tiene hasta las 9:45 para recoger. Los demás van cada 15 minutos. La barra de arriba tiene un paso por cada 15 minutos. Se llena conforme corre y puedes volver a cualquier paso ya calculado (← y →). A su lado dice cuánto lleva desde que la iniciaste, hasta qué hora emite órdenes y a qué hora cierra.',
+    'En el panel derecho, Mover lista el trabajo del paso: de qué estación recoger, a cuál llevar, cuántas bicis, a qué hora y cuántos km. Van primero los traslados que, según el pronóstico, evitan más minutos de estaciones vacías o llenas. Pica una fila para abrir la orden.',
+    'Órdenes es el historial de la sesión por paso; pica un paso para abrirlo y verlo en el mapa. Llegan muestra lo que se recoge o se entrega en este paso, y Pronóstico las estaciones que se vaciarían o llenarían sin mover nada.',
+    'En el mapa, Órdenes actuales dibuja cada traslado de origen (tenue) a destino (intenso); Órdenes aplicadas en el paso, los emitidos antes que se recogen o se entregan ahora. Los números +N y −N son las bicis que se entregan o se recogen en cada estación en ese paso, como en el Replay.',
+    'Cada orden se recoge 15 minutos después de emitirse y se entrega a los 60, siempre antes de las 00:30; por eso el último paso que emite es el de las 23:15. Es una demo: nadie ejecuta estas órdenes.',
+    'La sesión corre en el servidor: puedes recargar sin perderla. Al detenerla o terminar, puedes iniciar otra.'],
 };
 function helpKey() { return S.tab === 'prediccion' ? 'asignacion' : S.tab; }
 function renderHelp() {
@@ -928,6 +996,10 @@ function activateTab(tab, {fromHash = false} = {}) {
   setTabs('.tabs', 'tab', tab);
   $$('.view').forEach(v => { v.hidden = v.id !== `view-${tab}`; });
   $('#main').dataset.tab = tab;
+  // El aviso de carga del Replay no se queda en otra pestaña y reaparece al volver si la carga sigue.
+  if (tab !== 'replay' && !$('#mapState').hidden && /replay|escenario/i.test($('#mapStateText').textContent)) mapState(null);
+  else if (tab === 'replay' && indexBusy) mapState('Cargando replay…', 'busy');
+  else if (tab === 'replay' && S.replay.index && $('#rk').disabled && !$('#rerror').textContent.trim()) mapState('Cargando escenario…', 'busy');
   const right = tab !== 'ahora';
   $('#rightPanel').hidden = !right;
   $('#main').classList.toggle('has-right', right);
@@ -974,9 +1046,9 @@ async function loadSnapshot() {
     if (S.view?.mode === 'ahora' || S.view?.mode === 'asignacion' || !S.view) {
       const keep = S.sel !== null ? S.view?.stations[S.sel]?.short_name : null;
       renderMap();
-      if (keep) { const j = S.view.stations.findIndex(s => s.short_name === keep); if (j >= 0) { S.sel = j; renderCard(); markSel(); } }
+      if (keep) { const j = S.view.stations.findIndex(s => s.short_name === keep); if (j >= 0) { S.sel = j; renderCard(); markSel(); } else closeCard(); }
     }
-    if ($('#q').value) search();
+    if ($('#q').value) search({keep: true});
   } catch (e) {
     fs.dataset.state = 'error';
     $('#feedText').textContent = 'Feed no disponible';
@@ -1048,9 +1120,11 @@ function nowCard(s) {
 
 // buscador
 let hitIdx = -1;
-function search() {
+/** `keep`: la actualización del feed rehace la lista sin quitar la fila marcada con las flechas. */
+function search({keep = false} = {}) {
   const q = norm($('#q').value.trim());
   const list = $('#hits');
+  const prev = keep ? hitIdx : -1;
   hitIdx = -1;
   if (!q) { list.innerHTML = ''; $('#q').setAttribute('aria-expanded', 'false'); return; }
   const st = S.snapshot?.stations || [];
@@ -1076,6 +1150,12 @@ function search() {
       <span class="rbikes"><b>${fmt(s.bikes)}</b> bicis</span></button></li>`;
   }).join('');
   $$('.result', list).forEach(b => { b.onclick = () => pickHit(+b.dataset.i); });
+  const rows = $$('.result', list);
+  if (prev >= 0 && rows[prev]) {
+    hitIdx = prev;
+    rows[prev].setAttribute('aria-selected', 'true');
+    $('#q').setAttribute('aria-activedescendant', rows[prev].id);
+  }
 }
 function pickHit(i) {
   if (S.tab !== 'ahora') activateTab('ahora');
@@ -1208,20 +1288,24 @@ function pkgRowsEmitidas(g, name, pickAt, delivAt) {
 // ───────────────────────── Replay ─────────────────────────
 const ARM_TEXT = {
   sin_rebalanceo: 'Nadie mueve bicis: solo ocurren los viajes del día.',
-  ecobici: 'Los movimientos que hizo Ecobici ese día, inferidos de las fotos del feed.',
-  ma_diaria: 'El asignador decide con un procedimiento greedy cada 15 min, con un pronóstico de media móvil del mismo tipo de día, hecho a las 05:00.',
-  lgbm_diario: 'El asignador decide con un procedimiento greedy cada 15 min, con un pronóstico LightGBM del día completo, hecho a las 05:00.',
-  lgbm_directo: 'El asignador decide con un procedimiento greedy cada 15 min, con un pronóstico LightGBM de las próximas horas que usa lo observado en el día.',
-  oraculo_diario: 'El asignador (greedy) conoce los viajes reales del día desde las 05:00. Es un techo de referencia, no una estrategia.',
-  oraculo_directo: 'El asignador (greedy) conoce los viajes reales de las próximas horas. Es un techo de referencia, no una estrategia.',
+  ecobici: 'Movimientos de Ecobici ese día, inferidos de las fotos del feed.',
+  ma_diaria: 'Greedy cada 15 min, con pronóstico de media móvil del mismo tipo de día hecho a las 05:00.',
+  lgbm_diario: 'Greedy cada 15 min, con pronóstico LightGBM del día completo hecho a las 05:00.',
+  lgbm_directo: 'Greedy cada 15 min, con pronóstico LightGBM de las próximas horas que usa lo observado en el día.',
+  oraculo_diario: 'Greedy que conoce los viajes reales del día desde las 05:00. Es un techo de referencia, no una estrategia.',
+  oraculo_directo: 'Greedy que conoce los viajes reales de las próximas horas. Es un techo de referencia, no una estrategia.',
 };
 const MAX_ARMS = 2;
 
 function enterReplay() {
   if (!S.replay.index) loadReplayIndex();
 }
+let indexBusy = false;
 async function loadReplayIndex() {
+  if (indexBusy) return;  // volver a la pestaña con el índice en camino no lo pide otra vez
+  indexBusy = true;
   showNote('#rerror', null);
+  if (S.tab === 'replay') mapState('Cargando replay…', 'busy');
   try {
     const idx = await api('/api/replay/index');
     S.replay.index = idx;
@@ -1240,15 +1324,15 @@ async function loadReplayIndex() {
     $('#rday').innerHTML = '<option>Sin datos</option>';
     $('#rarms').innerHTML = '';
     showNote('#rerror', e.message, {retry: loadReplayIndex});
-    if (S.tab === 'replay') mapState(null);
-  }
+    if ($('#mapStateText').textContent === 'Cargando replay…') mapState(null);
+  } finally { indexBusy = false; }
 }
 
 /** Lista de escenarios con casillas: se eligen 1 o 2 (el orden de elección da A y B). */
 function fillArms(prefer = []) {
   const arms = S.replay.index.days?.[$('#rday').value]?.arms || {};
   const keys = Object.keys(arms);
-  let pick = (prefer.length ? prefer : S.replay.keys).filter(k => arms[k]).slice(0, MAX_ARMS);
+  let pick = [...new Set(prefer.length ? prefer : S.replay.keys)].filter(k => arms[k]).slice(0, MAX_ARMS);
   if (!pick.length) pick = [arms[S.replay.index.best_real] ? S.replay.index.best_real : keys[0]].filter(Boolean);
   S.replay.keys = pick;
   $('#rarms').innerHTML = keys.map(k => `<label class="arm-opt">
@@ -1288,7 +1372,7 @@ function toggleArm(cb) {
     if (keys.length >= MAX_ARMS) { cb.checked = false; return; }
     keys.push(cb.value);
   } else {
-    if (keys.length === 1) { cb.checked = true; toast('Deja al menos un escenario elegido.'); return; }
+    if (keys.length === 1) { cb.checked = true; toast('Elige al menos un escenario.'); return; }
     keys = keys.filter(k => k !== cb.value);
   }
   S.replay.keys = keys;
@@ -1315,7 +1399,7 @@ async function loadReplay(k = 0) {
   const token = ++S.replay.token;
   showNote('#rerror', null);
   if (S.tab === 'replay') mapState(keys.length > 1 ? 'Cargando escenarios…' : 'Cargando escenario…', 'busy');
-  $('#rk').disabled = true;
+  $('#rk').disabled = true; $('#play').disabled = true;
   try {
     const dayP = S.replay.days[day] || api(`/api/replay/${encodeURIComponent(day)}/dia`);
     S.replay.days[day] = dayP;
@@ -1352,7 +1436,7 @@ async function loadReplay(k = 0) {
     S.cardSide = Math.min(S.cardSide, arms.length - 1);
     S.replay.k = Math.max(0, Math.min(n - 1, k || 0));
     const r = $('#rk');
-    r.max = n - 1; r.value = S.replay.k; r.disabled = false;
+    r.max = n - 1; r.value = S.replay.k; r.disabled = false; $('#play').disabled = false;
     renderTicks('#rticks', dd.times, n);
     renderSpec();
     const noSnap = arms.filter(a => !Array.isArray(a.snap)).map(a => a.label || a.arm);
@@ -1400,7 +1484,7 @@ function renderSpec() {
 }
 
 function stepReplay(d) {
-  if (!S.replay.arm) return;
+  if (!S.replay.arm || $('#rk').disabled) return;  // con otra carga en curso no se avanza sobre la foto vieja
   const n = +$('#rk').max;
   S.replay.k = Math.max(0, Math.min(n, S.replay.k + d));
   $('#rk').value = S.replay.k;
@@ -1414,17 +1498,35 @@ function pause() {
   $('#play').innerHTML = icon('play');
   $('#play').setAttribute('aria-label', 'Reproducir'); $('#play').title = 'Reproducir (espacio)';
 }
+// Velocidad de reproducción: 1× es una foto (15 min) cada 1.1 s; el botón la rota y se recuerda.
+const SPEED_KEY = 'ecobici.replay.velocidad', SPEEDS = [1, 2, 4, 8], FOTO_MS = 1100;
+let replaySpeed = 1;
+try { replaySpeed = SPEEDS.includes(+localStorage.getItem(SPEED_KEY)) ? +localStorage.getItem(SPEED_KEY) : 1; } catch { /* sin almacenamiento */ }
+function setSpeed(x) {
+  replaySpeed = x;
+  const b = $('#speed'), s = (FOTO_MS / x / 1000).toLocaleString('es-MX', {maximumFractionDigits: 2});
+  b.textContent = `${x}×`;
+  b.setAttribute('aria-label', `Velocidad de reproducción: ${x}×`);
+  b.title = `Velocidad: 1 foto cada ${s} s`;
+  try { localStorage.setItem(SPEED_KEY, String(x)); } catch { /* solo dura esta visita */ }
+  if (S.replay.timer) { clearInterval(S.replay.timer); S.replay.timer = startTimer(); }
+}
+function startTimer() {
+  return setInterval(() => {
+    if (S.replay.k >= +$('#rk').max) { pause(); return; }
+    stepReplay(1);
+  }, FOTO_MS / replaySpeed);
+}
 function play() {
-  if (!S.replay.arm) return;
+  if (!S.replay.arm || $('#rk').disabled) return;
   if (S.replay.k >= +$('#rk').max) { S.replay.k = 0; $('#rk').value = 0; renderReplay(); }
   $('#play').innerHTML = icon('pause');
   $('#play').setAttribute('aria-label', 'Pausar'); $('#play').title = 'Pausar (espacio)';
-  S.replay.timer = setInterval(() => {
-    if (S.replay.k >= +$('#rk').max) { pause(); return; }
-    stepReplay(1);
-  }, 1100);
+  S.replay.timer = startTimer();
 }
 $('#play').onclick = () => (S.replay.timer ? pause() : play());
+$('#speed').onclick = () => setSpeed(SPEEDS[(SPEEDS.indexOf(replaySpeed) + 1) % SPEEDS.length]);
+setSpeed(replaySpeed);
 document.addEventListener('keydown', e => {
   if (S.tab !== 'replay' || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.target.closest('input, select, textarea, [role="tab"], [role="separator"], .help')) return;
@@ -1742,7 +1844,7 @@ function replayCard(a, i) {
         ${line('No rentable → rentable', ar, '+ ', 'pm')}
         ${line('Rentable → no rentable', anr, '− ', 'pm')}
         <div class="eq-row total"><span>Resultado</span><b>${fmt(calc)}</b></div>
-        <span class="eq-verdict ${ok ? 'ok' : 'bad'}">${icon(ok ? 'check' : 'alert')}${ok ? `Cuadra con las ${fmt(b)} bicis de la foto` : `No cuadra: la foto tiene ${fmt(b)} bicis`}</span>
+        <span class="eq-verdict ${ok ? 'ok' : 'bad'}">${icon(ok ? 'check' : 'alert')}${ok ? `Cuadra: ${fmt(b)} bicis en la foto` : `No cuadra: la foto tiene ${fmt(b)} bicis`}</span>
       </div></section>`;
   }
   const dv = (a.desvios?.[k] || []).filter(x => x[3] === i);
@@ -1771,6 +1873,23 @@ function enterPrediccion() {
   renderAssign();
 }
 
+const LIVE_MODEL = 'ma_diaria';
+/** Antes de iniciar: con la hora de ahora, de qué paso a cuál se emite y a qué hora se entrega la última bici
+ *  (la misma cuenta que el servidor: primer paso en la siguiente marca de 15 min, entrega a los 60, antes de las 00:30). */
+function horasPreview() {
+  const now = new Date(), h = +$('#ahours').value;
+  const ini = new Date(now); ini.setSeconds(0, 0);
+  if (ini.getMinutes() % STEP_MIN) ini.setMinutes(ini.getMinutes() - ini.getMinutes() % STEP_MIN + STEP_MIN);
+  const cierre = new Date(now.getTime() - 5 * 3600e3); cierre.setHours(24, 30, 0, 0);  // 00:30 que cierra el día de servicio
+  const fin = new Date(Math.min(addMins(ini, h * 60), cierre));
+  const ult = new Date(Math.min(addMins(fin, -60), addMins(cierre, -75)));
+  $('#ahoursHint').textContent = fueraDeHorario() ? 'Ecobici no opera entre las 00:30 y las 05:00.'
+    : ult < ini ? 'Ya no da tiempo: la entrega, a los 60 min, caería después de las 00:30.'
+    : `${+ult === +ini ? `Órdenes solo en el paso de las ${hhmm(isoMin(ini))}` : `Órdenes de las ${hhmm(isoMin(ini))} a las ${hhmm(isoMin(ult))}`}; la última bici se entrega a las ${hhmm(isoMin(addMins(ult, 60)))}.`;
+}
+$('#ahours').addEventListener('change', horasPreview);
+setInterval(() => { if (S.tab === 'prediccion' && !$('#assignForm').hidden) horasPreview(); }, 30000);
+
 async function loadModels() {
   showNote('#aerror', null);
   try {
@@ -1778,21 +1897,14 @@ async function loadModels() {
     S.live.models = m;
     $('#lastPublished').textContent = shortDay(m.datos?.ultimo_dia_publicado);
     $('#modelsUpdated').textContent = dateTimeLabel(m.datos?.actualizado);
-    const ms = m.modelos || [];
-    const firstOk = ms.find(x => x.disponible)?.key;
-    $('#models').innerHTML = ms.map(x => {
-      const corte = corteText(x.corte);
-      const note = x.disponible ? (x.nota || '') : (x.motivo || 'No disponible.');
-      return `<label class="choice${x.disponible ? '' : ' disabled'}">
-        <input type="radio" name="model" value="${esc(x.key)}" ${x.disponible ? '' : 'disabled'} ${x.key === firstOk ? 'checked' : ''}>
-        <span class="c-name">${esc(x.label || x.key)}<small>${x.forma === 'directa' ? 'próximas horas' : 'día completo'}</small></span>
-        <span class="c-note">${esc(note)}${x.disponible && corte ? `<br><span class="c-train">${esc(corte)}</span>` : ''}</span></label>`;
-    }).join('') || '<p class="empty">El servidor no reporta modelos.</p>';
-    $('#startAssign').disabled = !firstOk;
+    // Siempre la media móvil: es la que el reporte mide y recomienda; quien opera no tiene que elegir modelo.
+    const mi = modelInfo(LIVE_MODEL);
+    $('#liveModel').textContent = mi ? (mi.label || LIVE_MODEL) : '—';
+    $('#startAssign').disabled = !mi?.disponible;
+    if (!mi?.disponible) showNote('#aerror', `El pronóstico de media móvil no está disponible. ${mi?.motivo || ''}`.trim());
     renderAssign();
   } catch (e) {
-    $('#lastPublished').textContent = '—'; $('#modelsUpdated').textContent = '—';
-    $('#models').innerHTML = '';
+    $('#lastPublished').textContent = '—'; $('#modelsUpdated').textContent = '—'; $('#liveModel').textContent = '—';
     $('#startAssign').disabled = true;
     showNote('#aerror', `No se pudieron cargar los modelos. ${e.message}`, {retry: loadModels});
   }
@@ -1818,20 +1930,31 @@ function loadForecastOf(sid) {
 // ── controles ──
 const LIVE_ALFAS = [0, 1, 3, 5, 7, 10];
 for (const id of ['#aalfa', '#salfa']) $(id).innerHTML = LIVE_ALFAS.map(x => `<option value="${x}">${x === 0 ? '0 (sin costo por km)' : x}</option>`).join('');
+let alfaBusy = false;
+// Un cambio a la vez: si se elige otro valor mientras uno viaja, se manda al terminar, así el último que se eligió es el que queda.
 $('#salfa').onchange = async () => {
-  const id = S.live.sessionId, v = $('#salfa').value;
-  if (!id) return;
+  const id = S.live.sessionId;
+  if (!id || alfaBusy) return;
+  alfaBusy = true;
   try {
-    await api(`/api/live/assign/${encodeURIComponent(id)}/alfa?${new URLSearchParams({alfa: v})}`, {method: 'POST'});
+    let v;
+    do {
+      v = $('#salfa').value;
+      await api(`/api/live/assign/${encodeURIComponent(id)}/alfa?${new URLSearchParams({alfa: v})}`, {method: 'POST'});
+    } while ($('#salfa').value !== v);
     toast(`α = ${v}: aplica desde la siguiente decisión.`);
+    alfaBusy = false;
     pollSession();
-  } catch (e) { showNote('#aerror', e.message); $('#salfa').value = String(S.live.session?.params?.alfa ?? 0); }
+  } catch (e) {
+    showNote('#aerror', e.message);
+    $('#salfa').value = String(S.live.session?.params?.alfa ?? 0);  // el servidor no aceptó el cambio: el selector vuelve a su α
+  } finally { alfaBusy = false; }
 };
 $('#startAssign').onclick = async () => {
-  const model = $('input[name="model"]:checked')?.value;
-  if (!model) { showNote('#aerror', 'Elige un pronóstico disponible.'); return; }
+  const model = LIVE_MODEL;
   const btn = $('#startAssign');
   showNote('#aerror', null);
+  if (fueraDeHorario()) { showNote('#aerror', NOCHE_TXT, {kind: 'warn'}); $('#anight').hidden = true; return; }  // sin pedirle nada al servidor
   try {
     setBusy(btn, true, 'Pronosticando…');
     const f = await api(`/api/live/forecast?${new URLSearchParams({model, horizonte: assignHorizon(modelInfo(model))})}`, {method: 'POST', timeout: 180000});
@@ -1841,16 +1964,18 @@ $('#startAssign').onclick = async () => {
     if (!r?.session_id) throw new ApiError('El servidor no devolvió una sesión.');
     clearTimeout(S.live.poll);
     S.live.forecast = {model: f.model, issued_at: f.issued_at, t_feed: f.t_feed, minutes: f.minutes?.at(-1), riesgos: f.riesgos || []};
-    S.live.sessionId = r.session_id; S.live.session = null; S.live.step = -1; S.live.follow = true; S.live.open = null;
+    S.live.sessionId = r.session_id; S.live.session = null; S.live.step = -1; S.live.follow = true; S.live.open = null; S.live.focus = null; S.live.detail = null;
     try {
       localStorage.setItem(SESSION_KEY, r.session_id);
       localStorage.setItem(PRON_KEY(r.session_id), JSON.stringify(S.live.forecast));
     } catch { /* sin almacenamiento */ }
     renderAssign(); renderMap();
     await pollSession();
-    toast('Asignación iniciada. Sigue corriendo aunque recargues la página.');
+    toast('Asignación iniciada. Sigue en el servidor si recargas.');
   } catch (e) {
-    showNote('#aerror', e.message, {retry: () => $('#startAssign').click()});
+    // Un rechazo por horario (hora del servidor distinta a la del navegador) es un estado esperado, no una falla.
+    if ((e.status === 409 || e.status === 400) && /fuera del horario/.test(e.message)) showNote('#aerror', NOCHE_TXT, {kind: 'warn'});
+    else showNote('#aerror', e.message, {retry: () => $('#startAssign').click()});
   } finally {
     setBusy(btn, false, 'Iniciar');
   }
@@ -1861,28 +1986,36 @@ $('#stopAssign').onclick = async () => {
   try {
     await api(`/api/live/assign/${encodeURIComponent(S.live.sessionId)}/stop`, {method: 'POST'});
     await pollSession();
-    toast('Asignación detenida. Puedes iniciar otra.');
+    toast('Deteniendo asignación.');
   } catch (e) {
-    showNote('#aerror', e.message);
+    await pollSession();  // si la sesión ya no corre aquí, el estado se actualiza y el aviso queda en el formulario
+    showNote('#aerror', S.live.session?.estado === 'error' ? (S.live.session.error || e.message) : e.message);
   } finally {
     setBusy(btn, false, 'Detener');
   }
 };
 
+let pollSeq = 0;
 async function pollSession() {
   clearTimeout(S.live.poll);
-  const id = S.live.sessionId;
+  const id = S.live.sessionId, seq = ++pollSeq;
   if (!id) return;
   try {
     const s = await api(`/api/live/assign/${encodeURIComponent(id)}`, {timeout: 20000});
-    if (id !== S.live.sessionId) return;
+    if (id !== S.live.sessionId || seq !== pollSeq) return;  // una respuesta vieja no pisa a una más nueva
     const grew = (s.pasos?.length || 0) !== (S.live.session?.pasos?.length || 0);
+    const firma = x => `${x?.estado}|${x?.fase}|${x?.pasos?.length}|${x?.siguiente_paso}|${x?.params?.alfa}|${x?.error}`;
+    const cambio = firma(s) !== firma(S.live.session);
     S.live.session = s;
     showNote('#aerror', s.estado === 'error' ? (s.error || s.detalle || 'La sesión terminó con error en el servidor.') : null);
-    renderAssign();
-    if (grew || S.view?.mode !== 'asignacion') renderMap();
+    // Sin cambios no se rehacen la lista ni el mapa: así no se pierde la línea resaltada ni el renglón elegido.
+    if (cambio) renderAssign(); else renderAssignDock();
+    // Un paso nuevo solo mueve el mapa si se está siguiendo el último; mirando uno anterior, el mapa no cambia.
+    if (grew && S.live.follow) S.live.focus = null;  // el paso elegido cambia: la línea resaltada ya no es de este paso
+    if ((grew && S.live.follow) || S.view?.mode !== 'asignacion') renderMap();
     if (s.estado === 'corriendo') S.live.poll = setTimeout(pollSession, 10000);
   } catch (e) {
+    if (id !== S.live.sessionId || seq !== pollSeq) return;  // el fallo es de un sondeo que ya no vale
     if (e.status === 404) {
       S.live.sessionId = null; S.live.session = null;
       try { localStorage.removeItem(SESSION_KEY); } catch { /* sin almacenamiento */ }
@@ -1894,6 +2027,13 @@ async function pollSession() {
   }
 }
 
+const NOCHE_TXT = 'Ahora no hay órdenes que emitir: Ecobici opera de 05:00 a 00:30. Vuelve a iniciar desde las 05:00.';
+/** Entre las 00:30 y las 05:00 (hora de la Ciudad de México) Ecobici no opera: no hay pronóstico ni órdenes. */
+function fueraDeHorario(now = new Date()) {
+  const p = new Intl.DateTimeFormat('en-GB', {timeZone: 'America/Mexico_City', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}).formatToParts(now);
+  const m = +p.find(x => x.type === 'hour').value * 60 + +p.find(x => x.type === 'minute').value;
+  return m >= 30 && m < 300;
+}
 // ── panel izquierdo: formulario y sesión ──
 const ESTADO_TXT = {corriendo: 'Corriendo', terminada: 'Terminada', detenida: 'Detenida', error: 'Error'};
 function renderAssign() {
@@ -1902,28 +2042,51 @@ function renderAssign() {
   $('#session').hidden = !id;
   $('#assignForm').hidden = !!running;  // detenida o terminada: se puede iniciar otra
   $('#assignFormTitle').hidden = !id;
+  $('#anightTxt').textContent = NOCHE_TXT;
+  $('#anight').hidden = !!running || !fueraDeHorario() || !$('#aerror').hidden;  // el aviso del clic ya dice lo mismo
   if (id) {
     const pill = $('#sessState');
     pill.dataset.s = sess?.estado || '';
     pill.textContent = ESTADO_TXT[sess?.estado] || 'Conectando…';
     $('#stopAssign').hidden = sess?.estado !== 'corriendo';
-    const mi = modelInfo(sess?.model);
     const rows = sess ? [
-      ['Pronóstico', mi?.label || sess.model || '—'],
       ['Costo por km (α)', fmt(sess.params?.alfa ?? 0)],
-      ['Inicio', hhmm(sess.inicio)],
-      ['Emite órdenes hasta', hhmm(sess.fin_emision)],
+      ['Primer paso', `${hhmm(sess.inicio)}${sess.pasos?.[0]?.t_feed ? ` · corrió a las ${hhmm(sess.pasos[0].t_feed)}` : ''}`],
+      ['Emite órdenes', emiteTxt(sess)],
+      ['Última entrega', ultimaEntrega(sess) ? hhmm(ultimaEntrega(sess)) : '—'],
     ] : [];
     $('#salfaField').hidden = sess?.estado !== 'corriendo';
-    if (sess?.estado === 'corriendo') $('#salfa').value = String(sess.params?.alfa ?? 0);
+    if (sess?.estado === 'corriendo' && !alfaBusy) $('#salfa').value = String(sess.params?.alfa ?? 0);
     $('#sessInfo').innerHTML = rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('') ||
       '<div><dt>Sesión</dt><dd><span class="skeleton w-8"></span></dd></div>';
     const n = sess?.pasos?.length || 0;
     if (n) S.live.step = S.live.follow || S.live.step < 0 ? n - 1 : Math.min(S.live.step, n - 1);
   }
+  if (!$('#assignForm').hidden) horasPreview();
   updatePredLayout();
   renderAssignDock();
   renderAssignPanel();
+}
+
+/** Último paso que emite órdenes: el servidor lo dice; en sesiones viejas es el cuarto de hora antes de `fin_emision`. */
+function ultimoEmite(sess) {
+  if (sess && 'ultimo_paso_emite' in sess) return sess.ultimo_paso_emite;
+  const fin = toDate(sess?.fin_emision);
+  return fin ? isoMin(addMins(fin, -STEP_MIN)) : null;
+}
+/** Hora de la última entrega posible: el servidor la dice; en sesiones viejas, último paso que emite + entrega. */
+function ultimaEntrega(sess) {
+  if (sess?.ultima_entrega) return sess.ultima_entrega;
+  const ult = ultimoEmite(sess);
+  return ult ? isoMin(addMins(toDate(ult), sess.params?.entrega_min ?? 60)) : null;
+}
+/** Una frase de hasta cuándo se emiten órdenes y por qué (la entrega va 60 min después de emitir y debe caer antes de las 00:30). */
+function emiteTxt(sess) {
+  const ult = ultimoEmite(sess), ini = toDate(sess.inicio), fin = toDate(sess.fin_emision), ent = sess.params?.entrega_min ?? 60;
+  if (!ult || toDate(ult) < ini) return `ninguna: la entrega (a ${ent} min) caería después de las 00:30`;
+  const finH = sess.horas ? addMins(ini, sess.horas * 60) : null, ue = toDate(ultimaEntrega(sess));
+  const porCierre = !!(sess.ultima_entrega && finH && ue < finH);  // el cierre de las 00:30 recortó las horas pedidas
+  return `hasta las ${hhmm(ult)}${porCierre ? ` (después, la entrega a ${ent} min caería tras las 00:30)` : ''}`;
 }
 
 // ── barra de pasos (arriba del mapa) ──
@@ -1935,9 +2098,13 @@ const isoMin = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '
 function plannedSteps(sess) {
   const pasos = sess?.pasos || [];
   if (sess?.estado !== 'corriendo') return pasos.map(p => p.t);
-  const ini = toDate(sess.inicio), fin = toDate(sess.fin_emision);
-  if (!ini || !fin) return pasos.map(p => p.t);
-  const end = addMins(fin, (sess.params?.entrega_min ?? 60) - STEP_MIN);
+  const ini = toDate(sess.inicio), ult = toDate(ultimoEmite(sess));
+  if (!ini || !ult || ult < ini) return pasos.map(p => p.t);
+  let end = addMins(ult, sess.params?.entrega_min ?? 60);
+  if (sess.fase === 'cerrando') {  // ya no se emite: el último paso es el de la última recogida o entrega pendiente
+    const pend = (sess.pendientes || []).map(o => toDate(o.accion === 'recoger' ? o.recoge : o.entrega));
+    end = new Date(Math.max(toDate(pasos.at(-1)?.t) ?? 0, ...pend));
+  }
   const out = [];
   for (let d = ini; d <= end; d = addMins(d, STEP_MIN)) out.push(isoMin(d));
   return out.length >= pasos.length ? out : pasos.map(p => p.t);
@@ -1946,6 +2113,24 @@ function durTxt(ms) {
   const m = Math.max(0, Math.round(ms / 60000));
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
 }
+// Horas de la barra de pasos: se acomodan con el ancho real de la barra (oculta mide 0), con al menos 40 px entre
+// etiquetas, y se vuelven a acomodar cuando la barra cambia de ancho (paneles, ventana, resumen que baja de fila).
+let tickPlan = [];
+function paintAssignTicks() {
+  const el = $('#aticks'), w = el.clientWidth, n = tickPlan.length;
+  if (!w || !n) { el.innerHTML = ''; return; }
+  let last = -Infinity;
+  const out = [];
+  tickPlan.forEach((t, j) => {
+    if (!t.endsWith(':00')) return;
+    const f = j / Math.max(1, n - 1);
+    if (f * w - last < 40) return;
+    last = f * w;
+    out.push(`<span style="left:${f * 100}%">${esc(hhmm(t).slice(0, 2))} h</span>`);
+  });
+  el.innerHTML = out.join('');
+}
+new ResizeObserver(() => paintAssignTicks()).observe($('#aticks'));
 function renderAssignDock() {
   const sess = S.live.session, pasos = sess?.pasos || [];
   if (!pasos.length) return;
@@ -1956,16 +2141,18 @@ function renderAssignDock() {
   r.style.setProperty('--p', pct(k));
   r.style.setProperty('--q', pct(done - 1));
   $('#atime').textContent = hhmm(pasos[k]?.t);
-  $('#astepTxt').textContent = `Paso ${k + 1} de ${total}${k === done - 1 && sess.estado === 'corriendo' ? ' · el último' : ''}`;
+  $('#astepTxt').textContent = `Paso ${k + 1} de ${total}${k === 0 && pasos[0]?.t_feed ? ` · corrió ${hhmm(pasos[0].t_feed)}` : k === done - 1 && sess.estado === 'corriendo' ? ' · el último' : ''}`;
   $('#aprev').disabled = k <= 0;
   $('#anext').disabled = k >= done - 1;
-  const marks = plan.map((t, j) => [j, t]).filter(([, t]) => t.endsWith(':00'));
-  $('#aticks').innerHTML = marks.map(([j, t]) => `<span style="left:${pct(j)}">${esc(hhmm(t).slice(0, 2))} h</span>`).join('');
-  const now = new Date(), ini = toDate(sess.inicio);
+  tickPlan = plan;
+  paintAssignTicks();
+  // "Lleva" cuenta desde la foto del feed con que se inició (la hora del clic), no desde el bloque de 15 min (inicio).
+  const now = new Date(), ini = toDate(pasos[0].t_feed || sess.inicio);
   let run;
   if (sess.estado === 'corriendo') {
-    const end = toDate(plan.at(-1));
-    run = `<b>Lleva ${durTxt(now - ini)}</b><span>faltan ≈ ${durTxt(end - now)} · siguiente paso ${esc(hhmm(sess.siguiente_paso))}</span>`;
+    run = sess.fase === 'cerrando'
+      ? `<b>Cerrando</b><span>ya no se emiten órdenes · última entrega ${esc(hhmm(ultimaEntrega(sess) || plan.at(-1)))} · siguiente paso ${esc(hhmm(sess.siguiente_paso))}</span>`
+      : `<b>Lleva ${durTxt(Math.max(0, now - ini))}</b><span>${ultimoEmite(sess) ? `órdenes hasta ${esc(hhmm(ultimoEmite(sess)))}` : 'sin órdenes'} · última entrega ${esc(hhmm(ultimaEntrega(sess) || plan.at(-1)))} · siguiente paso ${esc(hhmm(sess.siguiente_paso))}</span>`;
   } else {
     run = `<b>${esc(ESTADO_TXT[sess.estado] || '—')}</b><span>${plural(done, 'paso calculado', 'pasos calculados')}, de ${esc(hhmm(pasos[0].t))} a ${esc(hhmm(pasos.at(-1).t))}</span>`;
   }
@@ -1976,6 +2163,7 @@ function goAssignStep(k) {
   if (!n) return;
   S.live.step = Math.max(0, Math.min(n - 1, k));
   S.live.follow = S.live.step === n - 1;  // en el último paso, la barra sigue a los pasos nuevos
+  S.live.focus = null;
   renderAssignDock(); renderAssignPanel(); renderMap();
   if (S.sel !== null) renderCard();
 }
@@ -2000,9 +2188,70 @@ $$('#apTabs [role="tab"]').forEach(b => { b.onclick = () => pick(b); });
 arrowNav($('#apTabs'), pick);
 
 /** Traslados (donante → receptor) de una lista de paquetes. */
-const pairsOf = gs => gs.flatMap(g => g.donors.map(dn => ({paq: g.paq, key: g.key, fase: g.fase, from: dn.id, to: g.recv.id, n: dn.n, recoge: dn.ex.recoge, entrega: g.recv.ex.entrega})));
+const pairsOf = gs => gs.flatMap(g => g.donors.map(dn => ({paq: g.paq, key: g.key, fase: g.fase, from: dn.id, to: g.recv.id, n: dn.n, recoge: dn.ex.recoge, entrega: g.recv.ex.entrega, km: dn.ex.km_calle ?? null, evita: g.recv.ex.evita ?? dn.ex.evita ?? null,
+  id: dn.ex.id || `${hhmm(g.key).replace(':', '')}-${g.paq}-${dn.id}`})));
+/** " · 3.2 km" por calle (OSRM sin tráfico) cuando el servidor lo da. */
+// Primero los traslados que, según el pronóstico, evitan más minutos-estación vacíos o llenos (los de un mismo
+// paquete juntos); sin ese dato (sesiones viejas), al final.
+const porAhorro = (a, b) => (b.evita ?? -1) - (a.evita ?? -1) || a.paq - b.paq || b.n - a.n;
+const kmTxt = x => (x.km != null ? ` · ${fmtDec(x.km, 1)} km` : '');
+// ── una orden (para quien maneja): de dónde a dónde, cuántas bicis, a qué hora, km, id y si ya se completó ──
+function findOrder(pk) {
+  const all = (S.live.session?.pasos || []).flatMap(q => q.emitidas || []);
+  return pairsOf(livePackages(all)).find(x => `${x.key}|${x.paq}|${x.from}` === pk) || null;
+}
+function openOrder(pk) {
+  const x = findOrder(pk);
+  if (!x) return;
+  S.live.detail = pk;
+  const j = (S.live.session?.pasos || []).findIndex(q => q.t === x.key);
+  if (j >= 0 && j !== S.live.step) goAssignStep(j); else renderAssignPanel();  // sus líneas son las de su paso
+  focusPair(pk);
+  $('#rightPanel')?.scrollTo?.({top: 0});
+}
+function closeOrder() {
+  S.live.detail = null;
+  S.live.focus = null;
+  renderAssignPanel();
+  const M = MAPS[0];
+  if (M?.ready) {
+    for (const l of ['ord-hl-casing', 'ord-hl']) M.map.setFilter(l, ['all', ['==', ['geometry-type'], 'LineString'], ['==', ['get', 'fid'], -1]]);
+    ordOpacidad(M.map, 1);
+  }
+}
+const stOf = sn => (S.snapshot?.stations || []).find(s => s.short_name === sn);
+function orderLeg(kind, sn, hora) {
+  const s = stOf(sn), name = s ? bare(s.name) : '';
+  const link = s && Number.isFinite(+s.lat) ? `<a class="od-link" href="${mapsUrl(+s.lat, +s.lon)}" target="_blank" rel="noopener">${icon('map')}Ver en Google Maps<span class="sr-only"> (se abre en otra pestaña)</span></a>` : '';
+  return `<div class="od-leg">${actChip(kind)}<div class="od-st"><span class="od-num">${esc(sn)}</span>${esc(name)}</div>
+    <div class="od-time">${kind === 'recoger' ? 'Recoger' : 'Entregar'} a las <b>${esc(hhmm(hora))}</b></div>${link}</div>`;
+}
+function orderDetailHtml(x) {
+  const o = stOf(x.from), d = stOf(x.to);
+  const ruta = o && d ? `<a class="btn sm" href="https://www.google.com/maps/dir/?api=1&origin=${+o.lat},${+o.lon}&destination=${+d.lat},${+d.lon}&travelmode=driving" target="_blank" rel="noopener">${icon('map')}Ruta en Google Maps<span class="sr-only"> (se abre en otra pestaña)</span></a>` : '';
+  return `<li class="order-detail">
+    <button class="btn ghost sm od-back" type="button">${icon('chev-left')}Todas las órdenes</button>
+    <div class="od-bikes"><b>${fmt(x.n)}</b> ${x.n === 1 ? 'bici' : 'bicis'}</div>
+    ${orderLeg('recoger', x.from, x.recoge)}
+    <div class="od-mid">${icon('down')}${x.km != null ? `${fmtDec(x.km, 1)} km de distancia` : 'distancia no disponible'}</div>
+    ${orderLeg('entregar', x.to, x.entrega)}
+    <div class="od-actions">${ruta}</div>
+    ${x.evita != null ? `<p class="od-evita">Según el pronóstico, este paquete evita ≈ <b>${fmt(Math.round(x.evita))}</b> minutos de estaciones vacías o llenas.</p>` : ''}
+    <p class="rp-sub" style="margin:0">Distancia de la ruta más corta, sin tráfico (OSRM sobre OpenStreetMap). Lo que evita es lo que espera el asignador, no algo medido.</p>
+  </li>`;
+}
 function renderAssignPanel() {
   const sess = S.live.session, p = currentStep();
+  const det = S.live.detail ? findOrder(S.live.detail) : null;
+  $('#apTabs').hidden = !!det;
+  $('#apStats').hidden = !!det;
+  if (det) {
+    $('#apTitle').textContent = `Orden ${det.id}`;
+    $('#apSub').textContent = `Emitida en el paso de las ${hhmm(det.key)}`;
+    $('#apList').innerHTML = orderDetailHtml(det);
+    $('#apList .od-back').onclick = closeOrder;
+    return;
+  }
   if (!sess || !p) {
     $('#apTitle').textContent = 'Qué mover';
     $('#apSub').textContent = sess ? 'Esperando el primer paso…' : ' ';
@@ -2012,13 +2261,12 @@ function renderAssignPanel() {
     return;
   }
   const mover = pairsOf(livePackages(p.emitidas));
-  const km = liveKm(p);
   $('#apTitle').textContent = `Qué mover a las ${hhmm(p.t)}`;
   $('#apSub').textContent = `Foto del feed de las ${p.t_feed ? p.t_feed.slice(11, 19) : '—'}${p.alfa > 0 ? ` · α ${fmt(p.alfa)}` : ''}${p.nota ? ` · ${p.nota}` : ''}`;
-  $('#apStats').innerHTML = `<div class="stat-pair tri">
+  $('#apStats').innerHTML = `<div class="stat-pair${p.km_calle != null ? ' tri' : ''}">
       <div class="tile" data-stat="traslados"><b>${fmt(mover.length)}</b><span>traslados</span></div>
-      <div class="tile" data-stat="bicis_a_mover"><b>${fmt(p.bicis_a_mover)}</b><span>bicis a mover</span></div>
-      <div class="tile" data-stat="km_tramos"><b>${fmtDec(km.km, 1)}</b><span>km en línea recta</span></div></div>`;
+      <div class="tile" data-stat="bicis_a_mover"><b>${fmt(p.bicis_a_mover)}</b><span>bicis a mover</span></div>${p.km_calle != null ? `
+      <div class="tile" data-stat="km_calle" title="Suma de la ruta más corta de cada traslado, sin tráfico (OSRM sobre OpenStreetMap)"><b>${fmtDec(p.km_calle, 1)}</b><span>km de distancia</span></div>` : ''}</div>`;
   const counts = {emitidas: mover.length, llegaron: pairsOf(liveArrived(p)).length};
   $$('#apTabs [role="tab"]').forEach(b => {
     const base = {emitidas: 'Mover', historial: 'Órdenes', llegaron: 'Llegan', pronostico: 'Pronóstico'}[b.dataset.list];
@@ -2031,20 +2279,15 @@ const nameOf = sn => `${sn} · ${bare(stationName(sn))}`;
 function pairRow(x, verbo) {
   return `<li><button class="row move" data-pk="${esc(`${x.key}|${x.paq}|${x.from}`)}">
     <span class="mv-n"><b>${fmt(x.n)}</b>${x.n === 1 ? 'bici' : 'bicis'}</span>
-    <span class="r-main"><span class="r-title">${verbo} ${esc(nameOf(x.from))}</span>
-      <span class="r-title mv-to">→ a ${esc(nameOf(x.to))}</span>
-      <span class="r-sub">recoger ${esc(hhmm(x.recoge))} · entregar ${esc(hhmm(x.entrega))}</span></span></button></li>`;
+    <span class="r-main"><span class="r-title" title="${esc(nameOf(x.from))}">${verbo} ${esc(nameOf(x.from))}</span>
+      <span class="r-title mv-to" title="${esc(nameOf(x.to))}">→ a ${esc(nameOf(x.to))}</span>
+      <span class="r-sub">${esc(x.id)} · recoger ${esc(hhmm(x.recoge))} · entregar ${esc(hhmm(x.entrega))}${kmTxt(x)}</span></span></button></li>`;
 }
 function renderAssignList() {
   const p = currentStep(), el = $('#apList'), L = S.live.list;
   const bind = () => {
     $$('.row[data-pk]', el).forEach(b => {
-      b.onclick = () => {
-        // Una orden de otro paso: primero se va a ese paso (sus líneas son las que están en el mapa).
-        const j = (S.live.session?.pasos || []).findIndex(q => q.t === b.dataset.pk.split('|')[0]);
-        if (j >= 0 && j !== S.live.step && S.live.list === 'historial') goAssignStep(j);
-        focusPair(b.dataset.pk);
-      };
+      b.onclick = () => openOrder(b.dataset.pk);
     });
     $$('.row[data-i]', el).forEach(b => { b.onclick = () => { const i = +b.dataset.i; if (i >= 0) openStation(i); }; });
   };
@@ -2062,10 +2305,10 @@ function renderAssignList() {
     bind();
     return;
   }
-  if (!p) { el.innerHTML = `<li class="none">${S.live.session ? 'El primer paso aparece en unos segundos.' : 'Elige pronóstico y α y pulsa Iniciar: aquí sale qué bicis mover de dónde a dónde.'}</li>`; return; }
+  if (!p) { el.innerHTML = `<li class="none">${S.live.session ? 'El primer paso aparece en unos segundos.' : 'Elige pronóstico y α y pulsa Iniciar para ver qué bicis mover.'}</li>`; return; }
   if (L === 'llegaron') {
-    el.innerHTML = rowsHtml(pairsOf(liveArrived(p)).map(x => pairRow(x, x.fase === 'recoger' ? 'Se recogen en' : 'Llegan de')),
-      'No se recoge ni llega ninguna orden en este paso.');
+    el.innerHTML = rowsHtml(pairsOf(liveArrived(p)).sort(porAhorro).map(x => pairRow(x, x.fase === 'recoger' ? 'Se recogen en' : 'Llegan de')),
+      S.live.step === 0 ? 'Es el primer paso: aún no hay órdenes previas que recoger ni entregar.' : 'Ninguna orden emitida antes se recoge ni se entrega en este paso.');
     bind();
     return;
   }
@@ -2075,7 +2318,7 @@ function renderAssignList() {
     const pasos = S.live.session?.pasos || [];
     const open = S.live.open || new Set([p.t]);
     el.innerHTML = pasos.map((q, j) => ({q, j})).reverse().map(({q, j}) => {
-      const xs = pairsOf(livePackages(q.emitidas)).sort((a, b) => b.n - a.n);
+      const xs = pairsOf(livePackages(q.emitidas)).sort(porAhorro);
       const bikes = xs.reduce((n, x) => n + x.n, 0), on = open.has(q.t);
       return `<li class="pkg step-head${j === S.live.step ? ' cur' : ''}"><button class="step-toggle" data-t="${esc(q.t)}" aria-expanded="${on}">
           ${icon('chev-right', `ico chev${on ? ' open' : ''}`)}${esc(hhmm(q.t))} <small>· ${plural(xs.length, 'traslado', 'traslados')} · ${bikesTxt(bikes)}${j === S.live.step ? ' · en el mapa' : ''}</small></button></li>`
@@ -2093,29 +2336,37 @@ function renderAssignList() {
     bind();
     return;
   }
-  // Mover: un renglón por traslado, del más grande al más chico; las órdenes sin paquete van al final.
-  const pairs = pairsOf(livePackages(p.emitidas)).sort((a, b) => b.n - a.n);
+  // Mover: un renglón por traslado, primero los que más evitan según el pronóstico; las órdenes sin paquete van al final.
+  const pairs = pairsOf(livePackages(p.emitidas)).sort(porAhorro);
   const sueltas = (p.emitidas || []).filter(o => !o.paquete).map(o => {
     const i = (S.snapshot?.stations || []).findIndex(s => s.short_name === o.short_name);
     return `<li><button class="row" data-i="${i}">${actChip(o.accion)}
       <span class="r-main"><span class="r-title">${esc(nameOf(o.short_name))}</span><span class="r-sub">${o.accion === 'recoger' ? `recoger ${esc(hhmm(o.recoge))}` : `entregar ${esc(hhmm(o.entrega))}`}</span></span>
       <span class="r-end">${bikesTxt(o.n)}</span></button></li>`;
   });
-  el.innerHTML = rowsHtml(pairs.map(x => pairRow(x, 'De')).concat(sueltas), 'El asignador no pidió mover bicis en este paso.');
+  el.innerHTML = rowsHtml(pairs.map(x => pairRow(x, 'De')).concat(sueltas), p.nota ? `${p.nota[0].toUpperCase()}${p.nota.slice(1)}.` : 'El asignador no pidió mover bicis en este paso.');
   bind();
 }
 /** Lleva el mapa a un traslado y lo resalta con su ficha. */
-function focusPair(pk) {
+function focusPair(pk, {fly = true} = {}) {
   const M = MAPS[0];
   if (!M?.ready) return;
   const f = M.map.getSource('orders')._data?.features?.find(x => x.properties.pk === pk && x.geometry.type === 'LineString');
-  if (!f) { toast('Prende "Órdenes actuales" o "Órdenes aplicadas en el paso" para ver la línea.'); return; }
+  if (!f) {
+    S.live.focus = null;
+    $$('#apList .row.on').forEach(b => b.classList.remove('on'));
+    if (fly) toast('Prende "Órdenes actuales" o "Órdenes aplicadas en el paso" para ver la línea.');
+    return;
+  }
+  S.live.focus = pk;  // el mapa se redibuja con cada foto del feed: la línea elegida se vuelve a resaltar
   const cs = f.geometry.coordinates;
-  const b = cs.reduce((bb, c) => bb.extend(c), new maplibregl.LngLatBounds(cs[0], cs[0]));
-  M.map.fitBounds(b, {padding: 120, maxZoom: 16, duration: REDUCED ? 0 : 700});
+  if (fly) {
+    const b = cs.reduce((bb, c) => bb.extend(c), new maplibregl.LngLatBounds(cs[0], cs[0]));
+    M.map.fitBounds(b, {padding: 120, maxZoom: 16, duration: REDUCED ? 0 : 700});
+  }
   for (const l of ['ord-hl-casing', 'ord-hl']) M.map.setFilter(l, ['all', ['==', ['geometry-type'], 'LineString'], ['==', ['get', 'fid'], f.properties.fid]]);
   ordOpacidad(M.map, 0.28);
-  M.pinned.setLngLat(cs[Math.floor(cs.length / 2)]).setHTML(f.properties.tip).addTo(M.map);
+  if (S.view?.mode !== 'asignacion') M.pinned.setLngLat(cs[Math.floor(cs.length / 2)]).setHTML(f.properties.tip).addTo(M.map);
   $$('#apList .row[data-pk]').forEach(b => b.classList.toggle('on', b.dataset.pk === pk));
 }
 
@@ -2131,23 +2382,6 @@ function liveArrived(p) {
   return livePackages((S.live.session?.pasos || []).flatMap(x => x.emitidas || []))
     .filter(g => fase.has(`${g.key}|${g.paq}`)).map(g => ({...g, fase: fase.get(`${g.key}|${g.paq}`)}));
 }
-/** Km en línea recta de los tramos donante → receptor emitidos en un paso (coordenadas del feed). */
-function liveKm(p) {
-  const out = {km: 0, bkm: 0, bikes: 0};
-  const st = new Map((S.snapshot?.stations || []).map(s => [s.short_name, s]));
-  const rad = x => x * Math.PI / 180;
-  for (const g of livePackages(p?.emitidas)) {
-    const r = st.get(g.recv.id);
-    for (const dn of g.donors) {
-      const o = st.get(dn.id);
-      if (!o || !r || o.lat == null || r.lat == null) continue;
-      const h = Math.sin(rad(r.lat - o.lat) / 2) ** 2 + Math.cos(rad(o.lat)) * Math.cos(rad(r.lat)) * Math.sin(rad(r.lon - o.lon) / 2) ** 2;
-      const d = 2 * 6371 * Math.asin(Math.sqrt(h));
-      out.km += d; out.bkm += d * dn.n; out.bikes += dn.n;
-    }
-  }
-  return out;
-}
 function assignOrders() {
   const emit = $('#showEmitA').checked, arrive = $('#showArriveA').checked, p = currentStep();
   if ((!emit && !arrive) || !p || !S.snapshot) return EMPTY;
@@ -2157,7 +2391,7 @@ function assignOrders() {
   const feats = [];
   const draw = (x, kind) => {
     const f = ordFeature(coords, idx.get(x.from), idx.get(x.to), {k: kind, a: kind, n: x.n, pk: `${x.key}|${x.paq}|${x.from}`},
-      `${kind === 'emit' ? 'Mover' : x.fase === 'recoger' ? 'Se recogen' : 'Llegan'} ${bikesTxt(x.n)} de ${nm(x.from)} a ${nm(x.to)}<small>recoger ${esc(hhmm(x.recoge))} · entregar ${esc(hhmm(x.entrega))}</small>`);
+      `${kind === 'emit' ? 'Mover' : x.fase === 'recoger' ? 'Se recogen' : 'Llegan'} ${bikesTxt(x.n)} de ${nm(x.from)} a ${nm(x.to)}<small>recoger ${esc(hhmm(x.recoge))} · entregar ${esc(hhmm(x.entrega))}${kmTxt(x)}</small>`);
     if (f) feats.push(f);
   };
   if (emit) pairsOf(livePackages(p.emitidas)).forEach(x => draw(x, 'emit'));
@@ -2166,14 +2400,16 @@ function assignOrders() {
 }
 function assignView() {
   const st = S.snapshot.stations, p = currentStep();
+  // +N/−N como en el Replay: cuando la orden se aplica (su recogida o su entrega toca en este paso), no cuando se emite.
   const by = new Map();
-  for (const o of p?.emitidas || []) {
+  for (const o of p?.aplicadas || []) {
     const e = by.get(o.short_name) || {plus: 0, minus: 0};
     if (o.accion === 'entregar') e.plus += o.n; else e.minus += o.n;
     by.set(o.short_name, e);
   }
   return {
     mode: 'asignacion', stations: st, orders: () => assignOrders(),
+    afterPaint: M => { if (S.live.focus) focusPair(S.live.focus, {fly: false}); },
     props: i => {
       const s = st[i], e = by.get(s.short_name);
       const parts = [];
@@ -2186,23 +2422,49 @@ function assignView() {
     zone: i => (st[i].renting && st[i].installed) ? {b: +st[i].bikes, cap: +st[i].capacity, docks: +st[i].docks} : null,
     hover: i => `${plural(st[i].bikes, 'bici', 'bicis')} ahora`,
     card: i => {
-      const s = st[i];
-      const mine = pairsOf(livePackages(p?.emitidas)).filter(x => x.from === s.short_name || x.to === s.short_name);
-      const li = x => x.from === s.short_name
-        ? `<li class="row" style="cursor:default">${actChip('recoger')}<span class="r-main"><span class="r-title">Llevar a ${esc(nameOf(x.to))}</span><span class="r-sub">recoger ${esc(hhmm(x.recoge))}</span></span><span class="r-end">${bikesTxt(x.n)}</span></li>`
-        : `<li class="row" style="cursor:default">${actChip('entregar')}<span class="r-main"><span class="r-title">Llegan de ${esc(nameOf(x.from))}</span><span class="r-sub">entregar ${esc(hhmm(x.entrega))}</span></span><span class="r-end">${bikesTxt(x.n)}</span></li>`;
+      // La ficha resume para una estación lo mismo que el panel: órdenes emitidas en este paso, las que llegaron
+      // (se recogen o se entregan aquí), las de pasos anteriores y su pronóstico.
+      const s = st[i], sn = s.short_name, here = x => x.from === sn || x.to === sn;
+      const mine = pairsOf(livePackages(p?.emitidas)).filter(here);
+      const llegaron = pairsOf(liveArrived(p)).filter(x => x.fase === 'recoger' ? x.from === sn : x.to === sn);  // lo que pasa aquí en este paso
+      const antes = (S.live.session?.pasos || []).filter(q => p && q.t < p.t).flatMap(q => q.emitidas || []);
+      const hist = pairsOf(livePackages(antes)).filter(here).sort((a, b) => b.key.localeCompare(a.key));
+      const li = (x, desde = '') => x.from === sn
+        ? `<li class="row" style="cursor:default">${actChip('recoger')}<span class="r-main"><span class="r-title">Llevar a ${esc(nameOf(x.to))}</span><span class="r-sub">recoger ${esc(hhmm(x.recoge))}${kmTxt(x)}${desde}</span></span><span class="r-end">${bikesTxt(x.n)}</span></li>`
+        : `<li class="row" style="cursor:default">${actChip('entregar')}<span class="r-main"><span class="r-title">Llegan de ${esc(nameOf(x.from))}</span><span class="r-sub">entregar ${esc(hhmm(x.entrega))}${kmTxt(x)}${desde}</span></span><span class="r-end">${bikesTxt(x.n)}</span></li>`;
+      const none = txt => `<p class="rp-sub" style="margin:0">${txt}</p>`;
+      const f = S.live.forecast, r = f?.riesgos?.find(x => x.short_name === sn);
+      const pron = !f ? none('El pronóstico de esta sesión no está guardado en este navegador.')
+        : none(`${r ? `${r.tipo === 'vacia' ? 'Se vaciaría' : 'Se llenaría'} en ${fmt(r.minutos)} min si nadie mueve bicis.` : 'No se vacía ni se llena en el horizonte del pronóstico.'} ${esc(modelInfo(f.model)?.label || f.model)}, emitido a las ${esc(hhmm(f.issued_at))}.`);
       return {state: stationState(+s.bikes, +s.docks, s.renting && s.installed), html: `<div class="card-stats">
           <div class="card-stat hero"><b>${fmt(s.bikes)}</b><span>bicis disponibles ahora</span></div>
           <div class="card-stat"><b>${fmt(s.bikes_disabled)}</b><span>no rentables</span></div>
           <div class="card-stat"><b>${fmt(s.docks)}</b><span>anclajes libres de ${fmt(s.capacity)}</span></div></div>
-        <section><h3>Movimientos de este paso</h3>${mine.length ? `<ul class="rows">${mine.map(li).join('')}</ul>` : '<p class="rp-sub" style="margin:0">Sin movimientos en este paso.</p>'}</section>`};
+        <section><h3>Órdenes emitidas${p ? ` (${esc(hhmm(p.t))})` : ''}</h3>${mine.length ? `<ul class="rows">${mine.map(x => li(x)).join('')}</ul>` : none('Ninguna en este paso.')}</section>
+        <section><h3>Órdenes que llegaron</h3>${llegaron.length ? `<ul class="rows">${llegaron.map(x => li(x, ` · emitida ${esc(hhmm(x.key))}`)).join('')}</ul>` : none('Ninguna en este paso.')}</section>
+        <section><h3>Históricas</h3>${hist.length ? `<ul class="rows">${hist.map(x => li(x, ` · emitida ${esc(hhmm(x.key))}`)).join('')}</ul>` : none(S.live.step === 0 ? 'Es el primer paso.' : 'Ninguna en pasos anteriores.')}</section>
+        <section><h3>Pronóstico</h3>${pron}</section>`};
     },
   };
 }
 
+// Un cambio de la liga a mano o con "atrás/adelante" (solo cambia el #) lleva a esa pestaña, día, escenarios y foto.
+window.addEventListener('hashchange', () => {
+  const h = readHash();
+  activateTab(h.tab, {fromHash: true});
+  const days = Object.keys(S.replay.index?.days || {});
+  if (h.tab !== 'replay' || !days.includes(h.rest[0])) return;
+  $('#rday').value = h.rest[0];
+  fillArms(h.rest[1] ? h.rest[1].split('+') : []);
+  fillAlfa();
+  const k = +h.rest[2];
+  loadReplay(Number.isFinite(k) ? k : 0);
+});
+
 // ───────────────────────── arranque ─────────────────────────
 (async () => {
   const h = readHash();
+  syncZonesUI();  // el Replay arranca con las zonas prendidas
   activateTab(h.tab, {fromHash: true});
   renderLegend();
   const mapP = initMap();

@@ -21,6 +21,7 @@ from threading import Lock
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 GBFS_BASE = "https://gbfs.mex.lyftbikes.com/gbfs/es"
@@ -130,6 +131,7 @@ def build_snapshot() -> dict:
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"])
+app.add_middleware(GZipMiddleware, minimum_size=1024)  # los JSON del replay pesan 1–2 MB: con red lenta son lo que más tarda
 
 
 @app.get("/api/snapshot")
@@ -347,7 +349,7 @@ def api_live_assign_stop(sid: str) -> dict:
     try:
         st = _asignaciones().stop(sid)
     except KeyError:
-        raise HTTPException(404, f"sesión {sid!r} no está corriendo en este servidor")
+        raise HTTPException(404, f"sesión {sid!r} no existe")
     return {"session_id": sid, "estado": st["estado"], "nota": "se detiene antes del siguiente paso"}
 
 
@@ -372,6 +374,47 @@ def favicon() -> Response:
     return Response(FAVICON, media_type="image/svg+xml")
 
 
+def _liberar_puerto(port: int) -> None:
+    """Si algo escucha ya en el puerto (p. ej. un servidor viejo de la demo), lo detiene: así el servidor arranca
+    siempre en el mismo puerto. SIGTERM y, si a los 5 s sigue vivo, SIGKILL."""
+    import signal
+    import subprocess
+    try:
+        out = subprocess.run(["lsof", "-ti", f"TCP:{port}", "-sTCP:LISTEN"], capture_output=True, text=True).stdout
+    except FileNotFoundError:  # sin lsof no se puede saber quién lo ocupa; uvicorn avisará si está ocupado
+        return
+    pids = {int(x) for x in out.split()} - {os.getpid()}
+    if not pids:
+        return
+
+    def vivo(pid):
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+
+    for pid in pids:
+        print(f"El puerto {port} lo usa el proceso {pid}: se detiene para arrancar aquí.", flush=True)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    for _ in range(50):
+        if not any(vivo(p) for p in pids):
+            break
+        time.sleep(0.1)
+    for pid in pids:
+        if vivo(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    time.sleep(0.3)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Mapa Ecobici + replay y predicción ecosim greedy.")
     ap.add_argument("--port", type=int, default=8000)
@@ -388,6 +431,7 @@ def main(argv=None):
         REPLAY_DIR = Path(a.replay_dir).resolve()
     if not a.no_live:
         _live_loop().start()
+    _liberar_puerto(a.port)
     url = f"http://{a.host}:{a.port}"
     print(f"Ecobici ecosim greedy · {url}  (loop en vivo: {'no' if a.no_live else 'si'})", flush=True)
     if not a.no_browser:

@@ -2,6 +2,7 @@
 rezagos sin ceros, viajes del día inferidos del feed y asignación en tiempo real
 con feed y reloj simulados (sin modo histórico)."""
 import json
+import threading
 from datetime import date, datetime, timedelta
 
 import numpy as np
@@ -266,20 +267,41 @@ def test_sesion_de_dos_horas_cierra_entregas(prod, tmp_path):
     sid = asig.start(fc["id"], 2, thread=False)
     s = asig.get(sid)
     assert s["estado"] == "terminada" and s["siguiente_paso"] is None and s["pendientes"] == []
-    assert s["inicio"] == "2025-09-20T09:00" and s["horas"] == 2
-    # Pasos cada 15 min: 8 que pueden emitir (09:00–10:45) y luego solo cierran
-    # entregas hasta la última pendiente (como mucho 11:45).
+    # Iniciada a las 09:07: el primer paso corre ya y decide para la siguiente marca (09:15), no hacia atrás.
+    assert s["inicio"] == "2025-09-20T09:15" and s["horas"] == 2
+    assert s["pasos"][0]["t"] == "2025-09-20T09:15" and s["pasos"][0]["t_feed"] <= "2025-09-20T09:07:00"
+    # 2 h de trabajo: emiten los pasos cuya entrega cae a más tardar a las 11:15 (09:15–10:15, 5 pasos) y luego solo
+    # cierran entregas hasta la última pendiente (como mucho 11:15).
+    assert s["ultimo_paso_emite"] == "2025-09-20T10:15" and s["ultima_entrega"] == "2025-09-20T11:15"
     emitidas = [o for p in s["pasos"] for o in p["emitidas"]]
-    ultima = max([o["entrega"] for o in emitidas] + ["2025-09-20T10:45"])
-    k_fin = (datetime.fromisoformat(ultima) - datetime(2025, 9, 20, 9)) // timedelta(minutes=15)
-    assert [p["t"] for p in s["pasos"]] == [f"2025-09-20T{9 + k // 4:02d}:{15 * (k % 4):02d}" for k in range(k_fin + 1)]
-    assert 8 <= len(s["pasos"]) <= 12
+    assert all(o["entrega"] <= s["ultima_entrega"] for o in emitidas)
+    ultima = max([o["entrega"] for o in emitidas] + ["2025-09-20T10:15"])
+    t0 = datetime(2025, 9, 20, 9, 15)
+    k_fin = (datetime.fromisoformat(ultima) - t0) // timedelta(minutes=15)
+    assert [p["t"] for p in s["pasos"]] == [(t0 + timedelta(minutes=15 * k)).isoformat(timespec="minutes") for k in range(k_fin + 1)]
+    assert 5 <= len(s["pasos"]) <= 9
     assert all(PASO_KEYS <= set(p) for p in s["pasos"])
-    assert all(p["visitas"] == 0 for p in s["pasos"][8:])
+    assert all(p["visitas"] == 0 for p in s["pasos"][5:])
+    # Km por calle (matriz OSRM del tope por tramo): cada recogida emitida lo trae y el paso suma.
+    for p in s["pasos"]:
+        rec = [o for o in p["emitidas"] if o["accion"] == "recoger"]
+        assert all("km_calle" in o for o in rec)
+        assert p["km_calle"] == round(sum(o["km_calle"] or 0 for o in rec), 1)
+    # Lo que espera evitar cada paquete según el pronóstico: el mismo número en sus dos piernas y positivo
+    # (el greedy solo toma paquetes que ahorran).
+    for p in s["pasos"]:
+        por_paq = {}
+        for o in p["emitidas"]:
+            por_paq.setdefault(o["paquete"], set()).add(o["evita"])
+        assert all(len(v) == 1 and next(iter(v)) > 0 for v in por_paq.values()), por_paq
+    ids = [o["id"] for p in s["pasos"] for o in p["emitidas"] if o["accion"] == "recoger"]
+    assert len(ids) == len(set(ids)) and all(i == live.id_orden(o["emitida"], o["paquete"], o["short_name"])
+                                             for p in s["pasos"] for o in p["emitidas"] if o["accion"] == "recoger" for i in [o["id"]])
     aplicadas = [o for p in s["pasos"] for o in p["aplicadas"]]
     assert emitidas, "el asignador no emitió órdenes con una estación llena y otra vacía"
     assert all(ORDEN_KEYS <= set(o) for o in emitidas)
-    assert sorted(map(json.dumps, emitidas)) == sorted(map(json.dumps, aplicadas))
+    sin_km = lambda o: json.dumps({k: v for k, v in o.items() if k not in ("km_calle", "id", "evita")})  # van solo en la emisión
+    assert sorted(map(sin_km, emitidas)) == sorted(map(sin_km, aplicadas))
     for p in s["pasos"]:
         for o in p["aplicadas"]:
             assert p["t"] == (o["recoge"] if o["accion"] == "recoger" else o["entrega"])
@@ -438,7 +460,7 @@ def _sesion(prod, tmp_path, cambios, modelo="ma_diaria", horizonte="dia", horas=
 
 
 def test_paso_espera_el_cambio_del_feed_despues_de_la_marca(prod, tmp_path):
-    marcas = [datetime(2025, 9, 20, 9, 0) + timedelta(minutes=15 * k) for k in range(12)]
+    marcas = [datetime(2025, 9, 20, 9, 15) + timedelta(minutes=15 * k) for k in range(12)]  # iniciada 09:07 → marca 09:15
     cambios = [datetime(2025, 9, 20, 9, 5)] + [m + timedelta(seconds=70) for m in marcas[1:]]
     s, loop = _sesion(prod, tmp_path, cambios)
     assert s["estado"] == "terminada"
@@ -458,7 +480,7 @@ def test_paso_espera_el_cambio_del_feed_despues_de_la_marca(prod, tmp_path):
 
 
 def test_feed_sin_cambios_corre_a_los_cinco_minutos(prod, tmp_path):
-    s, _ = _sesion(prod, tmp_path, [datetime(2025, 9, 20, 9, 5)])  # el feed nunca vuelve a cambiar
+    s, _ = _sesion(prod, tmp_path, [datetime(2025, 9, 20, 9, 5)], horas=2)  # el feed nunca vuelve a cambiar; 2 h para que emita varios pasos
     assert s["estado"] == "terminada"
     for p in s["pasos"][1:]:
         assert p["disparo"] == "sin_cambio_feed" and p["feed_atrasado"] is True
@@ -491,9 +513,112 @@ def test_sesion_corta_con_lgbm_directo(prod, tmp_path):
     s, _ = _sesion(prod, tmp_path, [datetime(2025, 9, 20, 9, 5)] + [m + timedelta(seconds=20) for m in marcas[1:]],
                    modelo="lgbm_directo", horizonte="1")
     assert s["estado"] == "terminada" and s["model"] == "lgbm_directo", s["error"]
-    # Horizonte 1 h: 4 pasos que emiten y luego cierran entregas hasta la última.
+    # 1 h de trabajo: solo emite el primer paso (su entrega es a la hora) y luego cierra entregas hasta la última.
     emitidas = [o for p in s["pasos"] for o in p["emitidas"]]
-    ultima = max([o["entrega"] for o in emitidas] + ["2025-09-20T09:45"])
-    assert s["pasos"][-1]["t"] == ultima and 4 <= len(s["pasos"]) <= 8 and s["pendientes"] == []
+    assert s["ultimo_paso_emite"] == "2025-09-20T09:15" and all(o["emitida"] == "2025-09-20T09:15" for o in emitidas)
+    ultima = max([o["entrega"] for o in emitidas] + ["2025-09-20T09:15"])
+    assert s["pasos"][-1]["t"] == ultima and 1 <= len(s["pasos"]) <= 5 and s["pendientes"] == []
     assert s["totales"]["recogidas"] == s["totales"]["entregadas"] == s["totales"]["bicis_a_mover"]
     assert all(PASO_KEYS <= set(p) for p in s["pasos"])
+
+
+# --- horario de la noche: sin ventana de operación y último paso que emite ---------------
+
+def test_sesion_de_noche_cierra_en_la_ultima_entrega_y_dice_por_que(prod, tmp_path):
+    reloj = Reloj(datetime(2025, 9, 20, 23, 7))
+    loop = live.LiveLoop(snapshot_fn=_snapshot_fn(reloj), log_dir=tmp_path / "gbfs", clock=reloj)
+    t = loop.poll()
+    fc = live.pronosticar("ma_diaria", "dia", loop.log_today(t), t, loop.meta, prod=prod)
+    live.guardar_pronostico(fc, tmp_path / "fc")
+    asig = live.Asignaciones(loop, tmp_path / "ses", tmp_path / "fc", clock=reloj, sleep=reloj.sleep, prod=prod, fz=FZ)
+    s = asig.get(asig.start(fc["id"], 2, thread=False))
+    assert s["inicio"] == "2025-09-20T23:15" and s["fin_emision"] == "2025-09-20T23:30"
+    # La entrega cae 60 min después: el último paso que emite es el de las 23:15, no el de las 00:15.
+    assert s["ultimo_paso_emite"] == "2025-09-20T23:15"
+    assert s["estado"] == "terminada" and s["pendientes"] == []
+    emitidas = [o for p in s["pasos"] for o in p["emitidas"]]
+    assert s["pasos"][-1]["t"] == max([o["entrega"] for o in emitidas] + ["2025-09-20T23:15"])  # sin pasos de más
+    assert all(p["visitas"] == 0 for p in s["pasos"] if p["t"] > s["ultimo_paso_emite"])
+    assert all(o["entrega"] <= "2025-09-21T00:30" for o in emitidas)
+    for p in s["pasos"]:
+        if "2025-09-20T23:15" < p["t"] < s["fin_emision"]:
+            assert "00:30" in p["nota"]  # explica por qué ya no emite
+    assert datetime.fromisoformat(s["fin_emision"]) >= datetime.fromisoformat(s["inicio"])
+
+
+def test_sesion_que_arranca_sin_entrega_posible_corre_un_paso_y_termina(prod, tmp_path):
+    reloj = Reloj(datetime(2025, 9, 20, 23, 38))
+    loop = live.LiveLoop(snapshot_fn=_snapshot_fn(reloj), log_dir=tmp_path / "gbfs", clock=reloj)
+    t = loop.poll()
+    fc = live.pronosticar("ma_diaria", "dia", loop.log_today(t), t, loop.meta, prod=prod)
+    live.guardar_pronostico(fc, tmp_path / "fc")
+    asig = live.Asignaciones(loop, tmp_path / "ses", tmp_path / "fc", clock=reloj, sleep=reloj.sleep, prod=prod, fz=FZ)
+    s = asig.get(asig.start(fc["id"], 1, thread=False))
+    assert s["inicio"] == "2025-09-20T23:45" and s["ultimo_paso_emite"] is None
+    assert s["estado"] == "terminada" and len(s["pasos"]) == 1 and s["pasos"][0]["visitas"] == 0
+    assert "00:30" in s["pasos"][0]["nota"]
+
+
+@pytest.mark.parametrize("hora", [(0, 31), (2, 10), (4, 59)])
+def test_no_inicia_entre_las_0030_y_las_0500(prod, tmp_path, hora):
+    reloj = Reloj(datetime(2025, 9, 20, 9, 7))
+    loop = live.LiveLoop(snapshot_fn=_snapshot_fn(reloj), log_dir=tmp_path / "gbfs", clock=reloj)
+    t = loop.poll()
+    fc = live.pronosticar("ma_diaria", "dia", loop.log_today(t), t, loop.meta, prod=prod)
+    live.guardar_pronostico(fc, tmp_path / "fc")
+    reloj.t = datetime(2025, 9, 21, *hora)
+    asig = live.Asignaciones(loop, tmp_path / "ses", tmp_path / "fc", clock=reloj, sleep=reloj.sleep, prod=prod, fz=FZ)
+    with pytest.raises(ValueError, match="fuera del horario"):
+        asig.start(fc["id"], 2, thread=False)
+    assert not list((tmp_path / "ses").glob("*.json"))  # no deja una sesión con fechas al revés
+
+
+def test_sesion_corriendo_que_nadie_avanza_se_ve_como_error(prod, tmp_path):
+    reloj = Reloj(datetime(2025, 9, 20, 10, 0))
+    loop = live.LiveLoop(snapshot_fn=_snapshot_fn(reloj), log_dir=tmp_path / "gbfs", clock=reloj)
+    asig = live.Asignaciones(loop, tmp_path / "ses", tmp_path / "fc", clock=reloj, sleep=reloj.sleep, prod=prod, fz=FZ)
+    ses = tmp_path / "ses"
+    ses.mkdir(exist_ok=True)
+    for sid, nxt in (("viva", "2025-09-20T10:15"), ("muerta", "2025-09-20T09:30")):
+        (ses / f"{sid}.json").write_text(json.dumps({"id": sid, "estado": "corriendo", "siguiente_paso": nxt}))
+    assert asig.get("viva")["estado"] == "corriendo"  # el siguiente paso aún no llega: puede correrla otro proceso
+    assert asig.get("muerta")["estado"] == "error" and asig.get("muerta")["siguiente_paso"] is None
+    assert {s["id"]: s["estado"] for s in asig.listar()} == {"viva": "corriendo", "muerta": "error"}
+    assert json.loads((ses / "muerta.json").read_text())["estado"] == "corriendo"  # el archivo no se toca
+
+
+def test_detener_funciona_aunque_este_servidor_no_corra_la_sesion(prod, tmp_path):
+    reloj = Reloj(datetime(2025, 9, 20, 10, 0))
+    loop = live.LiveLoop(snapshot_fn=_snapshot_fn(reloj), log_dir=tmp_path / "gbfs", clock=reloj)
+    asig = live.Asignaciones(loop, tmp_path / "ses", tmp_path / "fc", clock=reloj, sleep=reloj.sleep, prod=prod, fz=FZ)
+    ses = tmp_path / "ses"
+    ses.mkdir(exist_ok=True)
+    (ses / "huerfana.json").write_text(json.dumps({"id": "huerfana", "estado": "corriendo", "siguiente_paso": "2025-09-20T10:15"}))
+    (ses / "hecha.json").write_text(json.dumps({"id": "hecha", "estado": "terminada", "siguiente_paso": None}))
+    assert asig.stop("huerfana")["estado"] == "detenida"  # quedó de un servidor que se reinició
+    assert json.loads((ses / "huerfana.json").read_text())["estado"] == "detenida" and asig.get("huerfana")["estado"] == "detenida"
+    assert asig.stop("hecha")["estado"] == "terminada"  # una que ya acabó no cambia
+    with pytest.raises(KeyError):
+        asig.stop("no-existe")
+
+
+def test_guardar_desde_varios_hilos_no_rompe_la_sesion(prod, tmp_path):
+    reloj = Reloj(datetime(2025, 9, 20, 9, 7))
+    loop = live.LiveLoop(snapshot_fn=_snapshot_fn(reloj), log_dir=tmp_path / "gbfs", clock=reloj)
+    t = loop.poll()
+    fc = live.pronosticar("ma_diaria", "dia", loop.log_today(t), t, loop.meta, prod=prod)
+    ses = live.Sesion("h", fc, 1, loop, tmp_path / "ses", clock=reloj, sleep=reloj.sleep, prod=prod, fz=FZ)
+    errores = []
+
+    def golpear(v):
+        try:
+            for i in range(150):
+                ses.set_alfa(v + i % 3)  # lo que hace POST /alfa mientras el hilo de la sesión también guarda
+        except Exception as exc:  # noqa: BLE001
+            errores.append(exc)
+
+    hilos = [threading.Thread(target=golpear, args=(k,)) for k in range(6)]
+    [h.start() for h in hilos]
+    [h.join() for h in hilos]
+    assert not errores
+    assert json.loads(ses.path.read_text())["id"] == "h"
