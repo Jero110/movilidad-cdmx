@@ -32,10 +32,10 @@ git clone https://github.com/Jero110/movilidad-cdmx && cd movilidad-cdmx
 make up        # http://127.0.0.1:8000
 ```
 
-`make up` instala Python y las dependencias, baja los datos de la app si faltan (replay precalculado y modelos de
-producción, ~180 MB, del [Release `datos-app-2026-10-15`](https://github.com/Jero110/movilidad-cdmx/releases/tag/datos-app-2026-10-15))
-y arranca el servidor en el 8000; si algo ya ocupa ese puerto, lo detiene. `make test` corre las pruebas: las que
-necesitan datos de la investigación (fotos del feed, CSV de viajes) se saltan si no están.
+`make up` instala Python y las dependencias, pone en `data/` los datos de la app que vienen en el repo
+(`datos-app/`: replay precalculado de 16 días y modelos de producción, sin bajar nada aparte) y arranca el servidor
+en el 8000; si algo ya ocupa ese puerto, lo detiene. `make test` corre las pruebas: las que necesitan datos de la
+investigación (fotos del feed, CSV de viajes) se saltan si no están.
 
 Sin `make`: `uv sync` y `uv run python3 scripts/ecobici_mapa/server.py` (opciones: `--port`, `--no-browser`,
 `--no-live`), con los datos en `data/derived/ecosim/`.
@@ -43,8 +43,8 @@ Sin `make`: `uv sync` y `uv run python3 scripts/ecobici_mapa/server.py` (opcione
 | Pestaña | Qué muestra | Qué necesita |
 |---|---|---|
 | **Ahora** | Mapa con las bicis disponibles, buscador y ficha de estación con todos los campos del feed | Solo internet |
-| **Replay** | Un día paso a paso cada 15 min, con velocidad de 1× a 8×, comparación de dos escenarios, órdenes de dónde a dónde, costo por km (α) y zonas AGEB | El replay precalculado (viene en `make up`; se regenera con `uv run python -m ecosim.replay --force`) |
-| **Predicción** | Asignación en vivo con la media móvil: cada 15 min emite órdenes sobre el feed; cada orden dice de qué estación a cuál, cuántas bicis, a qué hora y cuántos km | Modelos de producción (vienen en `make up`; se actualizan con `uv run python -m ecosim.actualizar`) |
+| **Replay** | Un día paso a paso cada 15 min, con velocidad de 1× a 8×, comparación de dos escenarios, órdenes de dónde a dónde, costo por km (α) y zonas AGEB | El replay precalculado (en `datos-app/`; se regenera con `uv run python -m ecosim.replay --force`) |
+| **Predicción** | Asignación en vivo con la media móvil: cada 15 min emite órdenes sobre el feed; cada orden dice de qué estación a cuál, cuántas bicis, a qué hora y cuántos km | Modelos de producción (en `datos-app/`; se actualizan con `uv run python -m ecosim.actualizar`) |
 
 Contratos JSON, qué es medido y qué es estimado: [`scripts/ecobici_mapa/README.md`](scripts/ecobici_mapa/README.md). Capturas en [`scripts/ecobici_mapa/screenshots/`](scripts/ecobici_mapa/screenshots/).
 

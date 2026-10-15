@@ -1,9 +1,9 @@
 # App desde un clon limpio:  make up  →  http://127.0.0.1:8000
-# Necesita uv (https://docs.astral.sh/uv/) e internet la primera vez: baja Python y dependencias, y los datos de la
-# app (replay precalculado y modelos de producción, ~180 MB) del Release del repo. Después ya no baja nada.
+# Necesita uv (https://docs.astral.sh/uv/). Los datos de la app (replay precalculado y modelos de producción) vienen
+# en el repo, en datos-app/: no se baja nada aparte; uv solo baja Python y las dependencias la primera vez.
 PORT ?= 8000
-DATOS_TAG ?= datos-app-2026-10-15
-DATOS_URL ?= https://github.com/Jero110/movilidad-cdmx/releases/download/$(DATOS_TAG)/datos-app.tar.gz
+APP := datos-app/derived/ecosim
+DST := data/derived/ecosim
 
 .PHONY: up deps datos test
 
@@ -15,15 +15,12 @@ deps:
 	@command -v uv >/dev/null 2>&1 || { echo "Falta uv. Instálalo con:  curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
 	uv sync
 
-# Solo baja si faltan; con datos propios en data/ (o un enlace a ellos) no toca nada.
+# Copia a data/ lo que falte de datos-app/; si data/ ya trae sus datos (o es un enlace a ellos), no toca nada.
 datos:
-	@if [ -f data/derived/ecosim/produccion/manifiesto.json ] && [ -f data/derived/ecosim/replay/index.json ]; then \
-	  echo "Datos de la app: listos."; \
-	else \
-	  echo "Bajando los datos de la app (~180 MB)..."; \
-	  mkdir -p data && curl -fL --progress-bar -o data/.datos-app.tar.gz "$(DATOS_URL)" && \
-	  tar -xzf data/.datos-app.tar.gz -C data && rm -f data/.datos-app.tar.gz && echo "Datos de la app: listos."; \
-	fi
+	@mkdir -p $(DST)
+	@[ -f $(DST)/replay/index.json ] || { cp -R $(APP)/replay $(DST)/ && echo "Replay: copiado de datos-app/."; }
+	@[ -f $(DST)/produccion/manifiesto.json ] || { mkdir -p $(DST)/produccion && cp -R $(APP)/produccion/. $(DST)/produccion/ && echo "Modelos de producción: copiados de datos-app/."; }
+	@echo "Datos de la app: listos."
 
 test: deps datos
 	uv run pytest -q
